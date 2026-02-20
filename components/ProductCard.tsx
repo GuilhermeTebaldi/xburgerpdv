@@ -155,7 +155,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
   return (
     <>
       <div
-        className={`relative group bg-white rounded-3xl overflow-hidden shadow-md transition-all active:scale-95 flex flex-col items-center justify-center p-3 sm:p-4 text-left border-2 
+        className={`qb-product-card relative group bg-white rounded-3xl overflow-hidden shadow-md transition-all active:scale-95 flex flex-col items-center justify-center p-3 sm:p-4 text-left border-2 
           ${isAvailable ? 'border-transparent hover:border-yellow-400' : 'opacity-50 grayscale border-slate-100'}
           ${isAnimating ? 'animate-click' : ''}`}
         onClick={handleQuickSale}
@@ -174,14 +174,14 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
 
         {/* Overlay de Exclusão */}
         {showDeleteMenu && (
-            <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="qb-delete-overlay absolute inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
                 <button 
                     onClick={(e) => {
                         e.stopPropagation();
                         onDelete?.(product.id);
                         setShowDeleteMenu(false);
                     }}
-                    className="bg-red-600 text-white px-4 py-3 rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-red-700 active:scale-90 transition-all"
+                    className="qb-btn-touch bg-red-600 text-white px-4 py-3 rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-red-700 active:scale-90 transition-all"
                 >
                     Excluir Item
                 </button>
@@ -191,7 +191,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
         {isAvailable && (
           <button
             onClick={handleOpenCustomizer}
-            className="absolute top-2 left-2 z-10 bg-white/90 backdrop-blur-sm p-2 rounded-xl shadow-sm border border-slate-100 text-slate-600 hover:text-red-600 hover:scale-110 transition-all active:scale-90"
+            className="qb-btn-touch absolute top-2 left-2 z-10 bg-white/90 backdrop-blur-sm p-2 rounded-xl shadow-sm border border-slate-100 text-slate-600 hover:text-red-600 hover:scale-110 transition-all active:scale-90"
             title="Configurações desta Venda"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -222,32 +222,32 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
       </div>
 
       {showCustomizer && (
-        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[200] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-[40px] shadow-2xl overflow-hidden flex flex-col animate-in zoom-in duration-200">
-            <div className="p-6 bg-red-600 text-white flex justify-between items-center">
-              <div>
+        <div className="qb-sale-customizer-overlay fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[200] flex items-center justify-center p-4">
+          <div className="qb-sale-customizer-panel bg-white w-full max-w-lg rounded-[40px] shadow-2xl overflow-hidden flex flex-col animate-in zoom-in duration-200">
+            <div className="qb-sale-customizer-head p-6 bg-red-600 text-white flex justify-between items-center">
+              <div className="qb-sale-customizer-title">
                 <h3 className="text-2xl font-black tracking-tight uppercase">{product.name}</h3>
                 <p className="text-xs font-bold opacity-80 uppercase tracking-widest">Ajuste apenas para esta venda</p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="qb-sale-customizer-head-actions flex items-center gap-2">
                 <button
                   type="button"
                   onClick={handleEditProduct}
-                  className="bg-white/90 text-red-700 px-3 py-2 rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-white active:scale-95 transition-all"
+                  className="qb-btn-touch qb-sale-customizer-edit-btn bg-white/90 text-red-700 px-3 py-2 rounded-2xl font-black text-[10px] uppercase shadow-lg hover:bg-white active:scale-95 transition-all"
                 >
                   Editar Produto
                 </button>
                 <button 
                   onClick={() => setShowCustomizer(false)}
-                  className="bg-red-700 p-2 rounded-full hover:bg-red-800 transition-colors"
+                  className="qb-btn-touch bg-red-700 p-2 rounded-full hover:bg-red-800 transition-colors"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                 </button>
               </div>
             </div>
 
-            <div className="p-6 overflow-y-auto max-h-[60vh] space-y-6 bg-slate-50">
-              <div className="bg-white p-5 rounded-3xl border-2 border-slate-100 shadow-sm space-y-3">
+            <div className="qb-sale-customizer-content p-6 overflow-y-auto max-h-[60vh] space-y-6 bg-slate-50">
+              <div className="qb-sale-customizer-price-box bg-white p-5 rounded-3xl border-2 border-slate-100 shadow-sm space-y-3">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Preço para este Pedido (R$)</label>
                 <div className="flex gap-2">
                   <input 
@@ -273,21 +273,21 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
                   ).map(ing => {
                     const currentQty = customRecipe.find(r => r.ingredientId === ing.id)?.quantity || 0;
                     return (
-                      <div key={ing.id} className="flex items-center justify-between p-4 bg-white rounded-3xl border-2 border-slate-100 shadow-sm">
+                      <div key={ing.id} className="qb-sale-customizer-row flex items-center justify-between p-4 bg-white rounded-3xl border-2 border-slate-100 shadow-sm">
                         <div>
                           <p className="font-extrabold text-slate-800 uppercase text-sm">{ing.name}</p>
                           <p className="text-[10px] font-bold text-slate-400 uppercase">Estoque: {ing.currentStock} {ing.unit}</p>
                         </div>
-                        <div className="flex items-center gap-4">
+                        <div className="qb-sale-customizer-controls flex items-center gap-4">
                           <button 
                             onClick={() => updateCustomIngredient(ing.id, -1)}
-                            className="w-10 h-10 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center font-black text-xl active:scale-90"
+                            className="qb-btn-touch w-10 h-10 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center font-black text-xl active:scale-90"
                           >-</button>
                           <span className="text-xl font-black min-w-[20px] text-center">{currentQty}</span>
                           <button 
                             onClick={() => updateCustomIngredient(ing.id, 1)}
                             disabled={ing.currentStock <= currentQty}
-                            className="w-10 h-10 rounded-2xl bg-yellow-400 text-red-800 flex items-center justify-center font-black text-xl active:scale-90"
+                            className="qb-btn-touch w-10 h-10 rounded-2xl bg-yellow-400 text-red-800 flex items-center justify-center font-black text-xl active:scale-90"
                           >+</button>
                         </div>
                       </div>
@@ -297,10 +297,10 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
               )}
             </div>
 
-            <div className="p-6 bg-white border-t">
+            <div className="qb-sale-customizer-footer p-6 bg-white border-t">
               <button 
                 onClick={handleConfirmCustomSale}
-                className="w-full bg-green-600 hover:bg-green-700 text-white py-5 rounded-3xl font-black uppercase text-lg shadow-lg active:scale-95 flex items-center justify-center gap-3"
+                className="qb-btn-touch w-full bg-green-600 hover:bg-green-700 text-white py-5 rounded-3xl font-black uppercase text-lg shadow-lg active:scale-95 flex items-center justify-center gap-3"
               >
                 CONFIRMAR VENDA
               </button>

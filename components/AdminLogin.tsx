@@ -22,8 +22,8 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onLogin }) => {
   };
 
   return (
-    <div className="min-h-[calc(100vh-64px)] flex items-center justify-center p-4 bg-slate-50">
-      <div className="bg-white w-full max-w-md p-8 rounded-[40px] shadow-2xl border-2 border-slate-100 animate-in fade-in zoom-in duration-300">
+    <div className="qb-admin-login min-h-[calc(100vh-64px)] flex items-center justify-center p-4 bg-slate-50">
+      <div className="qb-admin-login-card bg-white w-full max-w-md p-8 rounded-[40px] shadow-2xl border-2 border-slate-100 animate-in fade-in zoom-in duration-300">
         <div className="text-center mb-10">
           <div className="bg-red-600 w-16 h-16 rounded-3xl flex items-center justify-center mx-auto mb-4 shadow-xl shadow-red-100">
             <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
@@ -59,7 +59,7 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onLogin }) => {
               <button
                 type="button"
                 onClick={() => setShowPassword(prev => !prev)}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black uppercase tracking-wider text-slate-500 hover:text-slate-800 transition-colors"
+                className="qb-btn-touch absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black uppercase tracking-wider text-slate-500 hover:text-slate-800 transition-colors"
                 aria-label={showPassword ? 'Ocultar senha' : 'Ver senha'}
               >
                 {showPassword ? 'Ocultar' : 'Ver senha'}
@@ -75,7 +75,7 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onLogin }) => {
 
           <button 
             type="submit"
-            className="w-full bg-slate-900 hover:bg-black text-yellow-400 py-5 rounded-[24px] font-black uppercase tracking-tighter text-xl shadow-2xl transition-all active:scale-95 flex items-center justify-center gap-3 mt-4"
+            className="qb-btn-touch w-full bg-slate-900 hover:bg-black text-yellow-400 py-5 rounded-[24px] font-black uppercase tracking-tighter text-xl shadow-2xl transition-all active:scale-95 flex items-center justify-center gap-3 mt-4"
           >
             ACESSAR SISTEMA
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>

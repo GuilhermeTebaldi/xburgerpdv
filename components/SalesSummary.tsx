@@ -82,8 +82,8 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({ sales, allIngredients, stoc
   const costAdjustment = selectedSale && baseCost !== undefined ? selectedSale.totalCost - baseCost : undefined;
 
   return (
-    <div className={`p-4 sm:p-6 max-w-5xl mx-auto space-y-6 relative transition-all duration-700 ease-in-out ${isClosing ? 'scale-95 opacity-0 blur-xl grayscale pointer-events-none' : 'opacity-100 scale-100'}`}>
-      <div className="flex justify-between items-center mb-4">
+    <div className={`qb-sales p-4 sm:p-6 max-w-5xl mx-auto space-y-6 relative transition-all duration-700 ease-in-out ${isClosing ? 'scale-95 opacity-0 blur-xl grayscale pointer-events-none' : 'opacity-100 scale-100'}`}>
+      <div className="qb-sales-header flex justify-between items-center mb-4">
          <div>
             <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">RELATÓRIO DO DIA</h2>
             <p className="text-xs font-bold text-slate-400">Resumo operacional da sessão atual.</p>
@@ -91,7 +91,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({ sales, allIngredients, stoc
          <button 
            onClick={handleRestart}
            disabled={isClosing}
-           className={`bg-slate-900 text-yellow-400 px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl transition-all active:scale-95 flex items-center gap-2 group ${isClosing ? 'opacity-50' : 'hover:bg-black'}`}
+           className={`qb-btn-touch qb-sales-restart bg-slate-900 text-yellow-400 px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl transition-all active:scale-95 flex items-center gap-2 group ${isClosing ? 'opacity-50' : 'hover:bg-black'}`}
          >
            <svg 
             xmlns="http://www.w3.org/2000/svg" 
@@ -112,7 +112,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({ sales, allIngredients, stoc
          </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="qb-sales-stats grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-red-600 text-white p-6 rounded-3xl shadow-lg">
           <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-1">Receita</p>
           <h4 className="text-3xl font-black">R$ {totalRevenue.toFixed(2)}</h4>
@@ -131,8 +131,8 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({ sales, allIngredients, stoc
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-        <div className="bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">
+      <div className="qb-sales-main grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        <div className="qb-sales-chart-card bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">
           <h3 className="text-lg font-black text-slate-800 mb-6 uppercase tracking-tight">Vendas por Produto</h3>
           <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -149,12 +149,12 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({ sales, allIngredients, stoc
           </div>
         </div>
 
-        <div className="space-y-6">
-          <div className="bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm flex flex-col h-[450px]">
+        <div className="qb-sales-side space-y-6">
+          <div className="qb-sales-list-card bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm flex flex-col h-[450px]">
             <h3 className="text-lg font-black text-slate-800 mb-6 uppercase tracking-tight">Últimos Lançamentos</h3>
-            <div ref={listRef} className="flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-hide">
+            <div ref={listRef} className="qb-sales-list-content flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-hide">
               {sales.slice().reverse().map((sale) => (
-                <button key={sale.id} onClick={(e) => handleSaleClick(e, sale.id)} className={`w-full text-left flex items-center justify-between p-4 rounded-2xl border transition-all active:scale-[0.98] ${selectedSaleId === sale.id ? 'bg-red-600 border-red-700 shadow-lg text-white ring-4 ring-red-100' : 'bg-slate-50 border-slate-100 hover:border-red-400 hover:bg-white'}`}>
+                <button key={sale.id} onClick={(e) => handleSaleClick(e, sale.id)} className={`qb-btn-touch qb-sales-list-item w-full text-left flex items-center justify-between p-4 rounded-2xl border transition-all active:scale-[0.98] ${selectedSaleId === sale.id ? 'bg-red-600 border-red-700 shadow-lg text-white ring-4 ring-red-100' : 'bg-slate-50 border-slate-100 hover:border-red-400 hover:bg-white'}`}>
                   <div className="flex items-center gap-3">
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black ${selectedSaleId === sale.id ? 'bg-white text-red-600' : 'bg-white text-red-600 shadow-sm border border-slate-100'}`}>
                       {sale.productName.charAt(0)}
@@ -182,9 +182,9 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({ sales, allIngredients, stoc
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm flex flex-col h-[320px]">
+          <div className="qb-sales-stock-card bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm flex flex-col h-[320px]">
             <h3 className="text-lg font-black text-slate-800 mb-6 uppercase tracking-tight">Saídas de Estoque</h3>
-            <div className="flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-hide">
+            <div className="qb-sales-stock-content flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-hide">
               {stockOutEntries.slice().reverse().map(entry => (
                 <div key={entry.id} className="w-full flex items-center justify-between p-4 rounded-2xl border border-slate-100 bg-slate-50">
                   <div className="flex items-center gap-3">
@@ -212,7 +212,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({ sales, allIngredients, stoc
       </div>
 
       {selectedSale && (
-        <div style={popoverStyle} className="bg-slate-900 text-white p-5 rounded-[32px] shadow-[0_30px_60px_rgba(0,0,0,0.6)] z-[9999] animate-in fade-in zoom-in-95 slide-in-from-right-4 duration-200 border border-slate-700 border-t-red-600 border-t-4 pointer-events-auto">
+        <div style={popoverStyle} className="qb-sales-popover bg-slate-900 text-white p-5 rounded-[32px] shadow-[0_30px_60px_rgba(0,0,0,0.6)] z-[9999] animate-in fade-in zoom-in-95 slide-in-from-right-4 duration-200 border border-slate-700 border-t-red-600 border-t-4 pointer-events-auto">
           <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-3">
              <div className="flex items-center gap-2">
                 <div className="bg-red-600 p-1 rounded-lg">

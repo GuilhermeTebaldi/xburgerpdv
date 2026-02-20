@@ -52,29 +52,29 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({ ingredients, entrie
   };
 
   return (
-    <div className="p-4 sm:p-6 max-w-5xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
+    <div className="qb-inventory p-4 sm:p-6 max-w-5xl mx-auto">
+      <div className="qb-inventory-header flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
         <div>
           <h2 className="text-3xl font-black text-slate-800 tracking-tight">CONTROLE DE ESTOQUE</h2>
           <p className="text-slate-500 font-semibold">Gerencie os insumos e reposições em tempo real.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="qb-inventory-actions flex gap-2">
           <button 
             onClick={() => setShowHistory(true)}
-            className="bg-slate-800 text-white px-5 py-2 rounded-2xl text-sm font-bold flex items-center gap-2 hover:bg-slate-700 transition-colors shadow-lg"
+            className="qb-btn-touch bg-slate-800 text-white px-5 py-2 rounded-2xl text-sm font-bold flex items-center gap-2 hover:bg-slate-700 transition-colors shadow-lg"
           >
             HISTÓRICO
           </button>
           <button 
             onClick={onOpenAddIngredient}
-            className="bg-red-600 text-white p-3 rounded-2xl shadow-lg hover:bg-red-700 active:scale-95 transition-all"
+            className="qb-btn-touch bg-red-600 text-white p-3 rounded-2xl shadow-lg hover:bg-red-700 active:scale-95 transition-all"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="qb-inventory-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {ingredients.map((ing) => {
           const isCritical = ing.currentStock <= ing.minStock * 0.5;
           const isLow = ing.currentStock <= ing.minStock;
@@ -85,7 +85,7 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({ ingredients, entrie
           return (
             <div 
               key={ing.id}
-              className={`relative bg-white p-5 rounded-3xl border-2 transition-all flex flex-col ${isCritical ? 'border-red-300 bg-red-50/30' : isLow ? 'border-yellow-300' : 'border-slate-100'}`}
+              className={`qb-inventory-card relative bg-white p-5 rounded-3xl border-2 transition-all flex flex-col ${isCritical ? 'border-red-300 bg-red-50/30' : isLow ? 'border-yellow-300' : 'border-slate-100'}`}
               onContextMenu={(e) => handleContextMenu(e, ing.id)}
               onTouchStart={() => handleTouchStart(ing.id)}
               onTouchEnd={handleTouchEnd}
@@ -129,12 +129,12 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({ ingredients, entrie
                   </div>
                 </div>
                 <div className="flex items-start gap-2">
-                  <button
+                  <button 
                     onClick={(e) => {
                       e.stopPropagation();
                       onEditIngredient(ing);
                     }}
-                    className="bg-white/90 backdrop-blur-sm p-2 rounded-xl shadow-sm border border-slate-100 text-slate-500 hover:text-red-600 hover:scale-105 transition-all active:scale-95"
+                    className="qb-btn-touch bg-white/90 backdrop-blur-sm p-2 rounded-xl shadow-sm border border-slate-100 text-slate-500 hover:text-red-600 hover:scale-105 transition-all active:scale-95"
                     title="Editar ingrediente"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -163,7 +163,7 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({ ingredients, entrie
 
               <div className="mt-auto space-y-2">
                 <p className="text-[10px] font-black text-slate-400 uppercase">Reposição / Consumo</p>
-                <div className="flex gap-2">
+                <div className="qb-stock-controls flex gap-2">
                   <input 
                     type="number"
                     value={inputValue}
@@ -174,7 +174,7 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({ ingredients, entrie
                   <button 
                     onClick={() => handleConsume(ing.id)}
                     disabled={!hasValidValue}
-                    className="bg-slate-700 hover:bg-slate-800 disabled:bg-slate-300 text-white p-2.5 rounded-2xl font-black transition-all flex items-center justify-center min-w-[50px] shadow-sm active:scale-90"
+                    className="qb-btn-touch bg-slate-700 hover:bg-slate-800 disabled:bg-slate-300 text-white p-2.5 rounded-2xl font-black transition-all flex items-center justify-center min-w-[50px] shadow-sm active:scale-90"
                     title="Dar baixa no estoque (gasto)"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/></svg>
@@ -182,7 +182,7 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({ ingredients, entrie
                   <button 
                     onClick={() => handleReplenish(ing.id)}
                     disabled={!hasValidValue}
-                    className="bg-red-600 hover:bg-red-700 disabled:bg-slate-300 text-white p-2.5 rounded-2xl font-black transition-all flex items-center justify-center min-w-[50px] shadow-sm active:scale-90"
+                    className="qb-btn-touch bg-red-600 hover:bg-red-700 disabled:bg-slate-300 text-white p-2.5 rounded-2xl font-black transition-all flex items-center justify-center min-w-[50px] shadow-sm active:scale-90"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
                   </button>
@@ -194,19 +194,19 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({ ingredients, entrie
       </div>
 
       {showHistory && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-2xl rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
-            <div className="p-6 bg-slate-50 border-b flex justify-between items-center">
+        <div className="qb-stock-history-overlay fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="qb-stock-history-panel bg-white w-full max-w-2xl rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+            <div className="qb-stock-history-head p-6 bg-slate-50 border-b flex justify-between items-center">
               <div>
                 <h3 className="text-xl font-black text-slate-800">HISTÓRICO DE MOVIMENTAÇÕES</h3>
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Registros de entrada e saída</p>
               </div>
-              <button onClick={() => setShowHistory(false)} className="bg-slate-200 p-2 rounded-full hover:bg-slate-300 transition-colors">
+              <button onClick={() => setShowHistory(false)} className="qb-btn-touch bg-slate-200 p-2 rounded-full hover:bg-slate-300 transition-colors">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
               </button>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-6 space-y-3">
+            <div className="qb-stock-history-content flex-1 overflow-y-auto p-6 space-y-3">
               {entries.length === 0 ? (
                 <div className="text-center py-20 opacity-30 uppercase font-bold">Nenhuma movimentação registrada</div>
               ) : (
@@ -239,8 +239,8 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({ ingredients, entrie
               )}
             </div>
 
-            <div className="p-6 bg-slate-50 border-t">
-              <button onClick={() => setShowHistory(false)} className="w-full bg-slate-800 text-white py-4 rounded-2xl font-black uppercase">FECHAR PAINEL</button>
+            <div className="qb-stock-history-footer p-6 bg-slate-50 border-t">
+              <button onClick={() => setShowHistory(false)} className="qb-btn-touch w-full bg-slate-800 text-white py-4 rounded-2xl font-black uppercase">FECHAR PAINEL</button>
             </div>
           </div>
         </div>

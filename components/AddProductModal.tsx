@@ -61,22 +61,22 @@ const AddProductModal: React.FC<AddProductModalProps> = ({ isOpen, onClose, ingr
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[250] flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-2xl rounded-[40px] shadow-2xl overflow-hidden flex flex-col animate-in zoom-in duration-200 max-h-[90vh]">
-        <div className="p-6 bg-slate-900 text-white flex justify-between items-center">
+    <div className="qb-modal-overlay fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[250] flex items-center justify-center p-4">
+      <div className="qb-product-modal bg-white w-full max-w-2xl rounded-[40px] shadow-2xl overflow-hidden flex flex-col animate-in zoom-in duration-200 max-h-[90vh]">
+        <div className="qb-modal-head p-6 bg-slate-900 text-white flex justify-between items-center">
           <div>
             <h3 className="text-2xl font-black tracking-tight uppercase">Novo Produto</h3>
             <p className="text-xs font-bold opacity-60 uppercase tracking-widest">Adicionar item ao cardápio</p>
           </div>
           <button 
             onClick={onClose}
-            className="bg-slate-800 p-2 rounded-full hover:bg-slate-700 transition-colors"
+            className="qb-btn-touch bg-slate-800 p-2 rounded-full hover:bg-slate-700 transition-colors"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-8 space-y-6">
+        <form onSubmit={handleSubmit} className="qb-product-form flex-1 overflow-y-auto p-8 space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nome do Produto</label>
@@ -132,11 +132,11 @@ const AddProductModal: React.FC<AddProductModalProps> = ({ isOpen, onClose, ingr
               <span className="text-[10px] font-black text-red-500 uppercase">{recipe.length} Itens Selecionados</span>
             </div>
             
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="qb-recipe-grid grid grid-cols-1 sm:grid-cols-2 gap-3">
               {ingredients.map(ing => {
                 const qty = recipe.find(r => r.ingredientId === ing.id)?.quantity || 0;
                 return (
-                  <div key={ing.id} className={`p-3 rounded-2xl border-2 transition-all flex items-center justify-between ${qty > 0 ? 'border-red-500 bg-red-50/30' : 'border-slate-100 bg-white'}`}>
+                  <div key={ing.id} className={`qb-recipe-item p-3 rounded-2xl border-2 transition-all flex items-center justify-between ${qty > 0 ? 'border-red-500 bg-red-50/30' : 'border-slate-100 bg-white'}`}>
                     <div className="flex-1 min-w-0 pr-2">
                       <p className="font-extrabold text-slate-800 text-sm truncate uppercase">{ing.name}</p>
                       <p className="text-[9px] font-bold text-slate-400 uppercase">{ing.unit}</p>
@@ -145,7 +145,7 @@ const AddProductModal: React.FC<AddProductModalProps> = ({ isOpen, onClose, ingr
                       <button 
                         type="button"
                         onClick={() => handleUpdateRecipe(ing.id, -1)}
-                        className="w-8 h-8 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center font-black"
+                        className="qb-btn-touch w-8 h-8 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center font-black"
                       >
                         -
                       </button>
@@ -153,7 +153,7 @@ const AddProductModal: React.FC<AddProductModalProps> = ({ isOpen, onClose, ingr
                       <button 
                         type="button"
                         onClick={() => handleUpdateRecipe(ing.id, 1)}
-                        className="w-8 h-8 rounded-xl bg-red-600 text-white flex items-center justify-center font-black"
+                        className="qb-btn-touch w-8 h-8 rounded-xl bg-red-600 text-white flex items-center justify-center font-black"
                       >
                         +
                       </button>
@@ -167,7 +167,7 @@ const AddProductModal: React.FC<AddProductModalProps> = ({ isOpen, onClose, ingr
           <div className="pt-4">
             <button 
               type="submit"
-              className="w-full bg-red-600 hover:bg-red-700 text-white py-5 rounded-3xl font-black uppercase tracking-tighter text-xl shadow-xl shadow-red-200 transition-all active:scale-95 flex items-center justify-center gap-3"
+              className="qb-btn-touch w-full bg-red-600 hover:bg-red-700 text-white py-5 rounded-3xl font-black uppercase tracking-tighter text-xl shadow-xl shadow-red-200 transition-all active:scale-95 flex items-center justify-center gap-3"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
               SALVAR PRODUTO NO CAIXA
