@@ -11,38 +11,52 @@ enum UserRole {
   ADMIN
   OPERATOR
   AUDITOR
+
+  @@map("user_role")
 }
 
 enum ProductCategory {
   SNACK
   DRINK
   SIDE
+
+  @@map("product_category")
 }
 
 enum SessionStatus {
   OPEN
   CLOSED
+
+  @@map("session_status")
 }
 
 enum SaleStatus {
   ACTIVE
   PARTIALLY_REFUNDED
   REFUNDED
+
+  @@map("sale_status")
 }
 
 enum RefundType {
   FULL
   PARTIAL
+
+  @@map("refund_type")
 }
 
 enum StockTargetType {
   INGREDIENT
   CLEANING_MATERIAL
+
+  @@map("stock_target_type")
 }
 
 enum StockDirection {
   IN
   OUT
+
+  @@map("stock_direction")
 }
 
 enum StockMovementReason {
@@ -50,12 +64,16 @@ enum StockMovementReason {
   SALE
   REFUND
   SYSTEM
+
+  @@map("stock_movement_reason")
 }
 
 enum ActionOrigin {
   API
   SYSTEM
   IMPORT
+
+  @@map("action_origin")
 }
 
 model User {
