@@ -408,7 +408,7 @@ export default function App() {
             transition={{ duration: 0.8 }}
           >
             
-            <h2 className="text-brand-red font-display text-2xl md:text-3xl mb-4 tracking-widest uppercase">O Melhor da Cidade</h2>
+            <h2 className="text-brand-red font-display text-2xl md:text-3xl mb-4 tracking-widest uppercase">O Melhor do Rio de Janeiro</h2>
             <h1 className="text-white font-display text-6xl md:text-9xl mb-8 leading-none tracking-tighter">
               SABOR QUE <br />
               <span className="text-brand-red">SURPREENDE</span>
