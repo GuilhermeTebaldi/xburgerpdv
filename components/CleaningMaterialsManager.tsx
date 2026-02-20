@@ -278,7 +278,8 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
 
                     <div className="flex items-center justify-between text-[11px] font-bold text-slate-500">
                       <span>Minimo: {material.minStock}</span>
-                      <span>Custo: R$ {material.cost.toFixed(2)}</span>
+                      <span>Custos: R$ {material.cost.toFixed(2)}</span>
+
                     </div>
                   </div>
                 );
