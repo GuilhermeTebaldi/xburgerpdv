@@ -54,11 +54,99 @@ export class StateService {
   private readonly sessionService = new SessionService();
 
   async getAppState(): Promise<FrontAppState> {
-    const snapshot = await prisma.appState.findUnique({ where: { id: 1 } });
-    if (snapshot) {
-      return normalizeStatePayload(snapshot.stateJson);
+    try {
+      const snapshot = await prisma.appState.findUnique({ where: { id: 1 } });
+      if (snapshot) {
+        return normalizeStatePayload(snapshot.stateJson);
+      }
+    } catch (error) {
+      if (!this.isMissingAppStateTableError(error)) {
+        throw error;
+      }
     }
 
+    return this.buildStateFromDomain();
+  }
+
+  async saveAppState(state: unknown, context?: RequestContext): Promise<FrontAppState> {
+    const normalized = normalizeStatePayload(state);
+    await this.persistSnapshot(normalized, 'APP_STATE_UPSERTED', context);
+    return normalized;
+  }
+
+  async clearAppState(context?: RequestContext): Promise<FrontAppState> {
+    await this.persistSnapshot(EMPTY_APP_STATE, 'APP_STATE_CLEARED', context);
+    return EMPTY_APP_STATE;
+  }
+
+  private isMissingAppStateTableError(error: unknown): boolean {
+    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2021';
+  }
+
+  private async bootstrapAppStateTable(): Promise<void> {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS app_state (
+        id integer PRIMARY KEY DEFAULT 1,
+        state_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT app_state_singleton CHECK (id = 1)
+      )
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO app_state (id, state_json)
+      VALUES (1, '{}'::jsonb)
+      ON CONFLICT (id) DO NOTHING
+    `);
+  }
+
+  private async persistSnapshot(
+    state: FrontAppState,
+    action: 'APP_STATE_UPSERTED' | 'APP_STATE_CLEARED',
+    context?: RequestContext
+  ): Promise<void> {
+    try {
+      await this.upsertSnapshot(state, action, context);
+    } catch (error) {
+      if (!this.isMissingAppStateTableError(error)) {
+        throw error;
+      }
+
+      await this.bootstrapAppStateTable();
+      await this.upsertSnapshot(state, action, context);
+    }
+  }
+
+  private async upsertSnapshot(
+    state: FrontAppState,
+    action: 'APP_STATE_UPSERTED' | 'APP_STATE_CLEARED',
+    context?: RequestContext
+  ): Promise<void> {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.appState.upsert({
+        where: { id: 1 },
+        create: {
+          id: 1,
+          stateJson: state as unknown as Prisma.InputJsonValue,
+        },
+        update: {
+          stateJson: state as unknown as Prisma.InputJsonValue,
+        },
+      });
+
+      await new AuditService(tx).log(
+        {
+          entityName: 'app_state',
+          entityId: '1',
+          action,
+        },
+        context
+      );
+    });
+  }
+
+  private async buildStateFromDomain(): Promise<FrontAppState> {
     const currentSession = await this.sessionService.getCurrentSession();
 
     const [
@@ -187,59 +275,5 @@ export class StateService {
       globalStockEntries: globalStockMovements.map(toFrontIngredientEntry),
       globalCleaningStockEntries: globalCleaningMovements.map(toFrontCleaningEntry),
     };
-  }
-
-  async saveAppState(state: unknown, context?: RequestContext): Promise<FrontAppState> {
-    const normalized = normalizeStatePayload(state);
-
-    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      await tx.appState.upsert({
-        where: { id: 1 },
-        create: {
-          id: 1,
-          stateJson: normalized as unknown as Prisma.InputJsonValue,
-        },
-        update: {
-          stateJson: normalized as unknown as Prisma.InputJsonValue,
-        },
-      });
-
-      await new AuditService(tx).log(
-        {
-          entityName: 'app_state',
-          entityId: '1',
-          action: 'APP_STATE_UPSERTED',
-        },
-        context
-      );
-    });
-
-    return normalized;
-  }
-
-  async clearAppState(context?: RequestContext): Promise<FrontAppState> {
-    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      await tx.appState.upsert({
-        where: { id: 1 },
-        create: {
-          id: 1,
-          stateJson: EMPTY_APP_STATE as unknown as Prisma.InputJsonValue,
-        },
-        update: {
-          stateJson: EMPTY_APP_STATE as unknown as Prisma.InputJsonValue,
-        },
-      });
-
-      await new AuditService(tx).log(
-        {
-          entityName: 'app_state',
-          entityId: '1',
-          action: 'APP_STATE_CLEARED',
-        },
-        context
-      );
-    });
-
-    return EMPTY_APP_STATE;
   }
 }
