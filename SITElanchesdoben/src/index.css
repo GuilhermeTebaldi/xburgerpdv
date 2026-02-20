@@ -1,0 +1,19 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Bebas+Neue&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Bebas Neue", sans-serif;
+  --color-brand-red: #e11d48;
+  --color-brand-black: #0a0a0a;
+}
+
+@layer base {
+  body {
+    @apply bg-white text-brand-black font-sans;
+  }
+}
+
+.text-stroke {
+  -webkit-text-stroke: 1px currentColor;
+}
