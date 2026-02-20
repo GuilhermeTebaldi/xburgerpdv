@@ -23,6 +23,7 @@ export interface AppState {
 
 const STORAGE_VERSION = 2;
 const API_TIMEOUT_MS = 4000;
+const DEFAULT_API_BASE_URL = 'https://xburger-backend.onrender.com';
 
 const STORAGE_KEYS = {
   ingredients: 'qb_ingredients',
@@ -85,9 +86,9 @@ const hasValue = (value: unknown) => value !== undefined && value !== null;
 const getApiBaseUrl = (): string | null => {
   const raw = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
     ?.VITE_API_BASE_URL;
-  if (!raw) return null;
-  const normalized = raw.trim().replace(/\/+$/, '');
-  return normalized || null;
+  const normalized = raw?.trim().replace(/\/+$/, '');
+  if (normalized) return normalized;
+  return DEFAULT_API_BASE_URL;
 };
 
 const getStateApiUrl = (): string | null => {
