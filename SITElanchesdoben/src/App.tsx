@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Menu as MenuIcon, 
@@ -54,6 +54,28 @@ export default function App() {
   const [adminPassword, setAdminPassword] = useState('');
   const [adminError, setAdminError] = useState('');
   const [isAdminRedirecting, setIsAdminRedirecting] = useState(false);
+
+  useEffect(() => {
+    if (!isMenuOpen) {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsMenuOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleEscape);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [isMenuOpen]);
 
   const openAdminModal = () => {
     setAdminEmail('');
@@ -156,46 +178,81 @@ export default function App() {
           </div>
         </div>
 
-        {/* Mobile Menu */}
-        <AnimatePresence>
-          {isMenuOpen && (
-            <motion.div 
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="md:hidden bg-brand-black border-b border-white/10 overflow-hidden"
+      </nav>
+
+      {/* Mobile Side Menu */}
+      <AnimatePresence>
+        {isMenuOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsMenuOpen(false)}
+              className="md:hidden fixed inset-0 z-[70] bg-brand-black/70 backdrop-blur-sm"
+              aria-hidden="true"
+            />
+            <motion.aside
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ duration: 0.25, ease: 'easeOut' }}
+              className="md:hidden fixed top-0 right-0 z-[80] h-screen w-[85%] max-w-sm bg-brand-black border-l border-white/10 shadow-2xl"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Menu mobile"
             >
-              <div className="px-4 pt-2 pb-6 space-y-4">
-                <a href="#home" onClick={() => setIsMenuOpen(false)} className="block text-lg font-medium">Início</a>
+              <div className="h-20 px-4 border-b border-white/10 flex items-center justify-between">
+                <span className="font-display text-3xl tracking-tighter text-brand-red">MENU</span>
+                <button
+                  onClick={() => setIsMenuOpen(false)}
+                  className="p-2 text-white hover:text-brand-red transition-colors"
+                  aria-label="Fechar menu"
+                >
+                  <X size={28} />
+                </button>
+              </div>
+
+              <div className="px-4 py-6 space-y-6">
+                <a
+                  href="#home"
+                  onClick={() => setIsMenuOpen(false)}
+                  className="block text-lg font-medium text-white hover:text-brand-red transition-colors"
+                >
+                  Início
+                </a>
+
                 <div className="flex items-center gap-6 py-2">
-                  <a 
-                    href="https://www.instagram.com/lanches.doben/" 
-                    target="_blank" 
+                  <a
+                    href="https://www.instagram.com/lanches.doben/"
+                    target="_blank"
                     rel="noopener noreferrer"
                     className="text-white hover:text-brand-red transition-colors"
                   >
                     <Instagram size={24} />
                   </a>
-                  <a 
-                    href="https://www.facebook.com/lanches.dobem.2025?mibextid=wwXIfr&rdid=joCIhkS38u0Amnma&share_url=https%3A%2F%2Fwww.facebook.com%2Fshare%2F1C8gGroWcL%2F%3Fmibextid%3DwwXIfr%26ref%3D1#" 
-                    target="_blank" 
+                  <a
+                    href="https://www.facebook.com/lanches.dobem.2025?mibextid=wwXIfr&rdid=joCIhkS38u0Amnma&share_url=https%3A%2F%2Fwww.facebook.com%2Fshare%2F1C8gGroWcL%2F%3Fmibextid%3DwwXIfr%26ref%3D1#"
+                    target="_blank"
                     rel="noopener noreferrer"
                     className="text-white hover:text-brand-red transition-colors"
                   >
                     <Facebook size={24} />
                   </a>
                 </div>
-                <button 
+
+                <button
                   onClick={() => {
                     setIsMenuOpen(false);
                     openAdminModal();
-                  }} 
-                  className="text-lg font-medium w-full text-left flex items-center gap-2"
+                  }}
+                  className="text-lg font-medium w-full text-left text-white hover:text-brand-red transition-colors flex items-center gap-2"
                 >
                   <Lock size={18} />
                   Admin
                 </button>
-                <button 
+
+                <button
                   onClick={() => {
                     setIsMenuOpen(false);
                     handleWhatsApp();
@@ -206,10 +263,10 @@ export default function App() {
                   Pedir Agora
                 </button>
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </nav>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Floating Hours Bar */}
       <div className="fixed bottom-6 left-6 z-[60]">
