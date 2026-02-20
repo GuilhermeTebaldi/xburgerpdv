@@ -249,7 +249,7 @@ export default function App() {
                     setIsMenuOpen(false);
                     openAdminModal();
                   }} 
-                  className="block text-lg font-medium w-full text-left flex items-center gap-2"
+                  className="text-lg font-medium w-full text-left flex items-center gap-2"
                 >
                   <Lock size={18} />
                   Admin
