@@ -7,9 +7,8 @@
     "dev": "sh -c 'npm run dev:site & npm run dev:sistema & wait'",
     "dev:site": "npm run dev --prefix SITElanchesdoben",
     "dev:sistema": "vite",
-    "build": "npm run install:site && npm run build:site && npm run build:sistema && npm run build:merge",
-    "install:site": "npm ci --prefix SITElanchesdoben",
-    "build:site": "npm run build --prefix SITElanchesdoben -- --outDir ../.tmp/site-dist",
+    "build": "npm run build:site && npm run build:sistema && npm run build:merge",
+    "build:site": "npm ci --include=dev --prefix SITElanchesdoben && npm run build --prefix SITElanchesdoben -- --outDir ../.tmp/site-dist",
     "build:sistema": "vite build --outDir .tmp/sistema-dist",
     "build:merge": "node scripts/merge-builds.mjs",
     "preview": "vite preview"
