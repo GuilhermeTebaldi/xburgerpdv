@@ -14,7 +14,6 @@ import {
   MapPin, 
   Phone, 
   Clock,
-  ChevronRight,
   Star,
   Lock
 } from 'lucide-react';
@@ -47,68 +46,14 @@ const resolveAdminSystemUrl = () => {
   return withPath(PRODUCTION_FALLBACK_ORIGIN, systemPath);
 };
 
-const MENU_ITEMS = [
-  {
-    id: 1,
-    name: "Ben Monstro",
-    description: "Pão brioche, 2 blends de 180g, muito cheddar, bacon crocante e maionese da casa.",
-    price: "R$ 38,90",
-    category: "Burgers",
-    image: "https://picsum.photos/seed/burger1/600/400"
-  },
-  {
-    id: 2,
-    name: "Clássico do Ben",
-    description: "Pão com gergelim, blend 150g, queijo prato, alface, tomate e cebola roxa.",
-    price: "R$ 28,90",
-    category: "Burgers",
-    image: "https://picsum.photos/seed/burger2/600/400"
-  },
-  {
-    id: 3,
-    name: "Cheddar Lover",
-    description: "Pão australiano, blend 150g, cebola caramelizada e piscina de cheddar.",
-    price: "R$ 32,90",
-    category: "Burgers",
-    image: "https://picsum.photos/seed/burger3/600/400"
-  },
-  {
-    id: 4,
-    name: "Batata Suprema",
-    description: "Batata frita palito com cheddar cremoso e farofa de bacon.",
-    price: "R$ 22,90",
-    category: "Acompanhamentos",
-    image: "https://picsum.photos/seed/fries1/600/400"
-  },
-  {
-    id: 5,
-    name: "Onion Rings",
-    description: "Anéis de cebola empanados e super crocantes com molho barbecue.",
-    price: "R$ 18,90",
-    category: "Acompanhamentos",
-    image: "https://picsum.photos/seed/onions/600/400"
-  },
-  {
-    id: 6,
-    name: "Milkshake Morango",
-    description: "Sorvete premium de morango, calda artesanal e chantilly.",
-    price: "R$ 16,90",
-    category: "Bebidas",
-    image: "https://picsum.photos/seed/shake/600/400"
-  }
-];
-
 export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [activeCategory, setActiveCategory] = useState("Todos");
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [isHoursOpen, setIsHoursOpen] = useState(false);
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [adminError, setAdminError] = useState('');
   const [isAdminRedirecting, setIsAdminRedirecting] = useState(false);
-
-  const categories = ["Todos", "Burgers", "Acompanhamentos", "Bebidas"];
 
   const openAdminModal = () => {
     setAdminEmail('');
@@ -150,10 +95,6 @@ export default function App() {
     const message = encodeURIComponent("Olá! Gostaria de fazer um pedido.");
     window.open(`https://wa.me/5521983659826?text=${message}`, '_blank');
   };
-  
-  const filteredMenu = activeCategory === "Todos" 
-    ? MENU_ITEMS 
-    : MENU_ITEMS.filter(item => item.category === activeCategory);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -447,78 +388,6 @@ export default function App() {
             </div>
           </div>
         </motion.div>
-      </section>
-
-      {/* Menu Section */}
-      <section id="menu" className="py-24 bg-white">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="text-center mb-16">
-            <h2 className="text-brand-red font-display text-2xl mb-2">Nosso Cardápio</h2>
-            <h3 className="text-brand-black font-display text-5xl md:text-6xl">ESCOLHA O SEU FAVORITO</h3>
-          </div>
-
-          {/* Category Filter */}
-          <div className="flex flex-wrap justify-center gap-4 mb-12">
-            {categories.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setActiveCategory(cat)}
-                className={`px-8 py-2 rounded-full font-bold transition-all ${
-                  activeCategory === cat 
-                    ? 'bg-brand-red text-white shadow-lg shadow-brand-red/20' 
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-
-          {/* Grid */}
-          <motion.div 
-            layout
-            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8"
-          >
-            <AnimatePresence mode='popLayout'>
-              {filteredMenu.map((item) => (
-                <motion.div
-                  key={item.id}
-                  layout
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  transition={{ duration: 0.3 }}
-                  className="group bg-white rounded-3xl overflow-hidden border border-gray-100 hover:border-brand-red/20 hover:shadow-2xl transition-all"
-                >
-                  <div className="relative h-64 overflow-hidden">
-                    <img 
-                      src={item.image} 
-                      alt={item.name} 
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                      referrerPolicy="no-referrer"
-                    />
-                    <div className="absolute top-4 right-4 bg-brand-black text-white px-4 py-1 rounded-full font-bold text-sm">
-                      {item.price}
-                    </div>
-                  </div>
-                  <div className="p-6">
-                    <h4 className="font-display text-2xl mb-2 group-hover:text-brand-red transition-colors">{item.name}</h4>
-                    <p className="text-gray-500 text-sm leading-relaxed mb-6">
-                      {item.description}
-                    </p>
-                    <button 
-                      onClick={handleWhatsApp}
-                      className="w-full border-2 border-brand-black hover:bg-brand-black hover:text-white py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2"
-                    >
-                      Pedir via WhatsApp
-                      <ChevronRight size={18} />
-                    </button>
-                  </div>
-                </motion.div>
-              ))}
-            </AnimatePresence>
-          </motion.div>
-        </div>
       </section>
 
       {/* Contact Section */}
