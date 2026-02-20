@@ -22,21 +22,18 @@
       ]
     }
   ],
-  "routes": [
+  "rewrites": [
     {
-      "handle": "filesystem"
+      "source": "/sistema",
+      "destination": "/sistema/index.html"
     },
     {
-      "src": "^/sistema/assets/(.*)$",
-      "dest": "/sistema/assets/$1"
+      "source": "/sistema/:path*",
+      "destination": "/sistema/index.html"
     },
     {
-      "src": "^/sistema(?:/.*)?$",
-      "dest": "/sistema/index.html"
-    },
-    {
-      "src": "^/(.*)$",
-      "dest": "/index.html"
+      "source": "/:path*",
+      "destination": "/index.html"
     }
   ]
 }
