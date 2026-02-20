@@ -22,6 +22,7 @@ export interface AppState {
 }
 
 const STORAGE_VERSION = 2;
+const API_TIMEOUT_MS = 4000;
 
 const STORAGE_KEYS = {
   ingredients: 'qb_ingredients',
@@ -81,6 +82,37 @@ const DATA_KEYS = [
 
 const hasValue = (value: unknown) => value !== undefined && value !== null;
 
+const getApiBaseUrl = (): string | null => {
+  const raw = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
+    ?.VITE_API_BASE_URL;
+  if (!raw) return null;
+  const normalized = raw.trim().replace(/\/+$/, '');
+  return normalized || null;
+};
+
+const getStateApiUrl = (): string | null => {
+  const baseUrl = getApiBaseUrl();
+  return baseUrl ? `${baseUrl}/api/v1/state` : null;
+};
+
+const fetchWithTimeout = async (
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = API_TIMEOUT_MS
+): Promise<Response> => {
+  const controller = new AbortController();
+  const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    globalThis.clearTimeout(timer);
+  }
+};
+
 const toArray = <T>(value: unknown, fallback: T[]): T[] => {
   if (Array.isArray(value)) return value as T[];
   return [...fallback];
@@ -96,6 +128,90 @@ const reviveTimestamp = <T extends { timestamp?: unknown }>(item: T): T => {
 
 const reviveListWithDates = <T extends { timestamp?: unknown }>(items: T[]): T[] =>
   items.map(reviveTimestamp);
+
+const normalizeStateRecord = (
+  source: Record<string, unknown>,
+  defaults: AppState
+): AppState => ({
+  ingredients: toArray<Ingredient>(source.ingredients, defaults.ingredients),
+  products: toArray<Product>(source.products, defaults.products),
+  sales: reviveListWithDates(toArray<Sale>(source.sales, defaults.sales)),
+  stockEntries: reviveListWithDates(toArray<StockEntry>(source.stockEntries, defaults.stockEntries)),
+  cleaningMaterials: toArray<CleaningMaterial>(source.cleaningMaterials, defaults.cleaningMaterials),
+  cleaningStockEntries: reviveListWithDates(
+    toArray<CleaningStockEntry>(source.cleaningStockEntries, defaults.cleaningStockEntries)
+  ),
+  globalSales: reviveListWithDates(toArray<Sale>(source.globalSales, defaults.globalSales)),
+  globalCancelledSales: reviveListWithDates(
+    toArray<Sale>(source.globalCancelledSales, defaults.globalCancelledSales)
+  ),
+  globalStockEntries: reviveListWithDates(
+    toArray<StockEntry>(source.globalStockEntries, defaults.globalStockEntries)
+  ),
+  globalCleaningStockEntries: reviveListWithDates(
+    toArray<CleaningStockEntry>(
+      source.globalCleaningStockEntries,
+      defaults.globalCleaningStockEntries
+    )
+  ),
+});
+
+const tryLoadRemoteState = async (defaults: AppState): Promise<AppState | null> => {
+  const apiUrl = getStateApiUrl();
+  if (!apiUrl) return null;
+
+  try {
+    const response = await fetchWithTimeout(apiUrl, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+    if (!response.ok) return null;
+
+    const payload = (await response.json()) as unknown;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return null;
+    }
+
+    const normalized = normalizeStateRecord(payload as Record<string, unknown>, defaults);
+    return sanitizeLegacySeeds(normalized);
+  } catch {
+    return null;
+  }
+};
+
+const trySaveRemoteState = async (state: AppState): Promise<boolean> => {
+  const apiUrl = getStateApiUrl();
+  if (!apiUrl) return false;
+
+  try {
+    const response = await fetchWithTimeout(apiUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(state),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+};
+
+const tryClearRemoteState = async (): Promise<boolean> => {
+  const apiUrl = getStateApiUrl();
+  if (!apiUrl) return false;
+
+  try {
+    const response = await fetchWithTimeout(apiUrl, {
+      method: 'DELETE',
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+};
 
 const sanitizeLegacySeeds = (state: AppState): AppState => {
   const products = state.products.filter((product) => !LEGACY_PRODUCT_IDS.has(product.id));
@@ -158,6 +274,17 @@ const safeGetVersion = async (): Promise<number> => {
 };
 
 export const loadAppState = async (defaults: AppState = DEFAULT_APP_STATE): Promise<AppState> => {
+  const remoteState = await tryLoadRemoteState(defaults);
+  if (remoteState) {
+    try {
+      await setMany(serializeState(remoteState));
+      await setItem(STORAGE_KEYS.metaVersion, STORAGE_VERSION);
+    } catch {
+      // ignore local cache sync failures when remote state is available
+    }
+    return remoteState;
+  }
+
   let stored: Record<string, unknown> = {};
   let usedLegacy = false;
   let migratedToDb = false;
@@ -184,39 +311,21 @@ export const loadAppState = async (defaults: AppState = DEFAULT_APP_STATE): Prom
     }
   }
 
-  const loadedState: AppState = {
-    ingredients: toArray<Ingredient>(stored[STORAGE_KEYS.ingredients], defaults.ingredients),
-    products: toArray<Product>(stored[STORAGE_KEYS.products], defaults.products),
-    sales: reviveListWithDates(toArray<Sale>(stored[STORAGE_KEYS.sales], defaults.sales)),
-    stockEntries: reviveListWithDates(
-      toArray<StockEntry>(stored[STORAGE_KEYS.stockEntries], defaults.stockEntries)
-    ),
-    cleaningMaterials: toArray<CleaningMaterial>(
-      stored[STORAGE_KEYS.cleaningMaterials],
-      defaults.cleaningMaterials
-    ),
-    cleaningStockEntries: reviveListWithDates(
-      toArray<CleaningStockEntry>(
-        stored[STORAGE_KEYS.cleaningStockEntries],
-        defaults.cleaningStockEntries
-      )
-    ),
-    globalSales: reviveListWithDates(
-      toArray<Sale>(stored[STORAGE_KEYS.globalSales], defaults.globalSales)
-    ),
-    globalCancelledSales: reviveListWithDates(
-      toArray<Sale>(stored[STORAGE_KEYS.globalCancelledSales], defaults.globalCancelledSales)
-    ),
-    globalStockEntries: reviveListWithDates(
-      toArray<StockEntry>(stored[STORAGE_KEYS.globalStockEntries], defaults.globalStockEntries)
-    ),
-    globalCleaningStockEntries: reviveListWithDates(
-      toArray<CleaningStockEntry>(
-        stored[STORAGE_KEYS.globalCleaningStockEntries],
-        defaults.globalCleaningStockEntries
-      )
-    ),
-  };
+  const loadedState: AppState = normalizeStateRecord(
+    {
+      ingredients: stored[STORAGE_KEYS.ingredients],
+      products: stored[STORAGE_KEYS.products],
+      sales: stored[STORAGE_KEYS.sales],
+      stockEntries: stored[STORAGE_KEYS.stockEntries],
+      cleaningMaterials: stored[STORAGE_KEYS.cleaningMaterials],
+      cleaningStockEntries: stored[STORAGE_KEYS.cleaningStockEntries],
+      globalSales: stored[STORAGE_KEYS.globalSales],
+      globalCancelledSales: stored[STORAGE_KEYS.globalCancelledSales],
+      globalStockEntries: stored[STORAGE_KEYS.globalStockEntries],
+      globalCleaningStockEntries: stored[STORAGE_KEYS.globalCleaningStockEntries],
+    },
+    defaults
+  );
 
   const sanitized = sanitizeLegacySeeds(loadedState);
   const didSanitize =
@@ -244,6 +353,14 @@ export const loadAppState = async (defaults: AppState = DEFAULT_APP_STATE): Prom
 };
 
 export const saveAppState = async (state: AppState): Promise<void> => {
+  const apiUrl = getStateApiUrl();
+  if (apiUrl) {
+    const remoteSaved = await trySaveRemoteState(state);
+    if (!remoteSaved) {
+      // fallback to local persistence below
+    }
+  }
+
   const payload = serializeState(state);
   try {
     await setMany(payload);
@@ -258,6 +375,14 @@ export const saveAppState = async (state: AppState): Promise<void> => {
 };
 
 export const clearAppState = async (): Promise<void> => {
+  const apiUrl = getStateApiUrl();
+  if (apiUrl) {
+    const remoteCleared = await tryClearRemoteState();
+    if (!remoteCleared) {
+      // fallback to local clear below
+    }
+  }
+
   try {
     await clearStore();
   } catch {
