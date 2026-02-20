@@ -1,4 +1,4 @@
-import { Prisma, ProductCategory, type Product } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
 import type { RequestContext } from '../types/request-context.js';
@@ -11,12 +11,16 @@ interface ProductRecipeInput {
   quantity: number;
 }
 
+type ProductCategoryValue = 'SNACK' | 'DRINK' | 'SIDE';
+type ProductModel = Prisma.ProductGetPayload<Prisma.ProductDefaultArgs>;
+type RecipeAuditItem = { ingredientId: string; quantity: Prisma.Decimal };
+
 interface UpsertProductInput {
   externalId?: string;
   name?: string;
   price?: number;
   imageUrl?: string;
-  category?: ProductCategory;
+  category?: ProductCategoryValue;
   recipe?: ProductRecipeInput[];
 }
 
@@ -74,7 +78,7 @@ export class ProductService {
     });
 
     if (found.length !== ingredientIds.length) {
-      const foundIds = new Set(found.map((ingredient) => ingredient.id));
+      const foundIds = new Set(found.map((ingredient: { id: string }) => ingredient.id));
       const missingIds = ingredientIds.filter((id) => !foundIds.has(id));
       throw new HttpError(422, 'Receita contém insumos inexistentes ou inativos.', { missingIds });
     }
@@ -95,7 +99,7 @@ export class ProductService {
           name: input.name as string,
           price: toDecimal(input.price ?? 0),
           imageUrl: input.imageUrl as string,
-          category: input.category as ProductCategory,
+          category: input.category as ProductCategoryValue,
           recipeItems: {
             createMany: {
               data: recipe.map((item) => ({
@@ -192,7 +196,7 @@ export class ProductService {
             name: withRecipe.name,
             category: withRecipe.category,
             price: withRecipe.price.toNumber(),
-            recipe: withRecipe.recipeItems.map((item) => ({
+            recipe: withRecipe.recipeItems.map((item: RecipeAuditItem) => ({
               ingredientId: item.ingredientId,
               quantity: item.quantity.toNumber(),
             })),
@@ -227,7 +231,7 @@ export class ProductService {
     });
   }
 
-  async ensureProductExists(id: string): Promise<Product> {
+  async ensureProductExists(id: string): Promise<ProductModel> {
     const product = await prisma.product.findFirst({
       where: { id, isActive: true },
     });

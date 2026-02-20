@@ -25,5 +25,21 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "include": [
+    "*.ts",
+    "*.tsx",
+    "components/**/*.ts",
+    "components/**/*.tsx",
+    "data/**/*.ts",
+    "utils/**/*.ts",
+    "scripts/**/*.ts"
+  ],
+  "exclude": [
+    "backend",
+    "SITElanchesdoben",
+    "dist",
+    ".tmp",
+    "node_modules"
+  ]
 }
