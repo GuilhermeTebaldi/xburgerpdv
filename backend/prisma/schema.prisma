@@ -1,0 +1,363 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  AUDITOR
+}
+
+enum ProductCategory {
+  SNACK
+  DRINK
+  SIDE
+}
+
+enum SessionStatus {
+  OPEN
+  CLOSED
+}
+
+enum SaleStatus {
+  ACTIVE
+  PARTIALLY_REFUNDED
+  REFUNDED
+}
+
+enum RefundType {
+  FULL
+  PARTIAL
+}
+
+enum StockTargetType {
+  INGREDIENT
+  CLEANING_MATERIAL
+}
+
+enum StockDirection {
+  IN
+  OUT
+}
+
+enum StockMovementReason {
+  MANUAL
+  SALE
+  REFUND
+  SYSTEM
+}
+
+enum ActionOrigin {
+  API
+  SYSTEM
+  IMPORT
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique @db.VarChar(255)
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  name         String?  @db.VarChar(120)
+  role         UserRole @default(ADMIN)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  salesOpened         Sale[]             @relation("SaleCreatedBy")
+  refundsOpened       Refund[]           @relation("RefundCreatedBy")
+  sessionsOpened      OperatingSession[] @relation("SessionOpenedBy")
+  sessionsClosed      OperatingSession[] @relation("SessionClosedBy")
+  stockMovements      StockMovement[]    @relation("StockMovementCreatedBy")
+  auditLogsAuthored   AuditLog[]         @relation("AuditAuthor")
+
+  @@map("users")
+}
+
+model Ingredient {
+  id           String   @id @default(uuid()) @db.Uuid
+  externalId   String?  @unique @map("external_id") @db.VarChar(80)
+  name         String   @db.VarChar(120)
+  unit         String   @db.VarChar(30)
+  currentStock Decimal  @map("current_stock") @db.Decimal(14, 4)
+  minStock     Decimal  @map("min_stock") @db.Decimal(14, 4)
+  cost         Decimal  @db.Decimal(14, 4)
+  addonPrice   Decimal? @map("addon_price") @db.Decimal(14, 4)
+  imageUrl     String?  @map("image_url") @db.VarChar(1024)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  productLinks          ProductIngredient[]
+  stockMovements        StockMovement[]
+  saleItemIngredients   SaleItemIngredient[]
+  refundItemIngredients RefundItemIngredient[]
+
+  @@index([name])
+  @@map("ingredients")
+}
+
+model CleaningMaterial {
+  id           String   @id @default(uuid()) @db.Uuid
+  externalId   String?  @unique @map("external_id") @db.VarChar(80)
+  name         String   @db.VarChar(120)
+  unit         String   @db.VarChar(30)
+  currentStock Decimal  @map("current_stock") @db.Decimal(14, 4)
+  minStock     Decimal  @map("min_stock") @db.Decimal(14, 4)
+  cost         Decimal  @db.Decimal(14, 4)
+  imageUrl     String?  @map("image_url") @db.VarChar(1024)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  stockMovements StockMovement[]
+
+  @@index([name])
+  @@map("cleaning_materials")
+}
+
+model Product {
+  id         String          @id @default(uuid()) @db.Uuid
+  externalId String?         @unique @map("external_id") @db.VarChar(80)
+  name       String          @db.VarChar(120)
+  price      Decimal         @db.Decimal(14, 2)
+  imageUrl   String          @map("image_url") @db.VarChar(1024)
+  category   ProductCategory
+  isActive   Boolean         @default(true) @map("is_active")
+  createdAt  DateTime        @default(now()) @map("created_at")
+  updatedAt  DateTime        @updatedAt @map("updated_at")
+
+  recipeItems ProductIngredient[]
+  saleItems   SaleItem[]
+
+  @@index([name])
+  @@map("products")
+}
+
+model ProductIngredient {
+  productId    String   @map("product_id") @db.Uuid
+  ingredientId String   @map("ingredient_id") @db.Uuid
+  quantity     Decimal  @db.Decimal(14, 4)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@id([productId, ingredientId])
+  @@index([ingredientId])
+  @@map("product_ingredients")
+}
+
+model OperatingSession {
+  id             String        @id @default(uuid()) @db.Uuid
+  status         SessionStatus @default(OPEN)
+  startedAt      DateTime      @default(now()) @map("started_at")
+  endedAt        DateTime?     @map("ended_at")
+  openedByUserId String?       @map("opened_by_user_id") @db.Uuid
+  closedByUserId String?       @map("closed_by_user_id") @db.Uuid
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  openedBy      User?           @relation("SessionOpenedBy", fields: [openedByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  closedBy      User?           @relation("SessionClosedBy", fields: [closedByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  sales         Sale[]
+  stockMovements StockMovement[]
+
+  @@index([status])
+  @@index([startedAt])
+  @@map("operating_sessions")
+}
+
+model Sale {
+  id             String     @id @default(uuid()) @db.Uuid
+  externalId     String?    @unique @map("external_id") @db.VarChar(80)
+  sessionId      String     @map("session_id") @db.Uuid
+  status         SaleStatus @default(ACTIVE)
+  totalGross     Decimal    @map("total_gross") @db.Decimal(14, 2)
+  totalNet       Decimal    @map("total_net") @db.Decimal(14, 2)
+  totalCost      Decimal    @map("total_cost") @db.Decimal(14, 4)
+  totalRefunded  Decimal    @default(0) @map("total_refunded") @db.Decimal(14, 2)
+  createdByUserId String?   @map("created_by_user_id") @db.Uuid
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+
+  session        OperatingSession @relation(fields: [sessionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy      User?            @relation("SaleCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  items          SaleItem[]
+  refunds        Refund[]
+  stockMovements StockMovement[]
+
+  @@index([sessionId, createdAt])
+  @@index([status, createdAt])
+  @@map("sales")
+}
+
+model SaleItem {
+  id                 String   @id @default(uuid()) @db.Uuid
+  saleId             String   @map("sale_id") @db.Uuid
+  productId          String?  @map("product_id") @db.Uuid
+  productNameSnapshot String  @map("product_name_snapshot") @db.VarChar(120)
+  quantity           Int
+  unitPrice          Decimal  @map("unit_price") @db.Decimal(14, 2)
+  baseUnitPrice      Decimal? @map("base_unit_price") @db.Decimal(14, 2)
+  priceAdjustment    Decimal? @map("price_adjustment") @db.Decimal(14, 2)
+  unitCost           Decimal  @map("unit_cost") @db.Decimal(14, 4)
+  baseUnitCost       Decimal? @map("base_unit_cost") @db.Decimal(14, 4)
+  lineTotal          Decimal  @map("line_total") @db.Decimal(14, 2)
+  lineCost           Decimal  @map("line_cost") @db.Decimal(14, 4)
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  sale     Sale      @relation(fields: [saleId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  product  Product?  @relation(fields: [productId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  ingredients SaleItemIngredient[]
+  refundItems RefundItem[]
+
+  @@index([saleId])
+  @@index([productId])
+  @@map("sale_items")
+}
+
+model SaleItemIngredient {
+  id                   String   @id @default(uuid()) @db.Uuid
+  saleItemId           String   @map("sale_item_id") @db.Uuid
+  ingredientId         String?  @map("ingredient_id") @db.Uuid
+  ingredientNameSnapshot String @map("ingredient_name_snapshot") @db.VarChar(120)
+  unitSnapshot         String   @map("unit_snapshot") @db.VarChar(30)
+  quantity             Decimal  @db.Decimal(14, 4)
+  unitCost             Decimal  @map("unit_cost") @db.Decimal(14, 4)
+  lineCost             Decimal  @map("line_cost") @db.Decimal(14, 4)
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  saleItem SaleItem    @relation(fields: [saleItemId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  ingredient Ingredient? @relation(fields: [ingredientId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  refundItemIngredients RefundItemIngredient[]
+
+  @@index([saleItemId])
+  @@index([ingredientId])
+  @@map("sale_item_ingredients")
+}
+
+model Refund {
+  id                String     @id @default(uuid()) @db.Uuid
+  saleId            String     @map("sale_id") @db.Uuid
+  type              RefundType
+  reason            String?    @db.VarChar(400)
+  totalAmount       Decimal    @map("total_amount") @db.Decimal(14, 2)
+  totalCostReversed Decimal    @map("total_cost_reversed") @db.Decimal(14, 4)
+  createdByUserId   String?    @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime   @default(now()) @map("created_at")
+  updatedAt         DateTime   @updatedAt @map("updated_at")
+
+  sale           Sale           @relation(fields: [saleId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy      User?          @relation("RefundCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  items          RefundItem[]
+  stockMovements StockMovement[]
+
+  @@index([saleId, createdAt])
+  @@map("refunds")
+}
+
+model RefundItem {
+  id           String   @id @default(uuid()) @db.Uuid
+  refundId     String   @map("refund_id") @db.Uuid
+  saleItemId   String   @map("sale_item_id") @db.Uuid
+  quantity     Int
+  amount       Decimal  @db.Decimal(14, 2)
+  costReversed Decimal  @map("cost_reversed") @db.Decimal(14, 4)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  refund      Refund     @relation(fields: [refundId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  saleItem    SaleItem   @relation(fields: [saleItemId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  ingredients RefundItemIngredient[]
+
+  @@index([refundId])
+  @@index([saleItemId])
+  @@map("refund_items")
+}
+
+model RefundItemIngredient {
+  id                    String   @id @default(uuid()) @db.Uuid
+  refundItemId          String   @map("refund_item_id") @db.Uuid
+  saleItemIngredientId  String   @map("sale_item_ingredient_id") @db.Uuid
+  ingredientId          String?  @map("ingredient_id") @db.Uuid
+  ingredientNameSnapshot String  @map("ingredient_name_snapshot") @db.VarChar(120)
+  quantity              Decimal  @db.Decimal(14, 4)
+  unitCost              Decimal  @map("unit_cost") @db.Decimal(14, 4)
+  lineCost              Decimal  @map("line_cost") @db.Decimal(14, 4)
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  refundItem         RefundItem          @relation(fields: [refundItemId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  saleItemIngredient SaleItemIngredient  @relation(fields: [saleItemIngredientId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  ingredient         Ingredient?         @relation(fields: [ingredientId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([refundItemId])
+  @@index([saleItemIngredientId])
+  @@index([ingredientId])
+  @@map("refund_item_ingredients")
+}
+
+model StockMovement {
+  id                String              @id @default(uuid()) @db.Uuid
+  targetType        StockTargetType     @map("target_type")
+  direction         StockDirection
+  reason            StockMovementReason
+  quantity          Decimal             @db.Decimal(14, 4)
+  unitCost          Decimal             @map("unit_cost") @db.Decimal(14, 4)
+  totalCost         Decimal             @map("total_cost") @db.Decimal(14, 4)
+  isManual          Boolean             @default(false) @map("is_manual")
+  note              String?             @db.VarChar(400)
+  sessionId         String?             @map("session_id") @db.Uuid
+  saleId            String?             @map("sale_id") @db.Uuid
+  refundId          String?             @map("refund_id") @db.Uuid
+  ingredientId      String?             @map("ingredient_id") @db.Uuid
+  cleaningMaterialId String?            @map("cleaning_material_id") @db.Uuid
+  createdByUserId   String?             @map("created_by_user_id") @db.Uuid
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+
+  session          OperatingSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  sale             Sale?             @relation(fields: [saleId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  refund           Refund?           @relation(fields: [refundId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  ingredient       Ingredient?       @relation(fields: [ingredientId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  cleaningMaterial CleaningMaterial? @relation(fields: [cleaningMaterialId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  createdBy        User?             @relation("StockMovementCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([targetType, createdAt])
+  @@index([sessionId, createdAt])
+  @@index([ingredientId, createdAt])
+  @@index([cleaningMaterialId, createdAt])
+  @@index([saleId])
+  @@index([refundId])
+  @@map("stock_movements")
+}
+
+model AuditLog {
+  id           String       @id @default(uuid()) @db.Uuid
+  entityName   String       @map("entity_name") @db.VarChar(80)
+  entityId     String       @map("entity_id") @db.VarChar(80)
+  action       String       @db.VarChar(80)
+  origin       ActionOrigin @default(API)
+  actorUserId  String?      @map("actor_user_id") @db.Uuid
+  requestId    String?      @map("request_id") @db.VarChar(120)
+  ipAddress    String?      @map("ip_address") @db.VarChar(64)
+  userAgent    String?      @map("user_agent") @db.VarChar(512)
+  beforeData   Json?        @map("before_data")
+  afterData    Json?        @map("after_data")
+  metadata     Json?
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  actor User? @relation("AuditAuthor", fields: [actorUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([entityName, entityId, createdAt])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
