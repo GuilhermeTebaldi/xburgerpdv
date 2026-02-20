@@ -26,15 +26,11 @@
       "handle": "filesystem"
     },
     {
-      "src": "^/sistema(?:/)?$",
+      "src": "/sistema(?:/.*)?",
       "dest": "/sistema/index.html"
     },
     {
-      "src": "^/sistema/(?!.*\\..*).*$",
-      "dest": "/sistema/index.html"
-    },
-    {
-      "src": "^/(?!.*\\..*).*$",
+      "src": "/(.*)",
       "dest": "/index.html"
     }
   ]
