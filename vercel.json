@@ -1,16 +1,40 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "headers": [
+    {
+      "source": "/index.html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/sistema/index.html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        }
+      ]
+    }
+  ],
   "routes": [
     {
       "handle": "filesystem"
     },
     {
-      "src": "/sistema(?:/.*)?",
+      "src": "^/sistema(?:/)?$",
       "dest": "/sistema/index.html"
     },
     {
-      "src": "/(.*)",
+      "src": "^/sistema/(?!.*\\..*).*$",
+      "dest": "/sistema/index.html"
+    },
+    {
+      "src": "^/(?!.*\\..*).*$",
       "dest": "/index.html"
     }
   ]
