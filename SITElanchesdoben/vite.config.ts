@@ -5,7 +5,7 @@ import {defineConfig, loadEnv} from 'vite';
 
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
-  const adminProxyTarget = env.VITE_ADMIN_PROXY_TARGET || 'http://localhost:3000';
+  const adminProxyTarget = env.VITE_ADMIN_PROXY_TARGET || 'http://localhost:3001';
   return {
     plugins: [react(), tailwindcss()],
     define: {
@@ -25,7 +25,7 @@ export default defineConfig(({mode}) => {
         '/sistema': {
           target: adminProxyTarget,
           changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/sistema/, ''),
+          ws: true,
         },
       },
     },

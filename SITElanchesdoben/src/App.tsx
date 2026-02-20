@@ -37,7 +37,7 @@ const withPath = (origin: string, path: string) => {
 
 const resolveAdminSystemUrl = () => {
   const systemPath = normalizePath(
-    (import.meta.env.VITE_ADMIN_SYSTEM_PATH as string | undefined) || '/sistema'
+    (import.meta.env.VITE_ADMIN_SYSTEM_PATH as string | undefined) || '/sistema/'
   );
 
   if (typeof window !== 'undefined') {
@@ -133,7 +133,8 @@ export default function App() {
     if (normalizedEmail === ADMIN_EMAIL && adminPassword === ADMIN_PASSWORD) {
       setIsAdminRedirecting(true);
       setAdminError('');
-      localStorage.setItem('lanchesdoben_admin_gate', 'authenticated');
+      window.sessionStorage.setItem('lanchesdoben_admin_gate', 'authenticated');
+      window.localStorage.removeItem('lanchesdoben_admin_gate');
       const targetUrl = resolveAdminSystemUrl();
       window.location.href = targetUrl;
       setIsAdminRedirecting(false);

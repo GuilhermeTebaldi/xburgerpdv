@@ -25,11 +25,23 @@ import {
 import { DEFAULT_APP_STATE, loadAppState, saveAppState, clearAppState } from './data/appStorage';
 import { aggregateRecipe, calculateRecipeCost } from './utils/recipe';
 
+const ADMIN_GATE_KEY = 'lanchesdoben_admin_gate';
+
+const resolveSiteRootUrl = () => {
+  if (typeof window === 'undefined') return '/';
+  const { protocol, hostname, port, origin } = window.location;
+  if (port === '3001') {
+    return `${protocol}//${hostname}:3000/`;
+  }
+  return `${origin}/`;
+};
+
 const App: React.FC = () => {
   const [view, setView] = useState<ViewMode>(ViewMode.POS);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [activeCategory, setActiveCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isAccessVerified, setIsAccessVerified] = useState(false);
   
   const [isHydrated, setIsHydrated] = useState(false);
   const [ingredients, setIngredients] = useState<Ingredient[]>(DEFAULT_APP_STATE.ingredients);
@@ -60,6 +72,25 @@ const App: React.FC = () => {
   });
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      setIsAccessVerified(true);
+      return;
+    }
+
+    const hasPortalAccess = window.sessionStorage.getItem(ADMIN_GATE_KEY) === 'authenticated';
+    if (!hasPortalAccess) {
+      // Clean legacy persistent key so direct access cannot bypass login flow.
+      window.localStorage.removeItem(ADMIN_GATE_KEY);
+      window.location.replace(resolveSiteRootUrl());
+      return;
+    }
+
+    setIsAccessVerified(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isAccessVerified) return;
+
     let cancelled = false;
     loadAppState(DEFAULT_APP_STATE)
       .then((state) => {
@@ -85,9 +116,10 @@ const App: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isAccessVerified]);
 
   useEffect(() => {
+    if (!isAccessVerified) return;
     if (!isHydrated) return;
     void saveAppState({
       ingredients,
@@ -374,6 +406,14 @@ const App: React.FC = () => {
     'Drink': 'Bebidas',
     'Side': 'Extras'
   };
+
+  if (!isAccessVerified) {
+    return (
+      <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center p-6">
+        <p className="font-black uppercase tracking-widest text-xs">Validando acesso...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="qb-app min-h-screen bg-slate-50 flex flex-col">

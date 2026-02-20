@@ -4,7 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "sh -c 'npm run dev:site & npm run dev:sistema & wait'",
+    "dev:site": "npm run dev --prefix SITElanchesdoben",
+    "dev:sistema": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
