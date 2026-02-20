@@ -1,5 +1,5 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Ingredient, StockEntry } from '../types';
 
 interface InventoryManagerProps {
@@ -15,8 +15,18 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({ ingredients, entrie
   const [replenishValues, setReplenishValues] = useState<Record<string, string>>({});
   const [showHistory, setShowHistory] = useState(false);
   const [deleteMenuId, setDeleteMenuId] = useState<string | null>(null);
+  const [searchValue, setSearchValue] = useState('');
   
   const timerRef = useRef<number | null>(null);
+  const normalizedSearch = searchValue.trim().toLowerCase();
+
+  const filteredIngredients = useMemo(() => {
+    if (!normalizedSearch) return ingredients;
+    return ingredients.filter((ingredient) => {
+      const fields = [ingredient.name, ingredient.id, ingredient.unit];
+      return fields.some((field) => field.toLowerCase().includes(normalizedSearch));
+    });
+  }, [ingredients, normalizedSearch]);
 
   const handleInputChange = (id: string, value: string) => {
     setReplenishValues(prev => ({ ...prev, [id]: value }));
@@ -75,7 +85,47 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({ ingredients, entrie
       </div>
 
       <div className="qb-inventory-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {ingredients.map((ing) => {
+        <div className="md:col-span-2 lg:col-span-3">
+          <div className="bg-white border-2 border-slate-100 rounded-3xl p-4 sm:p-5 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={searchValue}
+                  onChange={(e) => setSearchValue(e.target.value)}
+                  placeholder="Pesquisar no estoque por nome, código ou unidade..."
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 pl-10 font-bold text-slate-800 outline-none focus:border-red-400 focus:bg-white"
+                />
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                >
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.3-4.3" />
+                </svg>
+              </div>
+              {searchValue && (
+                <button
+                  onClick={() => setSearchValue('')}
+                  className="qb-btn-touch rounded-2xl bg-slate-100 px-4 py-3 text-xs font-black uppercase text-slate-700 hover:bg-slate-200 transition-colors"
+                >
+                  Limpar
+                </button>
+              )}
+            </div>
+            <p className="mt-3 text-[10px] font-black uppercase tracking-widest text-slate-400">
+              {filteredIngredients.length} de {ingredients.length} ingredientes exibidos
+            </p>
+          </div>
+        </div>
+
+        {filteredIngredients.map((ing) => {
           const isCritical = ing.currentStock <= ing.minStock * 0.5;
           const isLow = ing.currentStock <= ing.minStock;
           const inputValue = replenishValues[ing.id] || '';
@@ -191,6 +241,15 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({ ingredients, entrie
             </div>
           );
         })}
+        {filteredIngredients.length === 0 && (
+          <div className="md:col-span-2 lg:col-span-3">
+            <div className="rounded-3xl border-2 border-dashed border-slate-200 bg-white p-10 text-center">
+              <p className="text-xs font-black uppercase tracking-widest text-slate-500">
+                Nenhum ingrediente encontrado para "{searchValue}"
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {showHistory && (
