@@ -121,7 +121,10 @@ export class ProductService {
             name: product.name,
             category: product.category,
             price: product.price.toNumber(),
-            recipe: recipe,
+            recipe: recipe.map((item) => ({
+              ingredientId: item.ingredientId,
+              quantity: item.quantity,
+            })),
           },
         },
         context
