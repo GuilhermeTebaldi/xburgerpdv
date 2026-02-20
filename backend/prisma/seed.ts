@@ -7,12 +7,16 @@ import { PrismaClient, UserRole } from '@prisma/client';
 const prisma = new PrismaClient();
 
 const run = async () => {
-  const adminEmail = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase();
-  const adminPassword = process.env.SEED_ADMIN_PASSWORD?.trim();
+  const envAdminEmail = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase();
+  const envAdminPassword = process.env.SEED_ADMIN_PASSWORD?.trim();
+  const adminEmail = envAdminEmail || 'meu@admin.com';
+  const adminPassword = envAdminPassword || 'admin123';
   const adminName = process.env.SEED_ADMIN_NAME?.trim() || 'Administrador';
 
-  if (!adminEmail || !adminPassword) {
-    throw new Error('SEED_ADMIN_EMAIL e SEED_ADMIN_PASSWORD são obrigatórios para seed.');
+  if (!envAdminEmail || !envAdminPassword) {
+    console.warn(
+      '[seed] SEED_ADMIN_EMAIL/SEED_ADMIN_PASSWORD não definidos. Usando credenciais padrão do frontend.',
+    );
   }
 
   const passwordHash = await bcrypt.hash(adminPassword, 12);
