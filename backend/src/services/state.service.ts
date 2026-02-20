@@ -1,7 +1,10 @@
-import { SaleStatus, StockTargetType } from '@prisma/client';
+import { Prisma, SaleStatus, StockTargetType } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
 import type { FrontAppState } from '../types/frontend.js';
+import type { RequestContext } from '../types/request-context.js';
+import { HttpError } from '../utils/http-error.js';
+import { AuditService } from './audit.service.js';
 import {
   toFrontCleaningEntry,
   toFrontCleaningMaterial,
@@ -12,10 +15,50 @@ import {
 } from './mappers.service.js';
 import { SessionService } from './session.service.js';
 
+const EMPTY_APP_STATE: FrontAppState = {
+  ingredients: [],
+  products: [],
+  sales: [],
+  stockEntries: [],
+  cleaningMaterials: [],
+  cleaningStockEntries: [],
+  globalSales: [],
+  globalCancelledSales: [],
+  globalStockEntries: [],
+  globalCleaningStockEntries: [],
+};
+
+const arrayOrEmpty = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+
+const normalizeStatePayload = (value: unknown): FrontAppState => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new HttpError(400, 'Payload de estado inválido. Deve ser um objeto AppState.');
+  }
+
+  const payload = value as Record<string, unknown>;
+  return {
+    ingredients: arrayOrEmpty(payload.ingredients),
+    products: arrayOrEmpty(payload.products),
+    sales: arrayOrEmpty(payload.sales),
+    stockEntries: arrayOrEmpty(payload.stockEntries),
+    cleaningMaterials: arrayOrEmpty(payload.cleaningMaterials),
+    cleaningStockEntries: arrayOrEmpty(payload.cleaningStockEntries),
+    globalSales: arrayOrEmpty(payload.globalSales),
+    globalCancelledSales: arrayOrEmpty(payload.globalCancelledSales),
+    globalStockEntries: arrayOrEmpty(payload.globalStockEntries),
+    globalCleaningStockEntries: arrayOrEmpty(payload.globalCleaningStockEntries),
+  };
+};
+
 export class StateService {
   private readonly sessionService = new SessionService();
 
   async getAppState(): Promise<FrontAppState> {
+    const snapshot = await prisma.appState.findUnique({ where: { id: 1 } });
+    if (snapshot) {
+      return normalizeStatePayload(snapshot.stateJson);
+    }
+
     const currentSession = await this.sessionService.getCurrentSession();
 
     const [
@@ -144,5 +187,59 @@ export class StateService {
       globalStockEntries: globalStockMovements.map(toFrontIngredientEntry),
       globalCleaningStockEntries: globalCleaningMovements.map(toFrontCleaningEntry),
     };
+  }
+
+  async saveAppState(state: unknown, context?: RequestContext): Promise<FrontAppState> {
+    const normalized = normalizeStatePayload(state);
+
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.appState.upsert({
+        where: { id: 1 },
+        create: {
+          id: 1,
+          stateJson: normalized as unknown as Prisma.InputJsonValue,
+        },
+        update: {
+          stateJson: normalized as unknown as Prisma.InputJsonValue,
+        },
+      });
+
+      await new AuditService(tx).log(
+        {
+          entityName: 'app_state',
+          entityId: '1',
+          action: 'APP_STATE_UPSERTED',
+        },
+        context
+      );
+    });
+
+    return normalized;
+  }
+
+  async clearAppState(context?: RequestContext): Promise<FrontAppState> {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.appState.upsert({
+        where: { id: 1 },
+        create: {
+          id: 1,
+          stateJson: EMPTY_APP_STATE as unknown as Prisma.InputJsonValue,
+        },
+        update: {
+          stateJson: EMPTY_APP_STATE as unknown as Prisma.InputJsonValue,
+        },
+      });
+
+      await new AuditService(tx).log(
+        {
+          entityName: 'app_state',
+          entityId: '1',
+          action: 'APP_STATE_CLEARED',
+        },
+        context
+      );
+    });
+
+    return EMPTY_APP_STATE;
   }
 }
