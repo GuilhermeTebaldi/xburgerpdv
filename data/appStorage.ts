@@ -6,7 +6,7 @@ import {
   Sale,
   StockEntry,
 } from '../types';
-import { clearStore, getItem, getMany, setItem, setMany } from './localDb';
+import { clearStore } from './localDb';
 
 export interface AppState {
   ingredients: Ingredient[];
@@ -21,9 +21,9 @@ export interface AppState {
   globalCleaningStockEntries: CleaningStockEntry[];
 }
 
-const STORAGE_VERSION = 2;
 const API_TIMEOUT_MS = 4000;
 const DEFAULT_API_BASE_URL = 'https://xburger-backend.onrender.com';
+let hasRemoteHydratedState = false;
 
 const STORAGE_KEYS = {
   ingredients: 'qb_ingredients',
@@ -80,8 +80,6 @@ const DATA_KEYS = [
   STORAGE_KEYS.globalStockEntries,
   STORAGE_KEYS.globalCleaningStockEntries,
 ];
-
-const hasValue = (value: unknown) => value !== undefined && value !== null;
 
 const getApiBaseUrl = (): string | null => {
   const raw = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
@@ -231,157 +229,41 @@ const sanitizeLegacySeeds = (state: AppState): AppState => {
   };
 };
 
-const serializeState = (state: AppState): Record<string, unknown> => ({
-  [STORAGE_KEYS.ingredients]: state.ingredients,
-  [STORAGE_KEYS.products]: state.products,
-  [STORAGE_KEYS.sales]: state.sales,
-  [STORAGE_KEYS.stockEntries]: state.stockEntries,
-  [STORAGE_KEYS.cleaningMaterials]: state.cleaningMaterials,
-  [STORAGE_KEYS.cleaningStockEntries]: state.cleaningStockEntries,
-  [STORAGE_KEYS.globalSales]: state.globalSales,
-  [STORAGE_KEYS.globalCancelledSales]: state.globalCancelledSales,
-  [STORAGE_KEYS.globalStockEntries]: state.globalStockEntries,
-  [STORAGE_KEYS.globalCleaningStockEntries]: state.globalCleaningStockEntries,
-});
-
-const readLegacyStorage = (): Record<string, unknown> => {
-  if (typeof localStorage === 'undefined') return {};
-  const legacy: Record<string, unknown> = {};
-  DATA_KEYS.forEach((key) => {
-    const raw = localStorage.getItem(key);
-    if (!raw) return;
-    try {
-      legacy[key] = JSON.parse(raw);
-    } catch {
-      // ignore malformed legacy data
-    }
-  });
-  return legacy;
-};
-
 const clearLegacyStorage = () => {
   if (typeof localStorage === 'undefined') return;
   DATA_KEYS.forEach((key) => localStorage.removeItem(key));
   localStorage.removeItem(STORAGE_KEYS.metaVersion);
 };
 
-const safeGetVersion = async (): Promise<number> => {
-  try {
-    const version = await getItem<number>(STORAGE_KEYS.metaVersion);
-    return typeof version === 'number' ? version : 0;
-  } catch {
-    return 0;
-  }
-};
-
 export const loadAppState = async (defaults: AppState = DEFAULT_APP_STATE): Promise<AppState> => {
   const remoteState = await tryLoadRemoteState(defaults);
   if (remoteState) {
-    try {
-      await setMany(serializeState(remoteState));
-      await setItem(STORAGE_KEYS.metaVersion, STORAGE_VERSION);
-    } catch {
-      // ignore local cache sync failures when remote state is available
-    }
+    hasRemoteHydratedState = true;
     return remoteState;
   }
 
-  let stored: Record<string, unknown> = {};
-  let usedLegacy = false;
-  let migratedToDb = false;
-
-  try {
-    stored = await getMany(DATA_KEYS);
-  } catch {
-    stored = {};
-  }
-
-  const hasDbData = DATA_KEYS.some((key) => hasValue(stored[key]));
-  if (!hasDbData) {
-    const legacy = readLegacyStorage();
-    const hasLegacy = DATA_KEYS.some((key) => hasValue(legacy[key]));
-    if (hasLegacy) {
-      stored = legacy;
-      usedLegacy = true;
-      try {
-        await setMany(legacy);
-        migratedToDb = true;
-      } catch {
-        // ignore db migration failures
-      }
-    }
-  }
-
-  const loadedState: AppState = normalizeStateRecord(
-    {
-      ingredients: stored[STORAGE_KEYS.ingredients],
-      products: stored[STORAGE_KEYS.products],
-      sales: stored[STORAGE_KEYS.sales],
-      stockEntries: stored[STORAGE_KEYS.stockEntries],
-      cleaningMaterials: stored[STORAGE_KEYS.cleaningMaterials],
-      cleaningStockEntries: stored[STORAGE_KEYS.cleaningStockEntries],
-      globalSales: stored[STORAGE_KEYS.globalSales],
-      globalCancelledSales: stored[STORAGE_KEYS.globalCancelledSales],
-      globalStockEntries: stored[STORAGE_KEYS.globalStockEntries],
-      globalCleaningStockEntries: stored[STORAGE_KEYS.globalCleaningStockEntries],
-    },
-    defaults
-  );
-
-  const sanitized = sanitizeLegacySeeds(loadedState);
-  const didSanitize =
-    sanitized.ingredients.length !== loadedState.ingredients.length ||
-    sanitized.products.length !== loadedState.products.length;
-
-  const version = await safeGetVersion();
-  const shouldPersist = usedLegacy || didSanitize || version < STORAGE_VERSION;
-
-  if (shouldPersist) {
-    try {
-      await setMany(serializeState(sanitized));
-      await setItem(STORAGE_KEYS.metaVersion, STORAGE_VERSION);
-      migratedToDb = true;
-    } catch {
-      // ignore persistence failures
-    }
-  }
-
-  if (usedLegacy && migratedToDb) {
-    clearLegacyStorage();
-  }
-
-  return sanitized;
+  // Sem fallback local: Render é a fonte única de verdade.
+  hasRemoteHydratedState = false;
+  console.warn('[appStorage] Falha ao carregar estado remoto. Mantendo estado em memória.');
+  return sanitizeLegacySeeds(defaults);
 };
 
 export const saveAppState = async (state: AppState): Promise<void> => {
-  const apiUrl = getStateApiUrl();
-  if (apiUrl) {
-    const remoteSaved = await trySaveRemoteState(state);
-    if (!remoteSaved) {
-      // fallback to local persistence below
-    }
+  if (!hasRemoteHydratedState) {
+    console.warn('[appStorage] Persistência remota ignorada até carga inicial do backend.');
+    return;
   }
 
-  const payload = serializeState(state);
-  try {
-    await setMany(payload);
-    await setItem(STORAGE_KEYS.metaVersion, STORAGE_VERSION);
-  } catch {
-    if (typeof localStorage === 'undefined') return;
-    Object.entries(payload).forEach(([key, value]) => {
-      localStorage.setItem(key, JSON.stringify(value));
-    });
-    localStorage.setItem(STORAGE_KEYS.metaVersion, String(STORAGE_VERSION));
+  const remoteSaved = await trySaveRemoteState(state);
+  if (!remoteSaved) {
+    console.warn('[appStorage] Falha ao persistir no backend remoto.');
   }
 };
 
 export const clearAppState = async (): Promise<void> => {
-  const apiUrl = getStateApiUrl();
-  if (apiUrl) {
-    const remoteCleared = await tryClearRemoteState();
-    if (!remoteCleared) {
-      // fallback to local clear below
-    }
+  const remoteCleared = await tryClearRemoteState();
+  if (!remoteCleared) {
+    console.warn('[appStorage] Falha ao limpar estado no backend remoto.');
   }
 
   try {
