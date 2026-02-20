@@ -9,7 +9,7 @@
     "dev:sistema": "vite",
     "build": "npm run build:site && npm run build:sistema && npm run build:merge",
     "build:site": "npm ci --include=dev --prefix SITElanchesdoben && npm run build --prefix SITElanchesdoben -- --outDir ../.tmp/site-dist",
-    "build:sistema": "vite build --outDir .tmp/sistema-dist",
+    "build:sistema": "vite build --outDir .tmp/sistema-dist --base=/sistema/",
     "build:merge": "node scripts/merge-builds.mjs",
     "preview": "vite preview"
   },
