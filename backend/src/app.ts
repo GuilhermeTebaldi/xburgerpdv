@@ -10,6 +10,7 @@ import { requestContextMiddleware } from './middlewares/request-context.middlewa
 import { apiRouter } from './routes/index.js';
 
 const app = express();
+const localhostOriginPattern = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
 
 app.set('trust proxy', 1);
 app.use(helmet());
@@ -22,12 +23,17 @@ app.use(
         return;
       }
 
+      if (localhostOriginPattern.test(origin)) {
+        callback(null, true);
+        return;
+      }
+
       if (env.corsOrigins.length === 0 || env.corsOrigins.includes(origin)) {
         callback(null, true);
         return;
       }
 
-      callback(new Error('Origem não permitida por CORS'));
+      callback(null, false);
     }) satisfies CorsOptions['origin'],
     credentials: false,
   })
