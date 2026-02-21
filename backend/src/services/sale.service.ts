@@ -14,6 +14,11 @@ import type { RequestContext } from '../types/request-context.js';
 import { roundMoney, roundQuantity, toDecimal, toNumber } from '../utils/decimal.js';
 import { HttpError } from '../utils/http-error.js';
 import { AuditService } from './audit.service.js';
+import {
+  buildRefundIngredientRows,
+  mergeRefundTargets,
+  sumRefundIngredientCost,
+} from './sale-refund.utils.js';
 import { SessionService } from './session.service.js';
 
 interface RecipeItemInput {
@@ -92,6 +97,11 @@ export class SaleService {
             ingredients: true,
           },
           orderBy: { createdAt: 'asc' },
+        },
+        refunds: {
+          select: {
+            totalCostReversed: true,
+          },
         },
       },
       orderBy: { createdAt: 'asc' },
@@ -549,7 +559,8 @@ export class SaleService {
           }
         });
       } else {
-        (input.items || []).forEach((entry) => {
+        const mergedItems = mergeRefundTargets(input.items || []);
+        mergedItems.forEach((entry) => {
           const record = refundableByItem.get(entry.saleItemId);
           if (!record) {
             throw new HttpError(422, `Item ${entry.saleItemId} não pertence à venda.`);
@@ -591,49 +602,38 @@ export class SaleService {
         }
 
         const saleItem = source.item;
-        const proportion = target.quantity / saleItem.quantity;
-
         const amount = roundMoney(toNumber(saleItem.unitPrice) * target.quantity);
-        const costReversed = roundQuantity(toNumber(saleItem.unitCost) * target.quantity);
-        totalAmount = roundMoney(totalAmount + amount);
-        totalCostReversed = roundQuantity(totalCostReversed + costReversed);
+        const ingredientRows = buildRefundIngredientRows(
+          saleItem.ingredients.map((ingredientSnapshot) => ({
+            saleItemIngredientId: ingredientSnapshot.id,
+            ingredientId: ingredientSnapshot.ingredientId,
+            ingredientNameSnapshot: ingredientSnapshot.ingredientNameSnapshot,
+            quantitySold: toNumber(ingredientSnapshot.quantity),
+            unitCost: toNumber(ingredientSnapshot.unitCost),
+          })),
+          saleItem.quantity,
+          target.quantity
+        );
 
-        const ingredientRows = saleItem.ingredients.map((ingredientSnapshot) => {
-          const quantity = roundQuantity(toNumber(ingredientSnapshot.quantity) * proportion);
-          const lineCost = roundQuantity(toNumber(ingredientSnapshot.lineCost) * proportion);
-          const ingredientId = ingredientSnapshot.ingredientId;
-          if (!ingredientId) {
-            return {
-              saleItemIngredientId: ingredientSnapshot.id,
-              ingredientId: null,
-              ingredientNameSnapshot: ingredientSnapshot.ingredientNameSnapshot,
-              quantity,
-              unitCost: toNumber(ingredientSnapshot.unitCost),
-              lineCost,
-            };
-          }
+        ingredientRows.forEach((row) => {
+          if (!row.ingredientId) return;
 
-          const existing = ingredientRestoreMap.get(ingredientId);
+          const existing = ingredientRestoreMap.get(row.ingredientId);
           if (existing) {
-            existing.quantity = roundQuantity(existing.quantity + quantity);
+            existing.quantity = roundQuantity(existing.quantity + row.quantity);
           } else {
-            ingredientRestoreMap.set(ingredientId, {
-              ingredientId,
-              quantity,
-              unitCost: toNumber(ingredientSnapshot.unitCost),
-              ingredientName: ingredientSnapshot.ingredientNameSnapshot,
+            ingredientRestoreMap.set(row.ingredientId, {
+              ingredientId: row.ingredientId,
+              quantity: row.quantity,
+              unitCost: row.unitCost,
+              ingredientName: row.ingredientNameSnapshot,
             });
           }
-
-          return {
-            saleItemIngredientId: ingredientSnapshot.id,
-            ingredientId,
-            ingredientNameSnapshot: ingredientSnapshot.ingredientNameSnapshot,
-            quantity,
-            unitCost: toNumber(ingredientSnapshot.unitCost),
-            lineCost,
-          };
         });
+
+        const costReversed = sumRefundIngredientCost(ingredientRows);
+        totalAmount = roundMoney(totalAmount + amount);
+        totalCostReversed = roundQuantity(totalCostReversed + costReversed);
 
         return {
           saleItemId: saleItem.id,

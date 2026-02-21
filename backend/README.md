@@ -85,6 +85,8 @@ Base: `/api/v1`
 
 ### Estado agregado (compatível com estrutura atual do frontend)
 - `GET /state`
+- `PUT /state` (requer `If-Match` + `X-State-Token` retornados pelo `GET`, ou `Authorization: Bearer <token>`)
+- `DELETE /state` (requer `If-Match` + `X-State-Token` retornados pelo `GET`, ou `Authorization: Bearer <token>`)
 
 Retorna:
 - `ingredients`
@@ -97,6 +99,10 @@ Retorna:
 - `globalCancelledSales`
 - `globalStockEntries`
 - `globalCleaningStockEntries`
+
+Headers de sincronização:
+- `ETag` / `X-State-Version`: versão atual do snapshot para controle otimista.
+- `X-State-Token`: token assinado para autorização de escrita no snapshot legado.
 
 ### Insumos
 - `GET /ingredients`

@@ -24,6 +24,8 @@ export interface AppState {
 const API_TIMEOUT_MS = 4000;
 const DEFAULT_API_BASE_URL = 'https://xburger-backend.onrender.com';
 let hasRemoteHydratedState = false;
+let remoteStateVersion: string | null = null;
+let remoteStateToken: string | null = null;
 
 const STORAGE_KEYS = {
   ingredients: 'qb_ingredients',
@@ -155,6 +157,29 @@ const normalizeStateRecord = (
   ),
 });
 
+const normalizeVersionHeader = (value: string | null): string | null => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const unquoted = trimmed.replace(/^W\//i, '').replace(/^"(.+)"$/, '$1');
+  return unquoted || null;
+};
+
+const syncStateMetaFromResponse = (response: Response): void => {
+  const version =
+    normalizeVersionHeader(response.headers.get('x-state-version')) ??
+    normalizeVersionHeader(response.headers.get('etag'));
+
+  if (version) {
+    remoteStateVersion = version;
+  }
+
+  const token = response.headers.get('x-state-token')?.trim();
+  if (token) {
+    remoteStateToken = token;
+  }
+};
+
 const tryLoadRemoteState = async (defaults: AppState): Promise<AppState | null> => {
   const apiUrl = getStateApiUrl();
   if (!apiUrl) return null;
@@ -167,6 +192,7 @@ const tryLoadRemoteState = async (defaults: AppState): Promise<AppState | null> 
       },
     });
     if (!response.ok) return null;
+    syncStateMetaFromResponse(response);
 
     const payload = (await response.json()) as unknown;
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -183,16 +209,28 @@ const tryLoadRemoteState = async (defaults: AppState): Promise<AppState | null> 
 const trySaveRemoteState = async (state: AppState): Promise<boolean> => {
   const apiUrl = getStateApiUrl();
   if (!apiUrl) return false;
+  if (!remoteStateVersion || !remoteStateToken) return false;
 
   try {
     const response = await fetchWithTimeout(apiUrl, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
+        'If-Match': `"${remoteStateVersion}"`,
+        'X-State-Token': remoteStateToken,
       },
       body: JSON.stringify(state),
     });
-    return response.ok;
+    if (response.ok) {
+      syncStateMetaFromResponse(response);
+      return true;
+    }
+
+    if (response.status === 401 || response.status === 412 || response.status === 428) {
+      remoteStateToken = null;
+      remoteStateVersion = null;
+    }
+    return false;
   } catch {
     return false;
   }
@@ -201,12 +239,26 @@ const trySaveRemoteState = async (state: AppState): Promise<boolean> => {
 const tryClearRemoteState = async (): Promise<boolean> => {
   const apiUrl = getStateApiUrl();
   if (!apiUrl) return false;
+  if (!remoteStateVersion || !remoteStateToken) return false;
 
   try {
     const response = await fetchWithTimeout(apiUrl, {
       method: 'DELETE',
+      headers: {
+        'If-Match': `"${remoteStateVersion}"`,
+        'X-State-Token': remoteStateToken,
+      },
     });
-    return response.ok;
+    if (response.ok) {
+      syncStateMetaFromResponse(response);
+      return true;
+    }
+
+    if (response.status === 401 || response.status === 412 || response.status === 428) {
+      remoteStateToken = null;
+      remoteStateVersion = null;
+    }
+    return false;
   } catch {
     return false;
   }
@@ -244,6 +296,8 @@ export const loadAppState = async (defaults: AppState = DEFAULT_APP_STATE): Prom
 
   // Sem fallback local: Render é a fonte única de verdade.
   hasRemoteHydratedState = false;
+  remoteStateVersion = null;
+  remoteStateToken = null;
   console.warn('[appStorage] Falha ao carregar estado remoto. Mantendo estado em memória.');
   return sanitizeLegacySeeds(defaults);
 };
@@ -256,11 +310,26 @@ export const saveAppState = async (state: AppState): Promise<void> => {
 
   const remoteSaved = await trySaveRemoteState(state);
   if (!remoteSaved) {
-    console.warn('[appStorage] Falha ao persistir no backend remoto.');
+    const refreshed = await tryLoadRemoteState(state);
+    if (!refreshed) {
+      hasRemoteHydratedState = false;
+      console.warn('[appStorage] Falha ao persistir no backend remoto.');
+      return;
+    }
+
+    const retried = await trySaveRemoteState(state);
+    if (!retried) {
+      hasRemoteHydratedState = false;
+      console.warn('[appStorage] Falha ao persistir no backend remoto.');
+    }
   }
 };
 
 export const clearAppState = async (): Promise<void> => {
+  if (!remoteStateVersion || !remoteStateToken) {
+    await tryLoadRemoteState(DEFAULT_APP_STATE);
+  }
+
   const remoteCleared = await tryClearRemoteState();
   if (!remoteCleared) {
     console.warn('[appStorage] Falha ao limpar estado no backend remoto.');

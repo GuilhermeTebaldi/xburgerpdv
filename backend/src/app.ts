@@ -36,6 +36,7 @@ app.use(
       callback(null, false);
     }) satisfies CorsOptions['origin'],
     credentials: false,
+    exposedHeaders: ['ETag', 'X-State-Version', 'X-State-Token'],
   })
 );
 app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));

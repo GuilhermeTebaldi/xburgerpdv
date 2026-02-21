@@ -11,7 +11,6 @@ interface AddIngredientModalProps {
 const AddIngredientModal: React.FC<AddIngredientModalProps> = ({ isOpen, onClose, onAdd }) => {
   const [name, setName] = useState('');
   const [unit, setUnit] = useState('un');
-  const [initialStock, setInitialStock] = useState('');
   const [minStock, setMinStock] = useState('');
   const [cost, setCost] = useState('');
   const [addonPrice, setAddonPrice] = useState('');
@@ -21,7 +20,7 @@ const AddIngredientModal: React.FC<AddIngredientModalProps> = ({ isOpen, onClose
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || initialStock === '' || !minStock || !cost) {
+    if (!name || !minStock || !cost) {
       alert("Por favor, preencha todos os campos!");
       return;
     }
@@ -30,7 +29,7 @@ const AddIngredientModal: React.FC<AddIngredientModalProps> = ({ isOpen, onClose
       id: 'i-' + Math.random().toString(36).substr(2, 9),
       name,
       unit,
-      currentStock: parseFloat(initialStock),
+      currentStock: 0,
       minStock: parseFloat(minStock),
       cost: parseFloat(cost),
       addonPrice: addonPrice.trim() ? parseFloat(addonPrice) : undefined,
@@ -42,7 +41,6 @@ const AddIngredientModal: React.FC<AddIngredientModalProps> = ({ isOpen, onClose
     // Reset state
     setName('');
     setUnit('un');
-    setInitialStock('');
     setMinStock('');
     setCost('');
     setAddonPrice('');
@@ -78,33 +76,21 @@ const AddIngredientModal: React.FC<AddIngredientModalProps> = ({ isOpen, onClose
             />
           </div>
 
-          <div className="qb-ingredient-grid grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Unidade de Medida</label>
-              <select 
-                value={unit}
-                onChange={e => setUnit(e.target.value)}
-                className="w-full bg-slate-100 border-none rounded-2xl px-4 py-3 font-bold text-slate-800 focus:ring-2 focus:ring-red-500 appearance-none cursor-pointer"
-              >
-                <option value="un">Unidade (un)</option>
-                <option value="kg">Quilo (kg)</option>
-                <option value="g">Grama (g)</option>
-                <option value="fatias">Fatias</option>
-                <option value="porções">Porções</option>
-                <option value="lata">Lata</option>
-                <option value="ml">Mililitros (ml)</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Quantidade Inicial</label>
-              <input 
-                type="number" 
-                value={initialStock}
-                onChange={e => setInitialStock(e.target.value)}
-                placeholder="0"
-                className="w-full bg-slate-100 border-none rounded-2xl px-4 py-3 font-bold text-slate-800 focus:ring-2 focus:ring-red-500"
-              />
-            </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Unidade de Medida</label>
+            <select 
+              value={unit}
+              onChange={e => setUnit(e.target.value)}
+              className="w-full bg-slate-100 border-none rounded-2xl px-4 py-3 font-bold text-slate-800 focus:ring-2 focus:ring-red-500 appearance-none cursor-pointer"
+            >
+              <option value="un">Unidade (un)</option>
+              <option value="kg">Quilo (kg)</option>
+              <option value="g">Grama (g)</option>
+              <option value="fatias">Fatias</option>
+              <option value="porções">Porções</option>
+              <option value="lata">Lata</option>
+              <option value="ml">Mililitros (ml)</option>
+            </select>
           </div>
 
           <div className="qb-ingredient-grid grid grid-cols-1 sm:grid-cols-2 gap-4">

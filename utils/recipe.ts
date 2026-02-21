@@ -34,6 +34,39 @@ export const calculateRecipeCost = (
   return { totalCost, missingIngredientIds, totals };
 };
 
+export interface RecipeStockIssue {
+  ingredientId: string;
+  ingredientName: string;
+  required: number;
+  available: number;
+  unit: string;
+}
+
+export const getRecipeStockIssues = (
+  ingredients: Ingredient[],
+  totals: Record<string, number>
+): RecipeStockIssue[] => {
+  const ingredientById = new Map(ingredients.map((ingredient) => [ingredient.id, ingredient]));
+
+  return Object.entries(totals)
+    .map(([ingredientId, required]) => {
+      const ingredient = ingredientById.get(ingredientId);
+      if (!ingredient) return null;
+
+      const available = Number(ingredient.currentStock);
+      if (available + Number.EPSILON >= required) return null;
+
+      return {
+        ingredientId,
+        ingredientName: ingredient.name,
+        required,
+        available,
+        unit: ingredient.unit,
+      };
+    })
+    .filter((issue): issue is RecipeStockIssue => issue !== null);
+};
+
 export const buildRecipeFromComboItems = (
   products: Pick<Product, 'id' | 'recipe'>[],
   comboItems: ComboItem[] = []

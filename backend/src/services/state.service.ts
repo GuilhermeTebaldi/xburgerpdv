@@ -50,33 +50,47 @@ const normalizeStatePayload = (value: unknown): FrontAppState => {
   };
 };
 
+const toVersionTag = (value: Date): string => value.toISOString();
+
+export interface AppStateSnapshot {
+  state: FrontAppState;
+  version: string;
+}
+
 export class StateService {
   private readonly sessionService = new SessionService();
 
-  async getAppState(): Promise<FrontAppState> {
+  async getAppState(): Promise<AppStateSnapshot> {
     try {
       const snapshot = await prisma.appState.findUnique({ where: { id: 1 } });
       if (snapshot) {
-        return normalizeStatePayload(snapshot.stateJson);
+        return {
+          state: normalizeStatePayload(snapshot.stateJson),
+          version: toVersionTag(snapshot.updatedAt),
+        };
       }
     } catch (error) {
       if (!this.isMissingAppStateTableError(error)) {
         throw error;
       }
+      await this.bootstrapAppStateTable();
     }
 
-    return this.buildStateFromDomain();
+    const rebuilt = await this.buildStateFromDomain();
+    return this.persistSnapshot(rebuilt, 'APP_STATE_BOOTSTRAPPED');
   }
 
-  async saveAppState(state: unknown, context?: RequestContext): Promise<FrontAppState> {
+  async saveAppState(
+    state: unknown,
+    expectedVersion: string,
+    context?: RequestContext
+  ): Promise<AppStateSnapshot> {
     const normalized = normalizeStatePayload(state);
-    await this.persistSnapshot(normalized, 'APP_STATE_UPSERTED', context);
-    return normalized;
+    return this.persistSnapshot(normalized, 'APP_STATE_UPSERTED', context, expectedVersion);
   }
 
-  async clearAppState(context?: RequestContext): Promise<FrontAppState> {
-    await this.persistSnapshot(EMPTY_APP_STATE, 'APP_STATE_CLEARED', context);
-    return EMPTY_APP_STATE;
+  async clearAppState(expectedVersion: string, context?: RequestContext): Promise<AppStateSnapshot> {
+    return this.persistSnapshot(EMPTY_APP_STATE, 'APP_STATE_CLEARED', context, expectedVersion);
   }
 
   private isMissingAppStateTableError(error: unknown): boolean {
@@ -103,37 +117,60 @@ export class StateService {
 
   private async persistSnapshot(
     state: FrontAppState,
-    action: 'APP_STATE_UPSERTED' | 'APP_STATE_CLEARED',
-    context?: RequestContext
-  ): Promise<void> {
+    action: 'APP_STATE_BOOTSTRAPPED' | 'APP_STATE_UPSERTED' | 'APP_STATE_CLEARED',
+    context?: RequestContext,
+    expectedVersion?: string
+  ): Promise<AppStateSnapshot> {
     try {
-      await this.upsertSnapshot(state, action, context);
+      return await this.upsertSnapshot(state, action, context, expectedVersion);
     } catch (error) {
       if (!this.isMissingAppStateTableError(error)) {
         throw error;
       }
 
       await this.bootstrapAppStateTable();
-      await this.upsertSnapshot(state, action, context);
+      return this.upsertSnapshot(state, action, context, expectedVersion);
     }
   }
 
   private async upsertSnapshot(
     state: FrontAppState,
-    action: 'APP_STATE_UPSERTED' | 'APP_STATE_CLEARED',
-    context?: RequestContext
-  ): Promise<void> {
-    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      await tx.appState.upsert({
-        where: { id: 1 },
-        create: {
-          id: 1,
-          stateJson: state as unknown as Prisma.InputJsonValue,
-        },
-        update: {
-          stateJson: state as unknown as Prisma.InputJsonValue,
-        },
-      });
+    action: 'APP_STATE_BOOTSTRAPPED' | 'APP_STATE_UPSERTED' | 'APP_STATE_CLEARED',
+    context?: RequestContext,
+    expectedVersion?: string
+  ): Promise<AppStateSnapshot> {
+    return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const current = await tx.appState.findUnique({ where: { id: 1 } });
+      const currentVersion = current ? toVersionTag(current.updatedAt) : null;
+
+      if (expectedVersion !== undefined) {
+        if (!currentVersion) {
+          throw new HttpError(412, 'Versão de estado inválida. Snapshot base não encontrado.', {
+            expectedVersion,
+            currentVersion: null,
+          });
+        }
+        if (expectedVersion !== currentVersion) {
+          throw new HttpError(412, 'Conflito de versão no estado. Recarregue antes de salvar.', {
+            expectedVersion,
+            currentVersion,
+          });
+        }
+      }
+
+      const saved = current
+        ? await tx.appState.update({
+            where: { id: 1 },
+            data: {
+              stateJson: state as unknown as Prisma.InputJsonValue,
+            },
+          })
+        : await tx.appState.create({
+            data: {
+              id: 1,
+              stateJson: state as unknown as Prisma.InputJsonValue,
+            },
+          });
 
       await new AuditService(tx).log(
         {
@@ -143,6 +180,11 @@ export class StateService {
         },
         context
       );
+
+      return {
+        state,
+        version: toVersionTag(saved.updatedAt),
+      };
     });
   }
 
@@ -179,6 +221,11 @@ export class StateService {
           items: {
             include: { ingredients: true },
             orderBy: { createdAt: 'asc' },
+          },
+          refunds: {
+            select: {
+              totalCostReversed: true,
+            },
           },
         },
         orderBy: { createdAt: 'asc' },
@@ -222,6 +269,11 @@ export class StateService {
             include: { ingredients: true },
             orderBy: { createdAt: 'asc' },
           },
+          refunds: {
+            select: {
+              totalCostReversed: true,
+            },
+          },
         },
         orderBy: { createdAt: 'asc' },
       }),
@@ -233,6 +285,11 @@ export class StateService {
           items: {
             include: { ingredients: true },
             orderBy: { createdAt: 'asc' },
+          },
+          refunds: {
+            select: {
+              totalCostReversed: true,
+            },
           },
         },
         orderBy: { createdAt: 'asc' },

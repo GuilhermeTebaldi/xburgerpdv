@@ -67,6 +67,7 @@ export interface Sale {
   total: number;
   totalCost: number; // Soma dos custos dos ingredientes no momento da venda
   recipe?: RecipeItem[]; // Guardamos a receita exata usada para o estorno ser perfeito
+  stockDebited?: RecipeItem[]; // Snapshot do que foi realmente baixado no estoque
   basePrice?: number; // Preço base do produto no momento da venda
   priceAdjustment?: number; // Ajuste aplicado no preço (customizações)
   baseCost?: number; // Custo da receita base no momento da venda

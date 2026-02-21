@@ -5,6 +5,8 @@ declare global {
     interface Request {
       context: RequestContext;
       authUserId?: string;
+      stateTokenVersion?: string;
+      stateAuthKind?: 'jwt' | 'state_token';
     }
   }
 }

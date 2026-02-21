@@ -10,12 +10,8 @@ interface TokenPayload {
   role: string;
 }
 
-export const authRequired = (req: Request, _res: Response, next: NextFunction) => {
-  const header = req.header('authorization');
-  if (!header) {
-    throw new HttpError(401, 'Token de autenticação não informado.');
-  }
-
+export const decodeBearerUserId = (header: string | undefined): string | null => {
+  if (!header) return null;
   const [scheme, token] = header.split(' ');
   if (scheme !== 'Bearer' || !token) {
     throw new HttpError(401, 'Formato de token inválido. Use Bearer <token>.');
@@ -23,12 +19,21 @@ export const authRequired = (req: Request, _res: Response, next: NextFunction) =
 
   try {
     const payload = jwt.verify(token, env.JWT_SECRET) as TokenPayload;
-    req.authUserId = payload.sub;
-    if (!req.context.actorUserId) {
-      req.context.actorUserId = payload.sub;
-    }
-    next();
+    return payload.sub;
   } catch {
     throw new HttpError(401, 'Token inválido ou expirado.');
   }
+};
+
+export const authRequired = (req: Request, _res: Response, next: NextFunction) => {
+  const userId = decodeBearerUserId(req.header('authorization'));
+  if (!userId) {
+    throw new HttpError(401, 'Token de autenticação não informado.');
+  }
+
+  req.authUserId = userId;
+  if (!req.context.actorUserId) {
+    req.context.actorUserId = userId;
+  }
+  next();
 };

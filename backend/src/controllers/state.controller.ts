@@ -1,22 +1,72 @@
 import type { Request, Response } from 'express';
 
+import { issueStateWriteToken } from '../services/state-auth.service.js';
 import { StateService } from '../services/state.service.js';
+import { HttpError } from '../utils/http-error.js';
 
 const stateService = new StateService();
 
+const normalizeVersion = (raw: string): string =>
+  raw.trim().replace(/^W\//i, '').replace(/^"(.+)"$/, '$1');
+
+const readIfMatchVersion = (req: Request): string => {
+  const header = req.header('if-match');
+  if (!header) {
+    throw new HttpError(428, 'Cabeçalho If-Match é obrigatório para escrita de estado.');
+  }
+
+  const version = normalizeVersion(header);
+  if (!version) {
+    throw new HttpError(400, 'Cabeçalho If-Match inválido.');
+  }
+  return version;
+};
+
+const setStateHeaders = (req: Request, res: Response, version: string): void => {
+  const token = issueStateWriteToken({
+    version,
+    actorUserId: req.context.actorUserId,
+    ipAddress: req.ip,
+    userAgent: req.header('user-agent') || undefined,
+  });
+
+  res.setHeader('ETag', `"${version}"`);
+  res.setHeader('X-State-Version', version);
+  res.setHeader('X-State-Token', token);
+};
+
 export const stateController = {
-  getState: async (_req: Request, res: Response) => {
-    const state = await stateService.getAppState();
-    res.status(200).json(state);
+  getState: async (req: Request, res: Response) => {
+    const snapshot = await stateService.getAppState();
+    setStateHeaders(req, res, snapshot.version);
+    res.status(200).json(snapshot.state);
   },
 
   putState: async (req: Request, res: Response) => {
-    const state = await stateService.saveAppState(req.body, req.context);
-    res.status(200).json(state);
+    const expectedVersion = readIfMatchVersion(req);
+    if (req.stateTokenVersion && req.stateTokenVersion !== expectedVersion) {
+      throw new HttpError(412, 'Token de estado desatualizado para a versão informada.', {
+        tokenVersion: req.stateTokenVersion,
+        expectedVersion,
+      });
+    }
+
+    const snapshot = await stateService.saveAppState(req.body, expectedVersion, req.context);
+    setStateHeaders(req, res, snapshot.version);
+    res.status(200).json(snapshot.state);
   },
 
   clearState: async (req: Request, res: Response) => {
-    const state = await stateService.clearAppState(req.context);
-    res.status(200).json(state);
+    const expectedVersion = readIfMatchVersion(req);
+    if (req.stateTokenVersion && req.stateTokenVersion !== expectedVersion) {
+      throw new HttpError(412, 'Token de estado desatualizado para a versão informada.', {
+        tokenVersion: req.stateTokenVersion,
+        expectedVersion,
+      });
+    }
+
+    const snapshot = await stateService.clearAppState(expectedVersion, req.context);
+    setStateHeaders(req, res, snapshot.version);
+    res.status(200).json(snapshot.state);
   },
 };

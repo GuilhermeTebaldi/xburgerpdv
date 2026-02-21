@@ -23,7 +23,7 @@ import {
   RecipeItem,
 } from './types';
 import { DEFAULT_APP_STATE, loadAppState, saveAppState, clearAppState } from './data/appStorage';
-import { aggregateRecipe, calculateRecipeCost } from './utils/recipe';
+import { aggregateRecipe, calculateRecipeCost, getRecipeStockIssues } from './utils/recipe';
 
 const ADMIN_GATE_KEY = 'lanchesdoben_admin_gate';
 const ADMIN_SESSION_KEY = 'lanchesdoben_admin_session';
@@ -316,10 +316,23 @@ const App: React.FC = () => {
       return;
     }
 
+    const stockIssues = getRecipeStockIssues(ingredients, totals);
+    if (stockIssues.length > 0) {
+      const firstIssue = stockIssues[0];
+      showNotification(
+        `Estoque insuficiente: ${firstIssue.ingredientName} (${firstIssue.available.toFixed(2)} / ${firstIssue.required.toFixed(2)} ${firstIssue.unit})`
+      );
+      return;
+    }
+
     const baseCostInfo = calculateRecipeCost(ingredients, product.recipe);
     const baseCost = baseCostInfo.missingIngredientIds.length > 0 ? undefined : baseCostInfo.totalCost;
     const basePrice = product.price;
     const priceAdjustment = finalPrice - basePrice;
+    const stockDebited = Object.entries(totals).map(([ingredientId, quantity]) => ({
+      ingredientId,
+      quantity,
+    }));
 
     const newSale: Sale = {
       id: 's-' + Date.now(),
@@ -329,6 +342,7 @@ const App: React.FC = () => {
       total: finalPrice,
       totalCost,
       recipe: recipeToUse,
+      stockDebited,
       basePrice,
       priceAdjustment,
       baseCost,
@@ -355,8 +369,9 @@ const App: React.FC = () => {
 
     const lastSale = sales[sales.length - 1];
     if (confirm(`Desfazer a última venda (${lastSale.productName}) e devolver insumos ao estoque?`)) {
-      if (lastSale.recipe) {
-        const totals = aggregateRecipe(lastSale.recipe);
+      const recipeToRestore = lastSale.stockDebited || lastSale.recipe;
+      if (recipeToRestore) {
+        const totals = aggregateRecipe(recipeToRestore);
         setIngredients(prev => prev.map(ing => {
           const quantity = totals[ing.id];
           if (quantity) {
@@ -366,7 +381,11 @@ const App: React.FC = () => {
         }));
       }
       setSales(prev => prev.slice(0, -1));
-      setGlobalSales(prev => prev.filter(s => s.id !== lastSale.id));
+      setGlobalSales(prev => {
+        const indexToRemove = prev.map((sale) => sale.id).lastIndexOf(lastSale.id);
+        if (indexToRemove === -1) return prev;
+        return prev.filter((_sale, index) => index !== indexToRemove);
+      });
       setGlobalCancelledSales(prev => [...prev, lastSale]);
       showNotification('Venda Estornada!');
     }
@@ -528,6 +547,17 @@ const App: React.FC = () => {
     setView(ViewMode.POS);
   };
 
+  const handleClearOperationalData = () => {
+    setSales([]);
+    setStockEntries([]);
+    setCleaningStockEntries([]);
+    setGlobalSales([]);
+    setGlobalCancelledSales([]);
+    setGlobalStockEntries([]);
+    setGlobalCleaningStockEntries([]);
+    showNotification('Dados operacionais limpos. Cadastros preservados.');
+  };
+
   const handleDeleteArchiveByDate = (dateString: string) => {
     setGlobalSales(prev => prev.filter(s => s.timestamp.toLocaleDateString('pt-BR') !== dateString));
     showNotification(`Arquivos de ${dateString} Excluídos!`);
@@ -679,6 +709,7 @@ const App: React.FC = () => {
               cleaningMaterials={cleaningMaterials}
               cleaningStockEntries={globalCleaningStockEntries}
               onFactoryReset={handleFactoryReset}
+              onClearOperationalData={handleClearOperationalData}
               onDeleteArchiveDate={handleDeleteArchiveByDate}
               onDeleteArchiveMonth={handleDeleteArchiveByMonth}
             />

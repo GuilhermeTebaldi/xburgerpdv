@@ -1,10 +1,12 @@
 import {
   ProductCategory,
+  SaleStatus,
   StockDirection,
   type CleaningMaterial,
   type Ingredient,
   type Product,
   type ProductIngredient,
+  type Refund,
   type Sale,
   type SaleItem,
   type SaleItemIngredient,
@@ -70,14 +72,28 @@ export const toFrontProduct = (
 });
 
 const toFrontSaleRecipe = (
-  saleItemIngredients: Pick<SaleItemIngredient, 'ingredientId' | 'quantity'>[]
+  saleItems: Array<{
+    ingredients: Pick<SaleItemIngredient, 'ingredientId' | 'quantity'>[];
+  }>
 ): FrontRecipeItem[] => {
-  return saleItemIngredients
-    .filter((ingredient) => Boolean(ingredient.ingredientId))
-    .map((ingredient) => ({
-      ingredientId: ingredient.ingredientId as string,
-      quantity: roundQuantity(toNumber(ingredient.quantity)),
-    }));
+  const totals = new Map<string, number>();
+
+  saleItems.forEach((item) => {
+    item.ingredients.forEach((ingredient) => {
+      if (!ingredient.ingredientId) return;
+
+      const current = totals.get(ingredient.ingredientId) || 0;
+      totals.set(
+        ingredient.ingredientId,
+        roundQuantity(current + toNumber(ingredient.quantity))
+      );
+    });
+  });
+
+  return [...totals.entries()].map(([ingredientId, quantity]) => ({
+    ingredientId,
+    quantity,
+  }));
 };
 
 export const toFrontSale = (
@@ -87,24 +103,47 @@ export const toFrontSale = (
         ingredients: Pick<SaleItemIngredient, 'ingredientId' | 'quantity'>[];
       }
     >;
+    refunds?: Array<Pick<Refund, 'totalCostReversed'>>;
   }
 ): FrontSale => {
   const firstItem = sale.items[0];
-  const recipe = firstItem ? toFrontSaleRecipe(firstItem.ingredients) : [];
+  const isMultiItem = sale.items.length > 1;
+  const totalUnits = sale.items.reduce((sum, item) => sum + item.quantity, 0);
+  const recipe = toFrontSaleRecipe(sale.items);
+  const refundedCost = sale.refunds
+    ? roundQuantity(
+        sale.refunds.reduce(
+          (sum, refund) => roundQuantity(sum + toNumber(refund.totalCostReversed)),
+          0
+        )
+      )
+    : 0;
+
+  const totalCostNet = roundMoney(Math.max(0, toNumber(sale.totalCost) - refundedCost));
+  const displayTotal =
+    sale.status === SaleStatus.REFUNDED
+      ? roundMoney(toNumber(sale.totalRefunded) || toNumber(sale.totalGross))
+      : roundMoney(toNumber(sale.totalNet));
 
   return {
     id: sale.id,
-    productId: firstItem?.productId || '',
-    productName: firstItem?.productNameSnapshot || 'Venda sem item',
+    productId: isMultiItem ? '' : firstItem?.productId || '',
+    productName: isMultiItem
+      ? `Pedido (${totalUnits} itens)`
+      : firstItem?.productNameSnapshot || 'Venda sem item',
     timestamp: sale.createdAt,
-    total: roundMoney(toNumber(sale.totalNet)),
-    totalCost: roundMoney(toNumber(sale.totalCost)),
+    total: displayTotal,
+    totalCost: totalCostNet,
     recipe,
-    basePrice: firstItem?.baseUnitPrice ? roundMoney(toNumber(firstItem.baseUnitPrice)) : undefined,
-    priceAdjustment: firstItem?.priceAdjustment
+    basePrice: !isMultiItem && firstItem?.baseUnitPrice
+      ? roundMoney(toNumber(firstItem.baseUnitPrice))
+      : undefined,
+    priceAdjustment: !isMultiItem && firstItem?.priceAdjustment
       ? roundMoney(toNumber(firstItem.priceAdjustment))
       : undefined,
-    baseCost: firstItem?.baseUnitCost ? roundMoney(toNumber(firstItem.baseUnitCost)) : undefined,
+    baseCost: !isMultiItem && firstItem?.baseUnitCost
+      ? roundMoney(toNumber(firstItem.baseUnitCost))
+      : undefined,
   };
 };
 

@@ -16,6 +16,7 @@ interface AdminDashboardProps {
   cleaningMaterials: CleaningMaterial[];
   cleaningStockEntries: CleaningStockEntry[];
   onFactoryReset: () => void;
+  onClearOperationalData: () => void;
   onDeleteArchiveDate: (date: string) => void;
   onDeleteArchiveMonth: (month: string) => void;
 }
@@ -28,6 +29,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   cleaningMaterials,
   cleaningStockEntries,
   onFactoryReset,
+  onClearOperationalData,
   onDeleteArchiveDate,
   onDeleteArchiveMonth
 }) => {
@@ -98,6 +100,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       const secondCheck = prompt("Digite 'APAGAR TUDO' para confirmar:");
       if (secondCheck === 'APAGAR TUDO') {
         onFactoryReset();
+      }
+    }
+  };
+
+  const handleOperationalResetConfirm = () => {
+    if (
+      confirm(
+        'Isso vai limpar apenas vendas, estornos e movimentações de estoque, mantendo produtos, insumos e materiais cadastrados. Deseja continuar?'
+      )
+    ) {
+      const secondCheck = prompt("Digite 'LIMPAR OPERACIONAL' para confirmar:");
+      if (secondCheck === 'LIMPAR OPERACIONAL') {
+        onClearOperationalData();
       }
     }
   };
@@ -246,7 +261,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
              </div>
              <div>
                <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">Estornos Realizados</h3>
-               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Organizado por período.</p>
+               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Organizado por período, Erros de cliques no processo.</p>
              </div>
           </div>
           {cancelledSales.length === 0 ? <div className="py-24 text-center opacity-30 font-black uppercase text-xs">Sem estornos.</div> : (
@@ -550,6 +565,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           ) : (
             <div className="max-w-2xl w-full space-y-8 animate-in slide-in-from-bottom-4">
+               <div className="bg-blue-50 border-2 border-blue-100 p-8 rounded-[40px]">
+                  <h3 className="text-2xl font-black text-blue-700 uppercase tracking-tighter mb-4">Limpeza Operacional</h3>
+                  <p className="text-slate-600 font-bold text-sm mb-8">Remove cálculos e histórico operacional (vendas, estornos e movimentações), preservando produtos, insumos e materiais já cadastrados.</p>
+                  <button 
+                    onClick={handleOperationalResetConfirm}
+                    className="qb-btn-touch bg-blue-600 text-white px-10 py-5 rounded-[24px] font-black uppercase tracking-tighter shadow-2xl shadow-blue-200 hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center gap-3 mx-auto"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/></svg>
+                    LIMPAR APENAS DADOS OPERACIONAIS
+                  </button>
+               </div>
+
                <div className="bg-red-50 border-2 border-red-100 p-8 rounded-[40px]">
                   <h3 className="text-2xl font-black text-red-600 uppercase tracking-tighter mb-4">Reset Geral de Fábrica</h3>
                   <p className="text-slate-600 font-bold text-sm mb-8">Essa ação é IRREVERSÍVEL. O sistema voltará ao estado original, apagando todos os produtos criados, estoque, vendas e arquivos históricos.</p>
