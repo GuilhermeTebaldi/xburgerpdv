@@ -56,7 +56,7 @@ export class ProductService {
     });
 
     if (!product) {
-      throw new HttpError(404, 'Produto não encontrado.');
+      throw new HttpError(404, 'Produto não encontrado! .');
     }
 
     return product;
