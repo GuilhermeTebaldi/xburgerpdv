@@ -348,6 +348,20 @@ const App: React.FC = () => {
       baseCost,
     };
 
+    const saleStockEntries: StockEntry[] = Object.entries(totals).map(([ingredientId, quantity]) => {
+      const ingredient = ingredients.find(item => item.id === ingredientId);
+      return {
+        id: `st-sale-${newSale.id}-${ingredientId}`,
+        ingredientId,
+        ingredientName: ingredient?.name || 'Insumo',
+        quantity: -quantity,
+        unitCost: ingredient?.cost,
+        timestamp: newSale.timestamp,
+        source: 'SALE',
+        saleId: newSale.id,
+      };
+    });
+
     setIngredients(prev => prev.map(ing => {
       const quantity = totals[ing.id];
       if (quantity) {
@@ -356,6 +370,8 @@ const App: React.FC = () => {
       return ing;
     }));
 
+    setStockEntries(prev => [...prev, ...saleStockEntries]);
+    setGlobalStockEntries(prev => [...prev, ...saleStockEntries]);
     setSales(prev => [...prev, newSale]);
     setGlobalSales(prev => [...prev, newSale]);
     showNotification(`${product.name} Vendido!`);
@@ -381,6 +397,8 @@ const App: React.FC = () => {
         }));
       }
       setSales(prev => prev.slice(0, -1));
+      setStockEntries(prev => prev.filter(entry => entry.saleId !== lastSale.id));
+      setGlobalStockEntries(prev => prev.filter(entry => entry.saleId !== lastSale.id));
       setGlobalSales(prev => {
         const indexToRemove = prev.map((sale) => sale.id).lastIndexOf(lastSale.id);
         if (indexToRemove === -1) return prev;
@@ -414,6 +432,7 @@ const App: React.FC = () => {
       quantity: normalizedAmount,
       unitCost: ing.cost,
       timestamp: new Date(),
+      source: 'MANUAL',
     };
 
     setIngredients(prev => prev.map(i => i.id === id ? { ...i, currentStock: Math.max(0, i.currentStock + normalizedAmount) } : i));

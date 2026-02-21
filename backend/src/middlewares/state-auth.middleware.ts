@@ -35,8 +35,6 @@ export const stateWriteAuth = (req: Request, _res: Response, next: NextFunction)
 
   const payload = verifyStateWriteToken({
     token: stateToken,
-    ipAddress: req.ip,
-    userAgent: req.header('user-agent') || undefined,
   });
 
   req.stateAuthKind = 'state_token';

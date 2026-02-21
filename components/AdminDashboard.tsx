@@ -54,6 +54,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const cancelledRevenue = cancelledSales.reduce((sum, s) => sum + s.total, 0);
   const stockOutCost = useMemo(() => {
     return stockEntries.reduce((sum, entry) => {
+      if (entry.source === 'SALE') return sum;
       if (entry.quantity >= 0) return sum;
       const unitCost = entry.unitCost ?? allIngredients.find(i => i.id === entry.ingredientId)?.cost ?? 0;
       return sum + Math.abs(entry.quantity) * unitCost;

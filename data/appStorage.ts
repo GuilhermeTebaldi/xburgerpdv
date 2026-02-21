@@ -21,11 +21,13 @@ export interface AppState {
   globalCleaningStockEntries: CleaningStockEntry[];
 }
 
-const API_TIMEOUT_MS = 4000;
+const API_TIMEOUT_MS = 12000;
 const DEFAULT_API_BASE_URL = 'https://xburger-backend.onrender.com';
 let hasRemoteHydratedState = false;
 let remoteStateVersion: string | null = null;
 let remoteStateToken: string | null = null;
+let remoteSaveQueue: Promise<void> = Promise.resolve();
+let isDefaultFallbackBootstrap = false;
 
 const STORAGE_KEYS = {
   ingredients: 'qb_ingredients',
@@ -38,6 +40,7 @@ const STORAGE_KEYS = {
   globalCancelledSales: 'qb_global_cancelled',
   globalStockEntries: 'qb_global_stock_entries',
   globalCleaningStockEntries: 'qb_global_cleaning_stock_entries',
+  remoteStateMirror: 'qb_remote_state_mirror_v1',
   metaVersion: 'qb_meta_version',
 };
 
@@ -95,6 +98,11 @@ const getStateApiUrl = (): string | null => {
   const baseUrl = getApiBaseUrl();
   return baseUrl ? `${baseUrl}/api/v1/state` : null;
 };
+
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    globalThis.setTimeout(resolve, ms);
+  });
 
 const fetchWithTimeout = async (
   input: RequestInfo | URL,
@@ -206,6 +214,25 @@ const tryLoadRemoteState = async (defaults: AppState): Promise<AppState | null> 
   }
 };
 
+const tryLoadRemoteStateWithRetry = async (
+  defaults: AppState,
+  attempts = 3,
+  retryDelayMs = 600
+): Promise<AppState | null> => {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const loaded = await tryLoadRemoteState(defaults);
+    if (loaded) {
+      return loaded;
+    }
+
+    if (attempt < attempts - 1) {
+      await delay(retryDelayMs);
+    }
+  }
+
+  return null;
+};
+
 const trySaveRemoteState = async (state: AppState): Promise<boolean> => {
   const apiUrl = getStateApiUrl();
   if (!apiUrl) return false;
@@ -264,6 +291,63 @@ const tryClearRemoteState = async (): Promise<boolean> => {
   }
 };
 
+const ensureRemoteWriteContext = async (): Promise<boolean> => {
+  if (isDefaultFallbackBootstrap && !hasRemoteHydratedState) {
+    return false;
+  }
+
+  if (remoteStateVersion && remoteStateToken) {
+    return true;
+  }
+
+  const refreshed = await tryLoadRemoteStateWithRetry(DEFAULT_APP_STATE, 2, 400);
+  if (!refreshed) {
+    return false;
+  }
+
+  hasRemoteHydratedState = true;
+  isDefaultFallbackBootstrap = false;
+  saveLocalMirrorState(refreshed);
+  return Boolean(remoteStateVersion && remoteStateToken);
+};
+
+const persistRemoteStateWithRetry = async (state: AppState): Promise<boolean> => {
+  const remoteSaved = await trySaveRemoteState(state);
+  if (remoteSaved) return true;
+
+  const refreshed = await tryLoadRemoteStateWithRetry(DEFAULT_APP_STATE, 2, 400);
+  if (!refreshed) {
+    return false;
+  }
+
+  return trySaveRemoteState(state);
+};
+
+const loadLocalMirrorState = (defaults: AppState): AppState | null => {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.remoteStateMirror);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    const normalized = normalizeStateRecord(parsed as Record<string, unknown>, defaults);
+    return sanitizeLegacySeeds(normalized);
+  } catch {
+    return null;
+  }
+};
+
+const saveLocalMirrorState = (state: AppState): void => {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_KEYS.remoteStateMirror, JSON.stringify(state));
+  } catch {
+    // ignore storage write failures
+  }
+};
+
 const sanitizeLegacySeeds = (state: AppState): AppState => {
   const products = state.products.filter((product) => !LEGACY_PRODUCT_IDS.has(product.id));
   const usedIngredientIds = new Set(
@@ -284,18 +368,32 @@ const sanitizeLegacySeeds = (state: AppState): AppState => {
 const clearLegacyStorage = () => {
   if (typeof localStorage === 'undefined') return;
   DATA_KEYS.forEach((key) => localStorage.removeItem(key));
+  localStorage.removeItem(STORAGE_KEYS.remoteStateMirror);
   localStorage.removeItem(STORAGE_KEYS.metaVersion);
 };
 
 export const loadAppState = async (defaults: AppState = DEFAULT_APP_STATE): Promise<AppState> => {
-  const remoteState = await tryLoadRemoteState(defaults);
+  const remoteState = await tryLoadRemoteStateWithRetry(defaults);
   if (remoteState) {
     hasRemoteHydratedState = true;
+    isDefaultFallbackBootstrap = false;
+    saveLocalMirrorState(remoteState);
     return remoteState;
   }
 
-  // Sem fallback local: Render é a fonte única de verdade.
+  const localMirror = loadLocalMirrorState(defaults);
+  if (localMirror) {
+    hasRemoteHydratedState = false;
+    isDefaultFallbackBootstrap = false;
+    remoteStateVersion = null;
+    remoteStateToken = null;
+    console.warn('[appStorage] Backend indisponível. Carregando espelho local seguro.');
+    return localMirror;
+  }
+
+  // Sem backend e sem espelho local: usa memória local até reidratação remota.
   hasRemoteHydratedState = false;
+  isDefaultFallbackBootstrap = true;
   remoteStateVersion = null;
   remoteStateToken = null;
   console.warn('[appStorage] Falha ao carregar estado remoto. Mantendo estado em memória.');
@@ -303,26 +401,31 @@ export const loadAppState = async (defaults: AppState = DEFAULT_APP_STATE): Prom
 };
 
 export const saveAppState = async (state: AppState): Promise<void> => {
-  if (!hasRemoteHydratedState) {
-    console.warn('[appStorage] Persistência remota ignorada até carga inicial do backend.');
+  saveLocalMirrorState(state);
+
+  if (isDefaultFallbackBootstrap && !hasRemoteHydratedState) {
+    console.warn('[appStorage] Persistência remota bloqueada até primeira carga confiável do backend.');
     return;
   }
 
-  const remoteSaved = await trySaveRemoteState(state);
-  if (!remoteSaved) {
-    const refreshed = await tryLoadRemoteState(state);
-    if (!refreshed) {
-      hasRemoteHydratedState = false;
-      console.warn('[appStorage] Falha ao persistir no backend remoto.');
-      return;
-    }
+  remoteSaveQueue = remoteSaveQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const remoteReady = await ensureRemoteWriteContext();
+      if (!remoteReady) {
+        console.warn('[appStorage] Persistência remota indisponível no momento.');
+        return;
+      }
 
-    const retried = await trySaveRemoteState(state);
-    if (!retried) {
-      hasRemoteHydratedState = false;
-      console.warn('[appStorage] Falha ao persistir no backend remoto.');
-    }
-  }
+      const saved = await persistRemoteStateWithRetry(state);
+      if (!saved) {
+        console.warn(
+          '[appStorage] Falha ao persistir no backend remoto. Tentará novamente na próxima alteração.'
+        );
+      }
+    });
+
+  await remoteSaveQueue;
 };
 
 export const clearAppState = async (): Promise<void> => {

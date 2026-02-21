@@ -18,6 +18,8 @@ export interface StockEntry {
   quantity: number;
   timestamp: Date;
   unitCost?: number; // custo do insumo no momento da movimentação
+  source?: 'MANUAL' | 'SALE';
+  saleId?: string;
 }
 
 export interface CleaningMaterial {

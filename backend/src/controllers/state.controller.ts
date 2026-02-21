@@ -26,8 +26,6 @@ const setStateHeaders = (req: Request, res: Response, version: string): void => 
   const token = issueStateWriteToken({
     version,
     actorUserId: req.context.actorUserId,
-    ipAddress: req.ip,
-    userAgent: req.header('user-agent') || undefined,
   });
 
   res.setHeader('ETag', `"${version}"`);
