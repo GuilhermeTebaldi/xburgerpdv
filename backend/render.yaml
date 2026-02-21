@@ -3,7 +3,7 @@ services:
     name: xburger-backend
     runtime: node
     rootDir: backend
-    plan: free
+    plan: starter
     buildCommand: npm install --include=dev && npm run prisma:generate && npm run build
     startCommand: npm run prisma:migrate:deploy && npm run prisma:seed && npm run start
     healthCheckPath: /health
