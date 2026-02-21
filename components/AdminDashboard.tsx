@@ -17,6 +17,7 @@ interface AdminDashboardProps {
   cleaningStockEntries: CleaningStockEntry[];
   onFactoryReset: () => void;
   onClearOperationalData: () => void;
+  onClearOnlyStock: () => void;
   onDeleteArchiveDate: (date: string) => void;
   onDeleteArchiveMonth: (month: string) => void;
 }
@@ -30,6 +31,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   cleaningStockEntries,
   onFactoryReset,
   onClearOperationalData,
+  onClearOnlyStock,
   onDeleteArchiveDate,
   onDeleteArchiveMonth
 }) => {
@@ -113,6 +115,19 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       const secondCheck = prompt("Digite 'LIMPAR OPERACIONAL' para confirmar:");
       if (secondCheck === 'LIMPAR OPERACIONAL') {
         onClearOperationalData();
+      }
+    }
+  };
+
+  const handleClearStockConfirm = () => {
+    if (
+      confirm(
+        'Isso vai zerar apenas as quantidades de estoque atuais, mantendo produtos, insumos, materiais e valores cadastrados. Deseja continuar?'
+      )
+    ) {
+      const secondCheck = prompt("Digite 'ZERAR ESTOQUE' para confirmar:");
+      if (secondCheck === 'ZERAR ESTOQUE') {
+        onClearOnlyStock();
       }
     }
   };
@@ -565,6 +580,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           ) : (
             <div className="max-w-2xl w-full space-y-8 animate-in slide-in-from-bottom-4">
+               <div className="bg-amber-50 border-2 border-amber-100 p-8 rounded-[40px]">
+                  <h3 className="text-2xl font-black text-amber-700 uppercase tracking-tighter mb-4">Zerar Estoque</h3>
+                  <p className="text-slate-600 font-bold text-sm mb-8">Zera somente as quantidades atuais de estoque (insumos e materiais), sem apagar cadastros nem valores.</p>
+                  <button 
+                    onClick={handleClearStockConfirm}
+                    className="qb-btn-touch bg-amber-600 text-white px-10 py-5 rounded-[24px] font-black uppercase tracking-tighter shadow-2xl shadow-amber-200 hover:bg-amber-700 active:scale-95 transition-all flex items-center justify-center gap-3 mx-auto"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><path d="M3 7h18"/><path d="M4 12h16"/><path d="M5 17h14"/></svg>
+                    ZERAR SOMENTE O ESTOQUE
+                  </button>
+               </div>
+
                <div className="bg-blue-50 border-2 border-blue-100 p-8 rounded-[40px]">
                   <h3 className="text-2xl font-black text-blue-700 uppercase tracking-tighter mb-4">Limpeza Operacional</h3>
                   <p className="text-slate-600 font-bold text-sm mb-8">Remove cálculos e histórico operacional (vendas, estornos e movimentações), preservando produtos, insumos e materiais já cadastrados.</p>

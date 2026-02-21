@@ -558,6 +558,22 @@ const App: React.FC = () => {
     showNotification('Dados operacionais limpos. Cadastros preservados.');
   };
 
+  const handleClearOnlyStock = () => {
+    setIngredients(prev =>
+      prev.map(ingredient => ({
+        ...ingredient,
+        currentStock: 0,
+      }))
+    );
+    setCleaningMaterials(prev =>
+      prev.map(material => ({
+        ...material,
+        currentStock: 0,
+      }))
+    );
+    showNotification('Estoque zerado. Cadastros e valores preservados.');
+  };
+
   const handleDeleteArchiveByDate = (dateString: string) => {
     setGlobalSales(prev => prev.filter(s => s.timestamp.toLocaleDateString('pt-BR') !== dateString));
     showNotification(`Arquivos de ${dateString} Excluídos!`);
@@ -710,6 +726,7 @@ const App: React.FC = () => {
               cleaningStockEntries={globalCleaningStockEntries}
               onFactoryReset={handleFactoryReset}
               onClearOperationalData={handleClearOperationalData}
+              onClearOnlyStock={handleClearOnlyStock}
               onDeleteArchiveDate={handleDeleteArchiveByDate}
               onDeleteArchiveMonth={handleDeleteArchiveByMonth}
             />
