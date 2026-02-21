@@ -12,8 +12,6 @@ interface ProductRecipeInput {
 }
 
 type ProductCategoryValue = 'SNACK' | 'DRINK' | 'SIDE';
-type ProductModel = Prisma.ProductGetPayload<Prisma.ProductDefaultArgs>;
-type RecipeAuditItem = { ingredientId: string; quantity: Prisma.Decimal };
 
 interface UpsertProductInput {
   externalId?: string;
@@ -196,7 +194,7 @@ export class ProductService {
             name: withRecipe.name,
             category: withRecipe.category,
             price: withRecipe.price.toNumber(),
-            recipe: withRecipe.recipeItems.map((item: RecipeAuditItem) => ({
+            recipe: withRecipe.recipeItems.map((item) => ({
               ingredientId: item.ingredientId,
               quantity: item.quantity.toNumber(),
             })),
@@ -231,7 +229,7 @@ export class ProductService {
     });
   }
 
-  async ensureProductExists(id: string): Promise<ProductModel> {
+  async ensureProductExists(id: string) {
     const product = await prisma.product.findFirst({
       where: { id, isActive: true },
     });
