@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import Header from './components/Header';
 import ProductCard from './components/ProductCard';
 import InventoryManager from './components/InventoryManager';
@@ -22,8 +22,8 @@ import {
   StockEntry,
   RecipeItem,
 } from './types';
-import { DEFAULT_APP_STATE, loadAppState, saveAppState, clearAppState } from './data/appStorage';
-import { aggregateRecipe, calculateRecipeCost, getRecipeStockIssues } from './utils/recipe';
+import { DEFAULT_APP_STATE, loadAppState, type AppState } from './data/appStorage';
+import { runStateCommand, type StateCommand } from './data/stateCommandClient';
 
 const ADMIN_GATE_KEY = 'lanchesdoben_admin_gate';
 const ADMIN_SESSION_KEY = 'lanchesdoben_admin_session';
@@ -118,25 +118,6 @@ const resolveSiteRootUrl = () => {
   return `${origin}/`;
 };
 
-const toStockMap = <T extends { id: string; currentStock: number }>(items: T[]) =>
-  items.reduce<Record<string, number>>((acc, item) => {
-    acc[item.id] = item.currentStock;
-    return acc;
-  }, {});
-
-const getAppliedStockDelta = (currentStock: number, requestedAmount: number): number => {
-  if (!Number.isFinite(currentStock) || !Number.isFinite(requestedAmount) || requestedAmount === 0) {
-    return 0;
-  }
-
-  const normalizedAmount = requestedAmount < 0 ? Math.max(requestedAmount, -currentStock) : requestedAmount;
-  if (!Number.isFinite(normalizedAmount) || normalizedAmount === 0) {
-    return 0;
-  }
-
-  return Math.max(0, currentStock + normalizedAmount) - currentStock;
-};
-
 const App: React.FC = () => {
   const [view, setView] = useState<ViewMode>(ViewMode.POS);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
@@ -144,7 +125,6 @@ const App: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isAccessVerified, setIsAccessVerified] = useState(false);
   
-  const [isHydrated, setIsHydrated] = useState(false);
   const [ingredients, setIngredients] = useState<Ingredient[]>(DEFAULT_APP_STATE.ingredients);
   const [products, setProducts] = useState<Product[]>(DEFAULT_APP_STATE.products);
   const [sales, setSales] = useState<Sale[]>(DEFAULT_APP_STATE.sales);
@@ -171,10 +151,6 @@ const App: React.FC = () => {
     isVisible: false,
     message: '',
   });
-  const ingredientStockRef = useRef<Record<string, number>>(toStockMap(DEFAULT_APP_STATE.ingredients));
-  const cleaningMaterialStockRef = useRef<Record<string, number>>(
-    toStockMap(DEFAULT_APP_STATE.cleaningMaterials)
-  );
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -273,59 +249,51 @@ const App: React.FC = () => {
         setGlobalCancelledSales(state.globalCancelledSales);
         setGlobalStockEntries(state.globalStockEntries);
         setGlobalCleaningStockEntries(state.globalCleaningStockEntries);
-        setIsHydrated(true);
       })
-      .catch(() => {
-        if (!cancelled) {
-          setIsHydrated(true);
-        }
-      });
+      .catch(() => undefined);
 
     return () => {
       cancelled = true;
     };
   }, [isAccessVerified]);
 
-  useEffect(() => {
-    if (!isAccessVerified) return;
-    if (!isHydrated) return;
-    void saveAppState({
-      ingredients,
-      products,
-      sales,
-      stockEntries,
-      cleaningMaterials,
-      cleaningStockEntries,
-      globalSales,
-      globalCancelledSales,
-      globalStockEntries,
-      globalCleaningStockEntries,
-    });
-  }, [
-    isHydrated,
-    ingredients,
-    products,
-    sales,
-    stockEntries,
-    cleaningMaterials,
-    cleaningStockEntries,
-    globalSales,
-    globalCancelledSales,
-    globalStockEntries,
-    globalCleaningStockEntries,
-  ]);
-
-  useEffect(() => {
-    ingredientStockRef.current = toStockMap(ingredients);
-  }, [ingredients]);
-
-  useEffect(() => {
-    cleaningMaterialStockRef.current = toStockMap(cleaningMaterials);
-  }, [cleaningMaterials]);
-
   const showNotification = (message: string) => {
     setNotification({ isVisible: true, message });
   };
+
+  const applyStateSnapshot = useCallback((state: AppState) => {
+    setIngredients(state.ingredients);
+    setProducts(state.products);
+    setSales(state.sales);
+    setStockEntries(state.stockEntries);
+    setCleaningMaterials(state.cleaningMaterials);
+    setCleaningStockEntries(state.cleaningStockEntries);
+    setGlobalSales(state.globalSales);
+    setGlobalCancelledSales(state.globalCancelledSales);
+    setGlobalStockEntries(state.globalStockEntries);
+    setGlobalCleaningStockEntries(state.globalCleaningStockEntries);
+  }, []);
+
+  const runCommandWithSync = useCallback(
+    async (command: StateCommand, successMessage?: string): Promise<boolean> => {
+      try {
+        const nextState = await runStateCommand(command);
+        applyStateSnapshot(nextState);
+        if (successMessage) {
+          showNotification(successMessage);
+        }
+        return true;
+      } catch (error) {
+        const message =
+          error instanceof Error && error.message.trim()
+            ? error.message
+            : 'Falha ao sincronizar com o servidor. Tente novamente.';
+        showNotification(message);
+        return false;
+      }
+    },
+    [applyStateSnapshot]
+  );
 
   const handleAdminLogin = useCallback((success: boolean) => {
     if (!success) return;
@@ -334,80 +302,16 @@ const App: React.FC = () => {
   }, []);
 
   const handleSale = useCallback((product: Product, recipeOverride?: RecipeItem[], priceOverride?: number) => {
-    const recipeToUse = recipeOverride || product.recipe;
-    const finalPrice = priceOverride !== undefined ? priceOverride : product.price;
-
-    const { totalCost, missingIngredientIds, totals } = calculateRecipeCost(ingredients, recipeToUse);
-    if (Object.keys(totals).length === 0) {
-      showNotification('Receita inválida. Verifique os ingredientes.');
-      return;
-    }
-    if (missingIngredientIds.length > 0) {
-      showNotification('Receita com insumos ausentes. Atualize o produto.');
-      return;
-    }
-
-    const stockIssues = getRecipeStockIssues(ingredients, totals);
-    if (stockIssues.length > 0) {
-      const firstIssue = stockIssues[0];
-      showNotification(
-        `Estoque insuficiente: ${firstIssue.ingredientName} (${firstIssue.available.toFixed(2)} / ${firstIssue.required.toFixed(2)} ${firstIssue.unit})`
-      );
-      return;
-    }
-
-    const baseCostInfo = calculateRecipeCost(ingredients, product.recipe);
-    const baseCost = baseCostInfo.missingIngredientIds.length > 0 ? undefined : baseCostInfo.totalCost;
-    const basePrice = product.price;
-    const priceAdjustment = finalPrice - basePrice;
-    const stockDebited = Object.entries(totals).map(([ingredientId, quantity]) => ({
-      ingredientId,
-      quantity,
-    }));
-
-    const newSale: Sale = {
-      id: 's-' + Date.now(),
-      productId: product.id,
-      productName: product.name,
-      timestamp: new Date(),
-      total: finalPrice,
-      totalCost,
-      recipe: recipeToUse,
-      stockDebited,
-      basePrice,
-      priceAdjustment,
-      baseCost,
-    };
-
-    const saleStockEntries: StockEntry[] = Object.entries(totals).map(([ingredientId, quantity]) => {
-      const ingredient = ingredients.find(item => item.id === ingredientId);
-      return {
-        id: `st-sale-${newSale.id}-${ingredientId}`,
-        ingredientId,
-        ingredientName: ingredient?.name || 'Insumo',
-        quantity: -quantity,
-        unitCost: ingredient?.cost,
-        timestamp: newSale.timestamp,
-        source: 'SALE',
-        saleId: newSale.id,
-      };
-    });
-
-    const ingredientsAfterSale = ingredients.map(ing => {
-      const quantity = totals[ing.id];
-      if (quantity) {
-        return { ...ing, currentStock: Math.max(0, ing.currentStock - quantity) };
-      }
-      return ing;
-    });
-    ingredientStockRef.current = toStockMap(ingredientsAfterSale);
-    setIngredients(ingredientsAfterSale);
-    setStockEntries(prev => [...prev, ...saleStockEntries]);
-    setGlobalStockEntries(prev => [...prev, ...saleStockEntries]);
-    setSales(prev => [...prev, newSale]);
-    setGlobalSales(prev => [...prev, newSale]);
-    showNotification(`${product.name} Vendido!`);
-  }, [ingredients]);
+    void runCommandWithSync(
+      {
+        type: 'SALE_REGISTER',
+        productId: product.id,
+        recipeOverride,
+        priceOverride,
+      },
+      `${product.name} Vendido!`
+    );
+  }, [runCommandWithSync]);
 
   const handleUndoLastSale = () => {
     if (sales.length === 0) {
@@ -417,85 +321,23 @@ const App: React.FC = () => {
 
     const lastSale = sales[sales.length - 1];
     if (confirm(`Desfazer a última venda (${lastSale.productName}) e devolver insumos ao estoque?`)) {
-      const recipeToRestore = lastSale.stockDebited || lastSale.recipe;
-      const totals = recipeToRestore ? aggregateRecipe(recipeToRestore) : {};
-      const autoReplenishmentTotals = stockEntries.reduce<Record<string, number>>((acc, entry) => {
-        if (entry.saleId !== lastSale.id || entry.source !== 'AUTO_REPLENISH') {
-          return acc;
-        }
-        acc[entry.ingredientId] = (acc[entry.ingredientId] || 0) + entry.quantity;
-        return acc;
-      }, {});
-
-      if (Object.keys(totals).length > 0 || Object.keys(autoReplenishmentTotals).length > 0) {
-        const restoredIngredients = ingredients.map(ing => {
-          const restoredQuantity = totals[ing.id] || 0;
-          const autoReplenished = autoReplenishmentTotals[ing.id] || 0;
-          if (restoredQuantity !== 0 || autoReplenished !== 0) {
-            return {
-              ...ing,
-              currentStock: Math.max(0, ing.currentStock + restoredQuantity - autoReplenished),
-            };
-          }
-          return ing;
-        });
-        ingredientStockRef.current = toStockMap(restoredIngredients);
-        setIngredients(restoredIngredients);
-      }
-      setSales(prev => prev.slice(0, -1));
-      setStockEntries(prev => prev.filter(entry => entry.saleId !== lastSale.id));
-      setGlobalStockEntries(prev => prev.filter(entry => entry.saleId !== lastSale.id));
-      setGlobalSales(prev => {
-        const indexToRemove = prev.map((sale) => sale.id).lastIndexOf(lastSale.id);
-        if (indexToRemove === -1) return prev;
-        return prev.filter((_sale, index) => index !== indexToRemove);
-      });
-      setGlobalCancelledSales(prev => [...prev, lastSale]);
-      showNotification('Venda Estornada!');
+      void runCommandWithSync({ type: 'SALE_UNDO_LAST' }, 'Venda Estornada!');
     }
   };
 
   const handleUpdateStock = useCallback((id: string, amount: number) => {
-    const ing = ingredients.find(i => i.id === id);
-    if (!ing) return;
-
-    if (!Number.isFinite(amount) || amount === 0) {
-      showNotification('Quantidade inválida!');
-      return;
-    }
-
-    const currentStock = ingredientStockRef.current[id] ?? ing.currentStock;
-    const appliedAmount = getAppliedStockDelta(currentStock, amount);
-    if (appliedAmount === 0) {
-      showNotification('Estoque insuficiente para a baixa!');
-      return;
-    }
-
-    ingredientStockRef.current[id] = currentStock + appliedAmount;
-    const timestamp = new Date();
-
-    const newEntry: StockEntry = {
-      id: 'st-' + Date.now(),
-      ingredientId: id,
-      ingredientName: ing.name,
-      quantity: appliedAmount,
-      unitCost: ing.cost,
-      timestamp,
-      source: 'MANUAL',
-    };
-
-    setIngredients(prev => prev.map(i =>
-      i.id === id ? { ...i, currentStock: Math.max(0, i.currentStock + appliedAmount) } : i
-    ));
-    setStockEntries(prev => [...prev, newEntry]);
-    setGlobalStockEntries(prev => [...prev, newEntry]);
-
-    showNotification(appliedAmount > 0 ? 'Estoque Atualizado!' : 'Gasto de Insumo Registrado!');
-  }, [ingredients]);
+    void runCommandWithSync(
+      {
+        type: 'INGREDIENT_STOCK_MOVE',
+        ingredientId: id,
+        amount,
+      },
+      amount > 0 ? 'Estoque Atualizado!' : 'Gasto de Insumo Registrado!'
+    );
+  }, [runCommandWithSync]);
 
   const handleAddProduct = (product: Product) => {
-    setProducts(prev => [...prev, product]);
-    showNotification('Produto Adicionado!');
+    void runCommandWithSync({ type: 'PRODUCT_CREATE', product }, 'Produto Adicionado!');
   };
 
   const handleEditProduct = (product: Product) => {
@@ -503,39 +345,23 @@ const App: React.FC = () => {
   };
 
   const handleSaveProduct = (updated: Product) => {
-    setProducts(prev => prev.map(p => (p.id === updated.id ? updated : p)));
-    showNotification('Produto Atualizado!');
+    void runCommandWithSync({ type: 'PRODUCT_UPDATE', product: updated }, 'Produto Atualizado!');
   };
 
   const handleDeleteProduct = (productId: string) => {
     if (confirm("Deseja realmente excluir este produto permanentemente?")) {
-      setProducts(prev => prev.filter(p => p.id !== productId));
-      showNotification('Produto Excluído');
+      void runCommandWithSync({ type: 'PRODUCT_DELETE', productId }, 'Produto Excluído');
     }
   };
 
   const handleDeleteIngredient = (ingredientId: string) => {
     if (confirm("ATENÇÃO: Excluir este ingrediente irá impactar as receitas que o utilizam. Tem certeza que deseja remover?")) {
-      setIngredients(prev => prev.filter(i => i.id !== ingredientId));
-      const nextRef = { ...ingredientStockRef.current };
-      delete nextRef[ingredientId];
-      ingredientStockRef.current = nextRef;
-      // Limpa receitas de produtos que usavam esse ingrediente para evitar erros
-      setProducts(prev => prev.map(p => ({
-        ...p,
-        recipe: p.recipe.filter(r => r.ingredientId !== ingredientId)
-      })));
-      showNotification('Ingrediente Removido');
+      void runCommandWithSync({ type: 'INGREDIENT_DELETE', ingredientId }, 'Ingrediente Removido');
     }
   };
 
   const handleAddIngredient = (ingredient: Ingredient) => {
-    ingredientStockRef.current = {
-      ...ingredientStockRef.current,
-      [ingredient.id]: ingredient.currentStock,
-    };
-    setIngredients(prev => [...prev, ingredient]);
-    showNotification('Ingrediente Adicionado!');
+    void runCommandWithSync({ type: 'INGREDIENT_CREATE', ingredient }, 'Ingrediente Adicionado!');
   };
 
   const handleEditIngredient = (ingredient: Ingredient) => {
@@ -543,149 +369,101 @@ const App: React.FC = () => {
   };
 
   const handleSaveIngredient = (updated: Ingredient) => {
-    ingredientStockRef.current = {
-      ...ingredientStockRef.current,
-      [updated.id]: updated.currentStock,
-    };
-    setIngredients(prev => prev.map(ing => (ing.id === updated.id ? updated : ing)));
-    showNotification('Ingrediente Atualizado!');
+    void runCommandWithSync({ type: 'INGREDIENT_UPDATE', ingredient: updated }, 'Ingrediente Atualizado!');
   };
 
   const handleAddCleaningMaterial = (material: CleaningMaterial) => {
-    cleaningMaterialStockRef.current = {
-      ...cleaningMaterialStockRef.current,
-      [material.id]: material.currentStock,
-    };
-    setCleaningMaterials(prev => [...prev, material]);
-    showNotification('Material de limpeza adicionado!');
+    void runCommandWithSync(
+      { type: 'CLEANING_MATERIAL_CREATE', material },
+      'Material de limpeza adicionado!'
+    );
   };
 
   const handleUpdateCleaningMaterial = (updated: CleaningMaterial) => {
-    cleaningMaterialStockRef.current = {
-      ...cleaningMaterialStockRef.current,
-      [updated.id]: updated.currentStock,
-    };
-    setCleaningMaterials(prev => prev.map(material => (material.id === updated.id ? updated : material)));
-    showNotification('Material de limpeza atualizado!');
+    void runCommandWithSync(
+      { type: 'CLEANING_MATERIAL_UPDATE', material: updated },
+      'Material de limpeza atualizado!'
+    );
   };
 
   const handleDeleteCleaningMaterial = (materialId: string) => {
-    const nextRef = { ...cleaningMaterialStockRef.current };
-    delete nextRef[materialId];
-    cleaningMaterialStockRef.current = nextRef;
-    setCleaningMaterials(prev => prev.filter(material => material.id !== materialId));
-    showNotification('Material de limpeza removido!');
+    void runCommandWithSync(
+      { type: 'CLEANING_MATERIAL_DELETE', materialId },
+      'Material de limpeza removido!'
+    );
   };
 
   const handleUpdateCleaningStock = useCallback((id: string, amount: number) => {
-    const material = cleaningMaterials.find(m => m.id === id);
-    if (!material) return;
-
-    if (!Number.isFinite(amount) || amount === 0) {
-      showNotification('Quantidade inválida para material!');
-      return;
-    }
-
-    const currentStock = cleaningMaterialStockRef.current[id] ?? material.currentStock;
-    const appliedAmount = getAppliedStockDelta(currentStock, amount);
-    if (appliedAmount === 0) {
-      showNotification('Estoque de material insuficiente para baixa!');
-      return;
-    }
-
-    cleaningMaterialStockRef.current[id] = currentStock + appliedAmount;
-
-    const newEntry: CleaningStockEntry = {
-      id: `cst-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      materialId: id,
-      materialName: material.name,
-      quantity: appliedAmount,
-      unitCost: material.cost,
-      timestamp: new Date(),
-    };
-
-    setCleaningMaterials(prev =>
-      prev.map(m =>
-        m.id === id ? { ...m, currentStock: Math.max(0, m.currentStock + appliedAmount) } : m
-      )
+    void runCommandWithSync(
+      {
+        type: 'CLEANING_STOCK_MOVE',
+        materialId: id,
+        amount,
+      },
+      amount > 0 ? 'Estoque de material atualizado!' : 'Baixa de material registrada!'
     );
-    setCleaningStockEntries(prev => [...prev, newEntry]);
-    setGlobalCleaningStockEntries(prev => [...prev, newEntry]);
-    showNotification(appliedAmount > 0 ? 'Estoque de material atualizado!' : 'Baixa de material registrada!');
-  }, [cleaningMaterials]);
+  }, [runCommandWithSync]);
 
   const handleClearHistory = () => {
     if (confirm("Deseja realmente encerrar o dia? O caixa será zerado para uma nova sessão.")) {
-      setSales([]);
-      setStockEntries([]);
-      showNotification('Sessão Reiniciada!');
+      void runCommandWithSync({ type: 'CLEAR_HISTORY' }, 'Sessão Reiniciada!');
     }
   };
 
   const handleFactoryReset = async () => {
-    await clearAppState();
-    ingredientStockRef.current = toStockMap(DEFAULT_APP_STATE.ingredients);
-    cleaningMaterialStockRef.current = toStockMap(DEFAULT_APP_STATE.cleaningMaterials);
-    setIngredients(DEFAULT_APP_STATE.ingredients);
-    setProducts(DEFAULT_APP_STATE.products);
-    setSales(DEFAULT_APP_STATE.sales);
-    setStockEntries(DEFAULT_APP_STATE.stockEntries);
-    setCleaningMaterials(DEFAULT_APP_STATE.cleaningMaterials);
-    setCleaningStockEntries(DEFAULT_APP_STATE.cleaningStockEntries);
-    setGlobalSales(DEFAULT_APP_STATE.globalSales);
-    setGlobalCancelledSales(DEFAULT_APP_STATE.globalCancelledSales);
-    setGlobalStockEntries(DEFAULT_APP_STATE.globalStockEntries);
-    setGlobalCleaningStockEntries(DEFAULT_APP_STATE.globalCleaningStockEntries);
-    showNotification('Sistema Resetado com Sucesso!');
-    setView(ViewMode.POS);
+    const ok = await runCommandWithSync({ type: 'FACTORY_RESET' }, 'Sistema Resetado com Sucesso!');
+    if (ok) {
+      setView(ViewMode.POS);
+    }
   };
 
   const handleClearOperationalData = () => {
-    setSales([]);
-    setStockEntries([]);
-    setCleaningStockEntries([]);
-    setGlobalSales([]);
-    setGlobalCancelledSales([]);
-    setGlobalStockEntries([]);
-    setGlobalCleaningStockEntries([]);
-    showNotification('Dados operacionais limpos. Cadastros preservados.');
+    void runCommandWithSync(
+      { type: 'CLEAR_OPERATIONAL_DATA' },
+      'Dados operacionais limpos. Cadastros preservados.'
+    );
   };
 
   const handleClearOnlyStock = () => {
-    ingredientStockRef.current = ingredients.reduce<Record<string, number>>((acc, ingredient) => {
-      acc[ingredient.id] = 0;
-      return acc;
-    }, {});
-    cleaningMaterialStockRef.current = cleaningMaterials.reduce<Record<string, number>>((acc, material) => {
-      acc[material.id] = 0;
-      return acc;
-    }, {});
-
-    setIngredients(prev =>
-      prev.map(ingredient => ({
-        ...ingredient,
-        currentStock: 0,
-      }))
+    void runCommandWithSync(
+      { type: 'CLEAR_ONLY_STOCK' },
+      'Estoque zerado. Cadastros e valores preservados.'
     );
-    setCleaningMaterials(prev =>
-      prev.map(material => ({
-        ...material,
-        currentStock: 0,
-      }))
-    );
-    showNotification('Estoque zerado. Cadastros e valores preservados.');
   };
 
   const handleDeleteArchiveByDate = (dateString: string) => {
-    setGlobalSales(prev => prev.filter(s => s.timestamp.toLocaleDateString('pt-BR') !== dateString));
-    showNotification(`Arquivos de ${dateString} Excluídos!`);
+    const saleIds = globalSales
+      .filter((sale) => sale.timestamp.toLocaleDateString('pt-BR') === dateString)
+      .map((sale) => sale.id);
+
+    if (saleIds.length === 0) {
+      showNotification('Nenhum arquivo encontrado para a data selecionada.');
+      return;
+    }
+
+    void runCommandWithSync(
+      { type: 'DELETE_ARCHIVE_SALES', saleIds },
+      `Arquivos de ${dateString} Excluídos!`
+    );
   };
 
   const handleDeleteArchiveByMonth = (monthString: string) => {
-    setGlobalSales(prev => prev.filter(s => 
-      s.timestamp.toLocaleString('pt-BR', { month: 'long', year: 'numeric' }) !== monthString
-    ));
-    showNotification(`Arquivos de ${monthString} Excluídos!`);
+    const saleIds = globalSales
+      .filter(
+        (sale) =>
+          sale.timestamp.toLocaleString('pt-BR', { month: 'long', year: 'numeric' }) === monthString
+      )
+      .map((sale) => sale.id);
+
+    if (saleIds.length === 0) {
+      showNotification('Nenhum arquivo encontrado para o mês selecionado.');
+      return;
+    }
+
+    void runCommandWithSync(
+      { type: 'DELETE_ARCHIVE_SALES', saleIds },
+      `Arquivos de ${monthString} Excluídos!`
+    );
   };
 
   const dailyTotal = useMemo(() => sales.reduce((acc, sale) => acc + sale.total, 0), [sales]);
