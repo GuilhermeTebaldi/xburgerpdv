@@ -87,6 +87,7 @@ Base: `/api/v1`
 - `GET /state`
 - `PUT /state` (requer `If-Match` + `X-State-Token` retornados pelo `GET`, ou `Authorization: Bearer <token>`)
 - `DELETE /state` (requer `If-Match` + `X-State-Token` retornados pelo `GET`, ou `Authorization: Bearer <token>`)
+- `POST /state/commands` (movimentações de estoque/venda/cadastros em fluxo transacional com versão otimista)
 
 Retorna:
 - `ingredients`
@@ -161,6 +162,12 @@ Obrigatórias em produção:
 - `SEED_ADMIN_PASSWORD`
 - `SEED_ADMIN_NAME`
 - `DEFAULT_TIMEZONE`
+- `APP_STATE_BACKUP_RETENTION_DAYS` (padrão `35`)
+- `APP_STATE_BACKUP_SCHEDULER_ENABLED` (`true|false`, padrão `true`)
+- `APP_STATE_BACKUP_CHECK_INTERVAL_MS` (padrão `3600000`)
+
+Comando utilitário:
+- `npm run backup:run --prefix backend` (força execução de backup diário/versionado + poda por retenção)
 
 ## 6) Execução local (sem etapa oculta)
 

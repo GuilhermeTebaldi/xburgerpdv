@@ -76,6 +76,14 @@ enum ActionOrigin {
   @@map("action_origin")
 }
 
+enum AppStateBackupKind {
+  PRE_WRITE
+  DAILY
+  MANUAL
+
+  @@map("app_state_backup_kind")
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique @db.VarChar(255)
@@ -387,4 +395,18 @@ model AppState {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("app_state")
+}
+
+model AppStateBackup {
+  id            String             @id @default(uuid()) @db.Uuid
+  kind          AppStateBackupKind
+  sourceVersion String             @map("source_version") @db.VarChar(80)
+  backupDay     DateTime?          @map("backup_day") @db.Date
+  stateJson     Json               @map("state_json")
+  createdAt     DateTime           @default(now()) @map("created_at")
+
+  @@unique([backupDay, kind])
+  @@index([kind, createdAt])
+  @@index([sourceVersion])
+  @@map("app_state_backups")
 }

@@ -6,6 +6,7 @@ import InventoryManager from './components/InventoryManager';
 import CleaningMaterialsManager from './components/CleaningMaterialsManager';
 import SalesSummary from './components/SalesSummary';
 import Notification from './components/Notification';
+import SyncStatusOverlay from './components/SyncStatusOverlay';
 import AddProductModal from './components/AddProductModal';
 import AddIngredientModal from './components/AddIngredientModal';
 import EditIngredientModal from './components/EditIngredientModal';
@@ -124,6 +125,8 @@ const App: React.FC = () => {
   const [activeCategory, setActiveCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [isAccessVerified, setIsAccessVerified] = useState(false);
+  const [isStateHydrating, setIsStateHydrating] = useState(true);
+  const [pendingStateOps, setPendingStateOps] = useState(0);
   
   const [ingredients, setIngredients] = useState<Ingredient[]>(DEFAULT_APP_STATE.ingredients);
   const [products, setProducts] = useState<Product[]>(DEFAULT_APP_STATE.products);
@@ -236,6 +239,7 @@ const App: React.FC = () => {
     if (!isAccessVerified) return;
 
     let cancelled = false;
+    setIsStateHydrating(true);
     loadAppState(DEFAULT_APP_STATE)
       .then((state) => {
         if (cancelled) return;
@@ -250,7 +254,11 @@ const App: React.FC = () => {
         setGlobalStockEntries(state.globalStockEntries);
         setGlobalCleaningStockEntries(state.globalCleaningStockEntries);
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (cancelled) return;
+        setIsStateHydrating(false);
+      });
 
     return () => {
       cancelled = true;
@@ -276,6 +284,7 @@ const App: React.FC = () => {
 
   const runCommandWithSync = useCallback(
     async (command: StateCommand, successMessage?: string): Promise<boolean> => {
+      setPendingStateOps((current) => current + 1);
       try {
         const nextState = await runStateCommand(command);
         applyStateSnapshot(nextState);
@@ -290,10 +299,17 @@ const App: React.FC = () => {
             : 'Falha ao sincronizar com o servidor. Tente novamente.';
         showNotification(message);
         return false;
+      } finally {
+        setPendingStateOps((current) => Math.max(0, current - 1));
       }
     },
     [applyStateSnapshot]
   );
+
+  const isSyncIndicatorVisible = isStateHydrating || pendingStateOps > 0;
+  const syncIndicatorMessage = isStateHydrating
+    ? 'Carregando dados do servidor...'
+    : 'Aguardando resposta do banco/API...';
 
   const handleAdminLogin = useCallback((success: boolean) => {
     if (!success) return;
@@ -496,6 +512,11 @@ const App: React.FC = () => {
   return (
     <div className="qb-app min-h-screen bg-slate-50 flex flex-col">
       <Header currentView={view} setView={setView} dailyTotal={dailyTotal} />
+      <SyncStatusOverlay
+        visible={isSyncIndicatorVisible}
+        message={syncIndicatorMessage}
+        pendingCount={Math.max(1, pendingStateOps)}
+      />
       
       <main className="qb-main flex-1 pb-20">
         {view === ViewMode.POS && (

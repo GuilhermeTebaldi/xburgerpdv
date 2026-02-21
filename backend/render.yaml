@@ -27,3 +27,28 @@ services:
         value: Administrador
       - key: DEFAULT_TIMEZONE
         value: America/Sao_Paulo
+      - key: APP_STATE_BACKUP_RETENTION_DAYS
+        value: "35"
+      - key: APP_STATE_BACKUP_SCHEDULER_ENABLED
+        value: "true"
+      - key: APP_STATE_BACKUP_CHECK_INTERVAL_MS
+        value: "3600000"
+
+  - type: cron
+    name: xburger-backup-daily
+    runtime: node
+    rootDir: backend
+    schedule: 20 4 * * *
+    buildCommand: npm install --include=dev && npm run prisma:generate && npm run build
+    startCommand: npm run backup:run
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: DEFAULT_TIMEZONE
+        value: America/Sao_Paulo
+      - key: APP_STATE_BACKUP_RETENTION_DAYS
+        value: "35"

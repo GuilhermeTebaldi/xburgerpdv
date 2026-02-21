@@ -1,5 +1,6 @@
-import { Prisma, SaleStatus, StockTargetType } from '@prisma/client';
+import { AppStateBackupKind, Prisma, SaleStatus, StockTargetType } from '@prisma/client';
 
+import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import type { FrontAppState } from '../types/frontend.js';
 import type { RequestContext } from '../types/request-context.js';
@@ -15,6 +16,7 @@ import {
   toFrontSale,
 } from './mappers.service.js';
 import { SessionService } from './session.service.js';
+import { addDays, toBackupDay, toDateOnlyKey } from './state-backup.utils.js';
 import { applyStateCommand } from './state-command.service.js';
 
 const EMPTY_APP_STATE: FrontAppState = {
@@ -59,6 +61,13 @@ export interface AppStateSnapshot {
   version: string;
 }
 
+export interface DailyBackupResult {
+  backupDay: string;
+  created: boolean;
+  sourceVersion: string;
+  prunedCount: number;
+}
+
 export class StateService {
   private readonly sessionService = new SessionService();
 
@@ -75,7 +84,7 @@ export class StateService {
       if (!this.isMissingAppStateTableError(error)) {
         throw error;
       }
-      await this.bootstrapAppStateTable();
+      await this.bootstrapAppStateTables();
     }
 
     const rebuilt = await this.buildStateFromDomain();
@@ -107,8 +116,22 @@ export class StateService {
         throw error;
       }
 
-      await this.bootstrapAppStateTable();
+      await this.bootstrapAppStateTables();
       return this.applyCommandSnapshot(command, expectedVersion, context);
+    }
+  }
+
+  async runDailyBackup(context?: RequestContext): Promise<DailyBackupResult> {
+    const now = new Date();
+    try {
+      return await this.createDailyBackup(now, context);
+    } catch (error) {
+      if (!this.isMissingAppStateTableError(error)) {
+        throw error;
+      }
+
+      await this.bootstrapAppStateTables();
+      return this.createDailyBackup(now, context);
     }
   }
 
@@ -116,7 +139,7 @@ export class StateService {
     return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2021';
   }
 
-  private async bootstrapAppStateTable(): Promise<void> {
+  private async bootstrapAppStateTables(): Promise<void> {
     await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS app_state (
         id integer PRIMARY KEY DEFAULT 1,
@@ -131,6 +154,42 @@ export class StateService {
       INSERT INTO app_state (id, state_json)
       VALUES (1, '{}'::jsonb)
       ON CONFLICT (id) DO NOTHING
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      BEGIN
+        CREATE TYPE app_state_backup_kind AS ENUM ('PRE_WRITE', 'DAILY', 'MANUAL');
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+      END
+      $$;
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS app_state_backups (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        kind app_state_backup_kind NOT NULL,
+        source_version varchar(80) NOT NULL,
+        backup_day date,
+        state_json jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX IF NOT EXISTS app_state_backups_backup_day_kind_key
+      ON app_state_backups (backup_day, kind)
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS app_state_backups_kind_created_at_idx
+      ON app_state_backups (kind, created_at)
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS app_state_backups_source_version_idx
+      ON app_state_backups (source_version)
     `);
   }
 
@@ -147,7 +206,7 @@ export class StateService {
         throw error;
       }
 
-      await this.bootstrapAppStateTable();
+      await this.bootstrapAppStateTables();
       return this.upsertSnapshot(state, action, context, expectedVersion);
     }
   }
@@ -161,6 +220,7 @@ export class StateService {
     return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const current = await tx.appState.findUnique({ where: { id: 1 } });
       const currentVersion = current ? toVersionTag(current.updatedAt) : null;
+      const operationNow = new Date();
 
       if (expectedVersion !== undefined) {
         if (!currentVersion) {
@@ -177,6 +237,8 @@ export class StateService {
         }
       }
 
+      await this.ensurePreWriteBackupTx(tx, current);
+
       const saved = current
         ? await tx.appState.update({
             where: { id: 1 },
@@ -190,6 +252,14 @@ export class StateService {
               stateJson: state as unknown as Prisma.InputJsonValue,
             },
           });
+
+      await this.ensureDailyBackupTx(
+        tx,
+        saved.stateJson as Prisma.JsonValue,
+        toVersionTag(saved.updatedAt),
+        operationNow
+      );
+      await this.pruneExpiredBackupsTx(tx, operationNow);
 
       await new AuditService(tx).log(
         {
@@ -236,9 +306,11 @@ export class StateService {
     return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const current = await tx.appState.findUnique({ where: { id: 1 } });
       const currentVersion = current ? toVersionTag(current.updatedAt) : null;
+      const operationNow = new Date();
       this.assertExpectedVersion(expectedVersion, currentVersion);
 
       const currentState = current ? normalizeStatePayload(current.stateJson) : EMPTY_APP_STATE;
+      await this.ensurePreWriteBackupTx(tx, current);
       const nextState = applyStateCommand(currentState, command);
 
       const saved = current
@@ -254,6 +326,14 @@ export class StateService {
               stateJson: nextState as unknown as Prisma.InputJsonValue,
             },
           });
+
+      await this.ensureDailyBackupTx(
+        tx,
+        saved.stateJson as Prisma.JsonValue,
+        toVersionTag(saved.updatedAt),
+        operationNow
+      );
+      await this.pruneExpiredBackupsTx(tx, operationNow);
 
       await new AuditService(tx).log(
         {
@@ -273,6 +353,124 @@ export class StateService {
         version: toVersionTag(saved.updatedAt),
       };
     });
+  }
+
+  private async createDailyBackup(
+    referenceDate: Date,
+    context?: RequestContext
+  ): Promise<DailyBackupResult> {
+    const snapshot = await this.getAppState();
+    const backupDay = toBackupDay(referenceDate, env.DEFAULT_TIMEZONE);
+    const backupDayKey = toDateOnlyKey(backupDay);
+
+    return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const liveState = await tx.appState.findUnique({ where: { id: 1 } });
+      const sourceVersion = liveState ? toVersionTag(liveState.updatedAt) : snapshot.version;
+      const stateJson = (liveState?.stateJson ?? snapshot.state) as Prisma.JsonValue;
+
+      const created = await this.ensureDailyBackupTx(tx, stateJson, sourceVersion, referenceDate);
+      const prunedCount = await this.pruneExpiredBackupsTx(tx, referenceDate);
+
+      await new AuditService(tx).log(
+        {
+          entityName: 'app_state',
+          entityId: '1',
+          action: 'APP_STATE_BACKUP_DAILY',
+          metadata: {
+            backupDay: backupDayKey,
+            created,
+            sourceVersion,
+            prunedCount,
+          },
+        },
+        context
+      );
+
+      return {
+        backupDay: backupDayKey,
+        created,
+        sourceVersion,
+        prunedCount,
+      };
+    });
+  }
+
+  private async ensurePreWriteBackupTx(
+    tx: Prisma.TransactionClient,
+    current: { stateJson: Prisma.JsonValue; updatedAt: Date } | null
+  ): Promise<void> {
+    if (!current) return;
+
+    const sourceVersion = toVersionTag(current.updatedAt);
+    const existing = await tx.appStateBackup.findFirst({
+      where: {
+        kind: AppStateBackupKind.PRE_WRITE,
+        sourceVersion,
+      },
+      select: { id: true },
+    });
+
+    if (existing) return;
+
+    await tx.appStateBackup.create({
+      data: {
+        kind: AppStateBackupKind.PRE_WRITE,
+        sourceVersion,
+        stateJson: current.stateJson as unknown as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  private async ensureDailyBackupTx(
+    tx: Prisma.TransactionClient,
+    stateJson: Prisma.JsonValue,
+    sourceVersion: string,
+    referenceDate: Date
+  ): Promise<boolean> {
+    const backupDay = toBackupDay(referenceDate, env.DEFAULT_TIMEZONE);
+    const existing = await tx.appStateBackup.findUnique({
+      where: {
+        backupDay_kind: {
+          backupDay,
+          kind: AppStateBackupKind.DAILY,
+        },
+      },
+      select: { id: true },
+    });
+
+    await tx.appStateBackup.upsert({
+      where: {
+        backupDay_kind: {
+          backupDay,
+          kind: AppStateBackupKind.DAILY,
+        },
+      },
+      update: {
+        sourceVersion,
+        stateJson: stateJson as unknown as Prisma.InputJsonValue,
+      },
+      create: {
+        kind: AppStateBackupKind.DAILY,
+        backupDay,
+        sourceVersion,
+        stateJson: stateJson as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    return !existing;
+  }
+
+  private async pruneExpiredBackupsTx(
+    tx: Prisma.TransactionClient,
+    referenceDate: Date
+  ): Promise<number> {
+    const cutoff = addDays(referenceDate, -env.APP_STATE_BACKUP_RETENTION_DAYS);
+    const deleted = await tx.appStateBackup.deleteMany({
+      where: {
+        createdAt: { lt: cutoff },
+      },
+    });
+    return deleted.count;
   }
 
   private async buildStateFromDomain(): Promise<FrontAppState> {

@@ -10,6 +10,16 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default('12h'),
   CORS_ORIGINS: z.string().default(''),
   DEFAULT_TIMEZONE: z.string().default('America/Sao_Paulo'),
+  APP_STATE_BACKUP_RETENTION_DAYS: z.coerce.number().int().min(7).max(365).default(35),
+  APP_STATE_BACKUP_SCHEDULER_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => {
+      if (!value) return true;
+      const normalized = value.trim().toLowerCase();
+      return !['0', 'false', 'off', 'no'].includes(normalized);
+    }),
+  APP_STATE_BACKUP_CHECK_INTERVAL_MS: z.coerce.number().int().min(60000).max(86400000).default(3600000),
 });
 
 const parsed = envSchema.safeParse(process.env);

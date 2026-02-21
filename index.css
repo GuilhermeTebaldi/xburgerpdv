@@ -1,3 +1,32 @@
+@keyframes qb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes qb-progress-slide {
+  0% {
+    transform: translateX(-130%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.qb-sync-spinner {
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  border: 3px solid #fecaca;
+  border-top-color: #dc2626;
+  animation: qb-spin 0.8s linear infinite;
+  flex: none;
+}
+
+.qb-sync-progress-bar {
+  animation: qb-progress-slide 1.2s ease-in-out infinite;
+}
+
 @media (max-width: 1024px) {
   html,
   body,
