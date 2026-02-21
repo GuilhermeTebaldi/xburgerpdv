@@ -26,6 +26,88 @@ import { DEFAULT_APP_STATE, loadAppState, saveAppState, clearAppState } from './
 import { aggregateRecipe, calculateRecipeCost } from './utils/recipe';
 
 const ADMIN_GATE_KEY = 'lanchesdoben_admin_gate';
+const ADMIN_SESSION_KEY = 'lanchesdoben_admin_session';
+const ADMIN_SESSION_BACKUP_KEY = 'lanchesdoben_admin_session_backup';
+
+interface AdminSessionBarrier {
+  token: string;
+  issuedAt: number;
+  lastHeartbeatAt: number;
+}
+
+const generateAdminToken = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `admin-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+};
+
+const parseAdminSessionBarrier = (raw: string | null): AdminSessionBarrier | null => {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<AdminSessionBarrier>;
+    if (typeof parsed.token !== 'string' || parsed.token.trim() === '') return null;
+    if (typeof parsed.issuedAt !== 'number' || !Number.isFinite(parsed.issuedAt)) return null;
+    const lastHeartbeatAt =
+      typeof parsed.lastHeartbeatAt === 'number' && Number.isFinite(parsed.lastHeartbeatAt)
+        ? parsed.lastHeartbeatAt
+        : parsed.issuedAt;
+    return {
+      token: parsed.token,
+      issuedAt: parsed.issuedAt,
+      lastHeartbeatAt,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const loadAdminSessionBarrier = (): AdminSessionBarrier | null => {
+  if (typeof window === 'undefined') return null;
+  const fromLocal = parseAdminSessionBarrier(window.localStorage.getItem(ADMIN_SESSION_KEY));
+  if (fromLocal) return fromLocal;
+  return parseAdminSessionBarrier(window.sessionStorage.getItem(ADMIN_SESSION_BACKUP_KEY));
+};
+
+const persistAdminSessionBarrier = (session: AdminSessionBarrier) => {
+  if (typeof window === 'undefined') return;
+  const serialized = JSON.stringify(session);
+
+  try {
+    window.localStorage.setItem(ADMIN_SESSION_KEY, serialized);
+  } catch {
+    // ignore storage write failures
+  }
+
+  try {
+    window.sessionStorage.setItem(ADMIN_SESSION_BACKUP_KEY, serialized);
+  } catch {
+    // ignore storage write failures
+  }
+
+  try {
+    window.sessionStorage.setItem(ADMIN_GATE_KEY, 'authenticated');
+  } catch {
+    // ignore storage write failures
+  }
+
+  try {
+    window.localStorage.setItem(ADMIN_GATE_KEY, 'authenticated');
+  } catch {
+    // ignore storage write failures
+  }
+};
+
+const reinforceAdminSessionBarrier = (): AdminSessionBarrier => {
+  const current = loadAdminSessionBarrier();
+  const next: AdminSessionBarrier = {
+    token: current?.token || generateAdminToken(),
+    issuedAt: current?.issuedAt || Date.now(),
+    lastHeartbeatAt: Date.now(),
+  };
+  persistAdminSessionBarrier(next);
+  return next;
+};
 
 const resolveSiteRootUrl = () => {
   if (typeof window === 'undefined') return '/';
@@ -77,16 +159,79 @@ const App: React.FC = () => {
       return;
     }
 
-    const hasPortalAccess = window.sessionStorage.getItem(ADMIN_GATE_KEY) === 'authenticated';
-    if (!hasPortalAccess) {
-      // Clean legacy persistent key so direct access cannot bypass login flow.
-      window.localStorage.removeItem(ADMIN_GATE_KEY);
+    const hasSessionPortalAccess = window.sessionStorage.getItem(ADMIN_GATE_KEY) === 'authenticated';
+    const hasPersistentPortalAccess = window.localStorage.getItem(ADMIN_GATE_KEY) === 'authenticated';
+
+    if (hasPersistentPortalAccess && !hasSessionPortalAccess) {
+      window.sessionStorage.setItem(ADMIN_GATE_KEY, 'authenticated');
+    }
+
+    if (hasSessionPortalAccess && !hasPersistentPortalAccess) {
+      window.localStorage.setItem(ADMIN_GATE_KEY, 'authenticated');
+    }
+
+    if (!hasSessionPortalAccess && !hasPersistentPortalAccess) {
       window.location.replace(resolveSiteRootUrl());
       return;
     }
 
     setIsAccessVerified(true);
   }, []);
+
+  useEffect(() => {
+    if (!isAccessVerified) return;
+    const session = loadAdminSessionBarrier();
+    if (!session) return;
+    setIsAdminAuthenticated(true);
+    persistAdminSessionBarrier({
+      ...session,
+      lastHeartbeatAt: Date.now(),
+    });
+  }, [isAccessVerified]);
+
+  useEffect(() => {
+    if (!isAccessVerified) return;
+    if (!isAdminAuthenticated) return;
+
+    const reinforce = () => {
+      reinforceAdminSessionBarrier();
+    };
+
+    reinforce();
+
+    const heartbeatId = window.setInterval(reinforce, 15000);
+    const handleStorage = (event: StorageEvent) => {
+      if (!event.key) return;
+      if (
+        event.key !== ADMIN_SESSION_KEY &&
+        event.key !== ADMIN_SESSION_BACKUP_KEY &&
+        event.key !== ADMIN_GATE_KEY
+      ) {
+        return;
+      }
+
+      // Self-healing only if another context removed a barrier key.
+      if (event.newValue === null) {
+        reinforce();
+      }
+    };
+    const handleVisibility = () => {
+      if (!document.hidden) reinforce();
+    };
+
+    window.addEventListener('focus', reinforce);
+    window.addEventListener('pageshow', reinforce);
+    window.addEventListener('storage', handleStorage);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      window.clearInterval(heartbeatId);
+      window.removeEventListener('focus', reinforce);
+      window.removeEventListener('pageshow', reinforce);
+      window.removeEventListener('storage', handleStorage);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [isAccessVerified, isAdminAuthenticated]);
 
   useEffect(() => {
     if (!isAccessVerified) return;
@@ -150,6 +295,12 @@ const App: React.FC = () => {
   const showNotification = (message: string) => {
     setNotification({ isVisible: true, message });
   };
+
+  const handleAdminLogin = useCallback((success: boolean) => {
+    if (!success) return;
+    reinforceAdminSessionBarrier();
+    setIsAdminAuthenticated(true);
+  }, []);
 
   const handleSale = useCallback((product: Product, recipeOverride?: RecipeItem[], priceOverride?: number) => {
     const recipeToUse = recipeOverride || product.recipe;
@@ -399,12 +550,13 @@ const App: React.FC = () => {
     });
   }, [products, activeCategory, searchQuery]);
 
-  const categories = ['All', 'Snack', 'Drink', 'Side'];
+  const categories = ['All', 'Snack', 'Drink', 'Side', 'Combo'];
   const categoryLabels: Record<string, string> = {
     'All': 'Todos',
     'Snack': 'Lanches',
     'Drink': 'Bebidas',
-    'Side': 'Extras'
+    'Side': 'Extras',
+    'Combo': 'Combos',
   };
 
   if (!isAccessVerified) {
@@ -517,7 +669,7 @@ const App: React.FC = () => {
 
         {view === ViewMode.ADMIN && (
           !isAdminAuthenticated ? (
-            <AdminLogin onLogin={setIsAdminAuthenticated} />
+            <AdminLogin onLogin={handleAdminLogin} />
           ) : (
             <AdminDashboard 
               sales={globalSales} 
@@ -544,6 +696,7 @@ const App: React.FC = () => {
         isOpen={isAddProductModalOpen} 
         onClose={() => setIsAddProductModalOpen(false)} 
         ingredients={ingredients} 
+        products={products}
         onAdd={handleAddProduct} 
       />
 
@@ -564,6 +717,7 @@ const App: React.FC = () => {
         isOpen={Boolean(productToEdit)}
         product={productToEdit}
         ingredients={ingredients}
+        products={products}
         onClose={() => setProductToEdit(null)}
         onSave={handleSaveProduct}
       />

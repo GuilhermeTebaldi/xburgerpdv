@@ -17,6 +17,7 @@ import {
   Star,
   Lock
 } from 'lucide-react';
+import { fetchPublicProducts, type PublicProduct } from './services/publicCatalog';
 
 const ADMIN_EMAIL = 'meu@admin.com';
 const ADMIN_PASSWORD = 'ben123';
@@ -46,6 +47,21 @@ const resolveAdminSystemUrl = () => {
   return withPath(PRODUCTION_FALLBACK_ORIGIN, systemPath);
 };
 
+const PRODUCT_CATEGORY_LABELS: Record<string, string> = {
+  Snack: 'Lanche',
+  Drink: 'Bebida',
+  Side: 'Acompanhamento',
+  Combo: 'Combo',
+};
+
+const BRL_CURRENCY_FORMATTER = new Intl.NumberFormat('pt-BR', {
+  style: 'currency',
+  currency: 'BRL',
+});
+
+const resolveProductCategoryLabel = (category: string) =>
+  PRODUCT_CATEGORY_LABELS[category] || category;
+
 export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
@@ -54,6 +70,9 @@ export default function App() {
   const [adminPassword, setAdminPassword] = useState('');
   const [adminError, setAdminError] = useState('');
   const [isAdminRedirecting, setIsAdminRedirecting] = useState(false);
+  const [publicProducts, setPublicProducts] = useState<PublicProduct[]>([]);
+  const [isProductsLoading, setIsProductsLoading] = useState(true);
+  const [productsError, setProductsError] = useState('');
 
   useEffect(() => {
     if (!isMenuOpen) {
@@ -76,6 +95,47 @@ export default function App() {
       window.removeEventListener('keydown', handleEscape);
     };
   }, [isMenuOpen]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadProducts = async (isInitialLoad: boolean) => {
+      if (isInitialLoad && isActive) {
+        setIsProductsLoading(true);
+      }
+
+      try {
+        const loadedProducts = await fetchPublicProducts();
+        if (!isActive) return;
+        setPublicProducts(loadedProducts);
+        setProductsError('');
+      } catch {
+        if (!isActive) return;
+        setProductsError('Cardápio indisponível no momento. Tente novamente em instantes.');
+      } finally {
+        if (isInitialLoad && isActive) {
+          setIsProductsLoading(false);
+        }
+      }
+    };
+
+    void loadProducts(true);
+
+    // Mantém o cardápio sincronizado com as alterações do sistema sem forçar recarregamento manual.
+    const refreshIntervalId = window.setInterval(() => {
+      void loadProducts(false);
+    }, 30000);
+    const refreshOnFocus = () => {
+      void loadProducts(false);
+    };
+    window.addEventListener('focus', refreshOnFocus);
+
+    return () => {
+      isActive = false;
+      window.clearInterval(refreshIntervalId);
+      window.removeEventListener('focus', refreshOnFocus);
+    };
+  }, []);
 
   const openAdminModal = () => {
     setAdminEmail('');
@@ -424,6 +484,7 @@ export default function App() {
                 Pedir Agora
               </button>
             </div>
+
           </motion.div>
         </div>
 
@@ -445,6 +506,79 @@ export default function App() {
             </div>
           </div>
         </motion.div>
+      </section>
+
+      {/* Products Section */}
+      <section className="relative py-20 bg-gradient-to-b from-brand-black to-slate-950 overflow-hidden">
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute top-0 left-1/2 h-48 w-48 -translate-x-1/2 rounded-full bg-brand-red/20 blur-3xl" />
+          <div className="absolute bottom-0 right-0 h-56 w-56 rounded-full bg-red-900/20 blur-3xl" />
+        </div>
+        <div className="relative z-10 max-w-7xl mx-auto px-4">
+          <div className="max-w-6xl mx-auto">
+            <div className="inline-flex items-center rounded-t-2xl border border-b-0 border-white/20 bg-brand-red px-5 py-2 shadow-lg shadow-brand-red/30">
+              <p className="text-white text-xs md:text-sm font-black tracking-[0.16em] uppercase">
+                Aba de Produtos do Caixa
+              </p>
+            </div>
+            <div className="rounded-3xl rounded-tl-none border border-white/20 bg-brand-black/55 backdrop-blur-sm p-4 md:p-6">
+              {isProductsLoading ? (
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    <div
+                      key={`product-skeleton-${index}`}
+                      className="h-56 rounded-2xl bg-white/10 animate-pulse border border-white/10"
+                    />
+                  ))}
+                </div>
+              ) : publicProducts.length > 0 ? (
+                <>
+                  {productsError && (
+                    <p className="mb-4 text-amber-300 text-sm font-semibold">{productsError}</p>
+                  )}
+                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 text-left">
+                    {publicProducts.map((product) => (
+                      <article
+                        key={product.id}
+                        className="group rounded-2xl overflow-hidden bg-white/95 border border-white/20 shadow-xl shadow-brand-black/30"
+                      >
+                        <div className="relative h-36 overflow-hidden bg-brand-black/95">
+                          {product.imageUrl ? (
+                            <img
+                              src={product.imageUrl}
+                              alt={`Produto ${product.name}`}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-white/80 text-sm font-semibold">
+                              Sem imagem
+                            </div>
+                          )}
+                          <span className="absolute top-3 left-3 bg-brand-black/80 text-white text-[10px] tracking-wider uppercase px-2.5 py-1 rounded-full border border-white/20">
+                            {resolveProductCategoryLabel(product.category)}
+                          </span>
+                        </div>
+                        <div className="p-4">
+                          <h3 className="text-lg font-black leading-tight text-brand-black">
+                            {product.name}
+                          </h3>
+                          <p className="mt-2 text-brand-red font-black text-xl">
+                            {BRL_CURRENCY_FORMATTER.format(product.price)}
+                          </p>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="text-white/80">
+                  {productsError || 'Nenhum produto cadastrado no sistema no momento.'}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* Contact Section */}

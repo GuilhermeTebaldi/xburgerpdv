@@ -100,6 +100,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
   };
 
   const handleConfirmCustomSale = () => {
+    if (!canConfirmCustomSale) return;
     const finalRecipe = customRecipe.filter(r => r.quantity > 0);
     const finalPrice = parseFloat(editingPrice);
     onSale(product, finalRecipe, isNaN(finalPrice) ? product.price : finalPrice);
@@ -146,6 +147,19 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
     return Math.max(0, computed);
   }, [customRecipe, ingredientsById, markupFactor, product.price, product.recipe]);
 
+  const canConfirmCustomSale = React.useMemo(() => {
+    const finalRecipe = customRecipe.filter((item) => item.quantity > 0);
+    const totals = aggregateRecipe(finalRecipe);
+    const entries = Object.entries(totals);
+    if (entries.length === 0) return false;
+
+    return entries.every(([ingredientId, quantity]) => {
+      const ingredient = ingredientsById.get(ingredientId);
+      if (!ingredient) return false;
+      return ingredient.currentStock >= quantity;
+    });
+  }, [customRecipe, ingredientsById]);
+
   useEffect(() => {
     if (!showCustomizer) return;
     if (isPriceManual) return;
@@ -188,15 +202,13 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
             </div>
         )}
 
-        {isAvailable && (
-          <button
-            onClick={handleOpenCustomizer}
-            className="qb-btn-touch absolute top-2 left-2 z-10 bg-white/90 backdrop-blur-sm p-2 rounded-xl shadow-sm border border-slate-100 text-slate-600 hover:text-red-600 hover:scale-110 transition-all active:scale-90"
-            title="Configurações desta Venda"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
-        )}
+        <button
+          onClick={handleOpenCustomizer}
+          className="qb-btn-touch absolute top-2 left-2 z-10 bg-white/90 backdrop-blur-sm p-2 rounded-xl shadow-sm border border-slate-100 text-slate-600 hover:text-red-600 hover:scale-110 transition-all active:scale-90"
+          title="Configurações desta Venda"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
 
         <div className="w-full aspect-square rounded-2xl overflow-hidden mb-3 relative pointer-events-none">
           <img
@@ -300,9 +312,10 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
             <div className="qb-sale-customizer-footer p-6 bg-white border-t">
               <button 
                 onClick={handleConfirmCustomSale}
-                className="qb-btn-touch w-full bg-green-600 hover:bg-green-700 text-white py-5 rounded-3xl font-black uppercase text-lg shadow-lg active:scale-95 flex items-center justify-center gap-3"
+                disabled={!canConfirmCustomSale}
+                className="qb-btn-touch w-full bg-green-600 hover:bg-green-700 disabled:bg-slate-300 disabled:text-slate-500 text-white py-5 rounded-3xl font-black uppercase text-lg shadow-lg active:scale-95 flex items-center justify-center gap-3"
               >
-                CONFIRMAR VENDA
+                {canConfirmCustomSale ? 'CONFIRMAR VENDA' : 'ESTOQUE INSUFICIENTE'}
               </button>
             </div>
           </div>

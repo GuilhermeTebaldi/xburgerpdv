@@ -1,20 +1,38 @@
 
-import React, { useState } from 'react';
-import { Ingredient, Product, RecipeItem } from '../types';
+import React, { useMemo, useState } from 'react';
+
+import { ComboItem, Ingredient, Product, RecipeItem } from '../types';
+import { buildRecipeFromComboItems } from '../utils/recipe';
+import ComboItemsBuilder from './ComboItemsBuilder';
 
 interface AddProductModalProps {
   isOpen: boolean;
   onClose: () => void;
   ingredients: Ingredient[];
+  products: Product[];
   onAdd: (product: Product) => void;
 }
 
-const AddProductModal: React.FC<AddProductModalProps> = ({ isOpen, onClose, ingredients, onAdd }) => {
+const AddProductModal: React.FC<AddProductModalProps> = ({
+  isOpen,
+  onClose,
+  ingredients,
+  products,
+  onAdd,
+}) => {
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
-  const [category, setCategory] = useState<'Snack' | 'Drink' | 'Side'>('Snack');
+  const [category, setCategory] = useState<'Snack' | 'Drink' | 'Side' | 'Combo'>('Snack');
   const [imageUrl, setImageUrl] = useState('');
   const [recipe, setRecipe] = useState<RecipeItem[]>([]);
+  const [comboItems, setComboItems] = useState<ComboItem[]>([]);
+
+  const comboRecipe = useMemo(() => {
+    return buildRecipeFromComboItems(products, comboItems);
+  }, [products, comboItems]);
+
+  const isCombo = category === 'Combo';
+  const recipeToPersist = isCombo ? comboRecipe : recipe;
 
   if (!isOpen) return null;
 
@@ -36,7 +54,7 @@ const AddProductModal: React.FC<AddProductModalProps> = ({ isOpen, onClose, ingr
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !price || !imageUrl || recipe.length === 0) {
+    if (!name || !price || !imageUrl || recipeToPersist.length === 0) {
       alert("Preencha todos os campos e adicione pelo menos um ingrediente à receita!");
       return;
     }
@@ -47,7 +65,8 @@ const AddProductModal: React.FC<AddProductModalProps> = ({ isOpen, onClose, ingr
       price: parseFloat(price),
       category,
       imageUrl,
-      recipe
+      recipe: recipeToPersist,
+      comboItems: isCombo ? comboItems : undefined,
     };
 
     onAdd(newProduct);
@@ -57,6 +76,7 @@ const AddProductModal: React.FC<AddProductModalProps> = ({ isOpen, onClose, ingr
     setCategory('Snack');
     setImageUrl('');
     setRecipe([]);
+    setComboItems([]);
     onClose();
   };
 
@@ -112,6 +132,7 @@ const AddProductModal: React.FC<AddProductModalProps> = ({ isOpen, onClose, ingr
                 <option value="Snack">Lanche (Burguer)</option>
                 <option value="Drink">Bebida</option>
                 <option value="Side">Acompanhamento</option>
+                <option value="Combo">Combo</option>
               </select>
             </div>
             <div className="space-y-2">
@@ -128,40 +149,58 @@ const AddProductModal: React.FC<AddProductModalProps> = ({ isOpen, onClose, ingr
 
           <div className="space-y-4">
             <div className="flex justify-between items-center">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Montagem da Receita (Ingredientes)</label>
-              <span className="text-[10px] font-black text-red-500 uppercase">{recipe.length} Itens Selecionados</span>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                {isCombo ? 'Montagem do Combo (Produtos)' : 'Montagem da Receita (Ingredientes)'}
+              </label>
+              <span className="text-[10px] font-black text-red-500 uppercase">
+                {isCombo ? `${comboItems.length} Produtos Selecionados` : `${recipe.length} Itens Selecionados`}
+              </span>
             </div>
-            
-            <div className="qb-recipe-grid grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {ingredients.map(ing => {
-                const qty = recipe.find(r => r.ingredientId === ing.id)?.quantity || 0;
-                return (
-                  <div key={ing.id} className={`qb-recipe-item p-3 rounded-2xl border-2 transition-all flex items-center justify-between ${qty > 0 ? 'border-red-500 bg-red-50/30' : 'border-slate-100 bg-white'}`}>
-                    <div className="flex-1 min-w-0 pr-2">
-                      <p className="font-extrabold text-slate-800 text-sm truncate uppercase">{ing.name}</p>
-                      <p className="text-[9px] font-bold text-slate-400 uppercase">{ing.unit}</p>
+
+            {isCombo ? (
+              <>
+                <ComboItemsBuilder products={products} comboItems={comboItems} onChange={setComboItems} />
+                <div className="rounded-2xl bg-slate-100 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                  Receita gerada automaticamente: {comboRecipe.length} insumos
+                </div>
+              </>
+            ) : (
+              <div className="qb-recipe-grid grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {ingredients.map((ing) => {
+                  const qty = recipe.find((r) => r.ingredientId === ing.id)?.quantity || 0;
+                  return (
+                    <div
+                      key={ing.id}
+                      className={`qb-recipe-item p-3 rounded-2xl border-2 transition-all flex items-center justify-between ${
+                        qty > 0 ? 'border-red-500 bg-red-50/30' : 'border-slate-100 bg-white'
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0 pr-2">
+                        <p className="font-extrabold text-slate-800 text-sm truncate uppercase">{ing.name}</p>
+                        <p className="text-[9px] font-bold text-slate-400 uppercase">{ing.unit}</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateRecipe(ing.id, -1)}
+                          className="qb-btn-touch w-8 h-8 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center font-black"
+                        >
+                          -
+                        </button>
+                        <span className="font-black text-slate-800 min-w-[15px] text-center">{qty}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateRecipe(ing.id, 1)}
+                          className="qb-btn-touch w-8 h-8 rounded-xl bg-red-600 text-white flex items-center justify-center font-black"
+                        >
+                          +
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <button 
-                        type="button"
-                        onClick={() => handleUpdateRecipe(ing.id, -1)}
-                        className="qb-btn-touch w-8 h-8 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center font-black"
-                      >
-                        -
-                      </button>
-                      <span className="font-black text-slate-800 min-w-[15px] text-center">{qty}</span>
-                      <button 
-                        type="button"
-                        onClick={() => handleUpdateRecipe(ing.id, 1)}
-                        className="qb-btn-touch w-8 h-8 rounded-xl bg-red-600 text-white flex items-center justify-center font-black"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className="pt-4">

@@ -44,13 +44,19 @@ export interface RecipeItem {
   quantity: number;
 }
 
+export interface ComboItem {
+  productId: string;
+  quantity: number;
+}
+
 export interface Product {
   id: string;
   name: string;
   price: number;
   imageUrl: string;
-  category: 'Snack' | 'Drink' | 'Side';
+  category: 'Snack' | 'Drink' | 'Side' | 'Combo';
   recipe: RecipeItem[];
+  comboItems?: ComboItem[];
 }
 
 export interface Sale {
