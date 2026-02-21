@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { issueStateWriteToken } from '../services/state-auth.service.js';
 import { StateService } from '../services/state.service.js';
 import { HttpError } from '../utils/http-error.js';
+import { stateCommandSchema } from '../validators/state-command.validator.js';
 
 const stateService = new StateService();
 
@@ -64,6 +65,21 @@ export const stateController = {
     }
 
     const snapshot = await stateService.clearAppState(expectedVersion, req.context);
+    setStateHeaders(req, res, snapshot.version);
+    res.status(200).json(snapshot.state);
+  },
+
+  runCommand: async (req: Request, res: Response) => {
+    const expectedVersion = readIfMatchVersion(req);
+    if (req.stateTokenVersion && req.stateTokenVersion !== expectedVersion) {
+      throw new HttpError(412, 'Token de estado desatualizado para a versão informada.', {
+        tokenVersion: req.stateTokenVersion,
+        expectedVersion,
+      });
+    }
+
+    const command = stateCommandSchema.parse(req.body);
+    const snapshot = await stateService.applyCommand(command, expectedVersion, req.context);
     setStateHeaders(req, res, snapshot.version);
     res.status(200).json(snapshot.state);
   },

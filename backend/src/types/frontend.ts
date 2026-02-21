@@ -9,6 +9,7 @@ export interface FrontIngredient {
   autoReplenishQuantity?: number;
   imageUrl?: string;
   addonPrice?: number;
+  icon?: string;
 }
 
 export interface FrontStockEntry {
@@ -16,7 +17,7 @@ export interface FrontStockEntry {
   ingredientId: string;
   ingredientName: string;
   quantity: number;
-  timestamp: Date;
+  timestamp: Date | string;
   unitCost?: number;
   source?: 'MANUAL' | 'SALE' | 'AUTO_REPLENISH';
   saleId?: string;
@@ -37,7 +38,7 @@ export interface FrontCleaningStockEntry {
   materialId: string;
   materialName: string;
   quantity: number;
-  timestamp: Date;
+  timestamp: Date | string;
   unitCost?: number;
 }
 
@@ -46,23 +47,30 @@ export interface FrontRecipeItem {
   quantity: number;
 }
 
+export interface FrontComboItem {
+  productId: string;
+  quantity: number;
+}
+
 export interface FrontProduct {
   id: string;
   name: string;
   price: number;
   imageUrl: string;
-  category: 'Snack' | 'Drink' | 'Side';
+  category: 'Snack' | 'Drink' | 'Side' | 'Combo';
   recipe: FrontRecipeItem[];
+  comboItems?: FrontComboItem[];
 }
 
 export interface FrontSale {
   id: string;
   productId: string;
   productName: string;
-  timestamp: Date;
+  timestamp: Date | string;
   total: number;
   totalCost: number;
   recipe?: FrontRecipeItem[];
+  stockDebited?: FrontRecipeItem[];
   basePrice?: number;
   priceAdjustment?: number;
   baseCost?: number;

@@ -4,6 +4,7 @@ import { prisma } from '../db/prisma.js';
 import type { FrontAppState } from '../types/frontend.js';
 import type { RequestContext } from '../types/request-context.js';
 import { HttpError } from '../utils/http-error.js';
+import type { StateCommandInput } from '../validators/state-command.validator.js';
 import { AuditService } from './audit.service.js';
 import {
   toFrontCleaningEntry,
@@ -14,6 +15,7 @@ import {
   toFrontSale,
 } from './mappers.service.js';
 import { SessionService } from './session.service.js';
+import { applyStateCommand } from './state-command.service.js';
 
 const EMPTY_APP_STATE: FrontAppState = {
   ingredients: [],
@@ -91,6 +93,23 @@ export class StateService {
 
   async clearAppState(expectedVersion: string, context?: RequestContext): Promise<AppStateSnapshot> {
     return this.persistSnapshot(EMPTY_APP_STATE, 'APP_STATE_CLEARED', context, expectedVersion);
+  }
+
+  async applyCommand(
+    command: StateCommandInput,
+    expectedVersion: string,
+    context?: RequestContext
+  ): Promise<AppStateSnapshot> {
+    try {
+      return await this.applyCommandSnapshot(command, expectedVersion, context);
+    } catch (error) {
+      if (!this.isMissingAppStateTableError(error)) {
+        throw error;
+      }
+
+      await this.bootstrapAppStateTable();
+      return this.applyCommandSnapshot(command, expectedVersion, context);
+    }
   }
 
   private isMissingAppStateTableError(error: unknown): boolean {
@@ -183,6 +202,74 @@ export class StateService {
 
       return {
         state,
+        version: toVersionTag(saved.updatedAt),
+      };
+    });
+  }
+
+  private assertExpectedVersion(
+    expectedVersion: string | undefined,
+    currentVersion: string | null
+  ): void {
+    if (expectedVersion === undefined) return;
+
+    if (!currentVersion) {
+      throw new HttpError(412, 'Versão de estado inválida. Snapshot base não encontrado.', {
+        expectedVersion,
+        currentVersion: null,
+      });
+    }
+
+    if (expectedVersion !== currentVersion) {
+      throw new HttpError(412, 'Conflito de versão no estado. Recarregue antes de salvar.', {
+        expectedVersion,
+        currentVersion,
+      });
+    }
+  }
+
+  private async applyCommandSnapshot(
+    command: StateCommandInput,
+    expectedVersion: string,
+    context?: RequestContext
+  ): Promise<AppStateSnapshot> {
+    return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const current = await tx.appState.findUnique({ where: { id: 1 } });
+      const currentVersion = current ? toVersionTag(current.updatedAt) : null;
+      this.assertExpectedVersion(expectedVersion, currentVersion);
+
+      const currentState = current ? normalizeStatePayload(current.stateJson) : EMPTY_APP_STATE;
+      const nextState = applyStateCommand(currentState, command);
+
+      const saved = current
+        ? await tx.appState.update({
+            where: { id: 1 },
+            data: {
+              stateJson: nextState as unknown as Prisma.InputJsonValue,
+            },
+          })
+        : await tx.appState.create({
+            data: {
+              id: 1,
+              stateJson: nextState as unknown as Prisma.InputJsonValue,
+            },
+          });
+
+      await new AuditService(tx).log(
+        {
+          entityName: 'app_state',
+          entityId: '1',
+          action: 'APP_STATE_COMMAND_APPLIED',
+          metadata: {
+            commandType: command.type,
+            commandId: command.commandId ?? null,
+          },
+        },
+        context
+      );
+
+      return {
+        state: nextState,
         version: toVersionTag(saved.updatedAt),
       };
     });
