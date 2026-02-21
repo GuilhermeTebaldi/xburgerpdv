@@ -6,6 +6,8 @@ export interface Ingredient {
   currentStock: number;
   minStock: number;
   cost: number; // Preço de custo por unidade/unidade de medida
+  autoReplenishEnabled?: boolean;
+  autoReplenishQuantity?: number;
   imageUrl?: string;
   addonPrice?: number; // Preço cobrado por unidade/unidade de medida como adicional
   icon?: string;
@@ -18,7 +20,7 @@ export interface StockEntry {
   quantity: number;
   timestamp: Date;
   unitCost?: number; // custo do insumo no momento da movimentação
-  source?: 'MANUAL' | 'SALE';
+  source?: 'MANUAL' | 'SALE' | 'AUTO_REPLENISH';
   saleId?: string;
 }
 

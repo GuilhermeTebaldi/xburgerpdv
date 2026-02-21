@@ -11,7 +11,14 @@ interface InventoryManagerProps {
   onDeleteIngredient?: (id: string) => void;
 }
 
-const InventoryManager: React.FC<InventoryManagerProps> = ({ ingredients, entries, onUpdateStock, onOpenAddIngredient, onEditIngredient, onDeleteIngredient }) => {
+const InventoryManager: React.FC<InventoryManagerProps> = ({
+  ingredients,
+  entries,
+  onUpdateStock,
+  onOpenAddIngredient,
+  onEditIngredient,
+  onDeleteIngredient,
+}) => {
   const [replenishValues, setReplenishValues] = useState<Record<string, string>>({});
   const [showHistory, setShowHistory] = useState(false);
   const [deleteMenuId, setDeleteMenuId] = useState<string | null>(null);

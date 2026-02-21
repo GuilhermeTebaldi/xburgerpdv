@@ -5,6 +5,8 @@ export interface FrontIngredient {
   currentStock: number;
   minStock: number;
   cost: number;
+  autoReplenishEnabled?: boolean;
+  autoReplenishQuantity?: number;
   imageUrl?: string;
   addonPrice?: number;
 }
@@ -16,6 +18,8 @@ export interface FrontStockEntry {
   quantity: number;
   timestamp: Date;
   unitCost?: number;
+  source?: 'MANUAL' | 'SALE' | 'AUTO_REPLENISH';
+  saleId?: string;
 }
 
 export interface FrontCleaningMaterial {

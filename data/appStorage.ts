@@ -21,6 +21,11 @@ export interface AppState {
   globalCleaningStockEntries: CleaningStockEntry[];
 }
 
+interface LocalMirrorSnapshot {
+  state: AppState;
+  savedAtMs: number;
+}
+
 const API_TIMEOUT_MS = 12000;
 const DEFAULT_API_BASE_URL = 'https://xburger-backend.onrender.com';
 let hasRemoteHydratedState = false;
@@ -323,17 +328,31 @@ const persistRemoteStateWithRetry = async (state: AppState): Promise<boolean> =>
   return trySaveRemoteState(state);
 };
 
-const loadLocalMirrorState = (defaults: AppState): AppState | null => {
+const loadLocalMirrorState = (defaults: AppState): LocalMirrorSnapshot | null => {
   if (typeof localStorage === 'undefined') return null;
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.remoteStateMirror);
     if (!raw) return null;
+
     const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+
+    const mirrorRecord = parsed as Record<string, unknown>;
+    const hasWrappedState = Object.prototype.hasOwnProperty.call(mirrorRecord, 'state');
+    const source = hasWrappedState ? mirrorRecord.state : mirrorRecord;
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
       return null;
     }
-    const normalized = normalizeStateRecord(parsed as Record<string, unknown>, defaults);
-    return sanitizeLegacySeeds(normalized);
+
+    const normalized = normalizeStateRecord(source as Record<string, unknown>, defaults);
+    const savedAtRaw = mirrorRecord.savedAt;
+    const savedAtMs =
+      typeof savedAtRaw === 'string' ? Date.parse(savedAtRaw) : Number.NaN;
+
+    return {
+      state: sanitizeLegacySeeds(normalized),
+      savedAtMs: Number.isFinite(savedAtMs) ? savedAtMs : 0,
+    };
   } catch {
     return null;
   }
@@ -342,7 +361,13 @@ const loadLocalMirrorState = (defaults: AppState): AppState | null => {
 const saveLocalMirrorState = (state: AppState): void => {
   if (typeof localStorage === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_KEYS.remoteStateMirror, JSON.stringify(state));
+    localStorage.setItem(
+      STORAGE_KEYS.remoteStateMirror,
+      JSON.stringify({
+        savedAt: new Date().toISOString(),
+        state,
+      })
+    );
   } catch {
     // ignore storage write failures
   }
@@ -374,6 +399,23 @@ const clearLegacyStorage = () => {
 
 export const loadAppState = async (defaults: AppState = DEFAULT_APP_STATE): Promise<AppState> => {
   const remoteState = await tryLoadRemoteStateWithRetry(defaults);
+  const localMirror = loadLocalMirrorState(defaults);
+
+  if (remoteState && localMirror) {
+    const remoteVersionMs = remoteStateVersion ? Date.parse(remoteStateVersion) : Number.NaN;
+    const shouldPreferLocal =
+      Number.isFinite(localMirror.savedAtMs) &&
+      Number.isFinite(remoteVersionMs) &&
+      localMirror.savedAtMs > remoteVersionMs;
+
+    if (shouldPreferLocal) {
+      hasRemoteHydratedState = true;
+      isDefaultFallbackBootstrap = false;
+      saveLocalMirrorState(localMirror.state);
+      return localMirror.state;
+    }
+  }
+
   if (remoteState) {
     hasRemoteHydratedState = true;
     isDefaultFallbackBootstrap = false;
@@ -381,14 +423,13 @@ export const loadAppState = async (defaults: AppState = DEFAULT_APP_STATE): Prom
     return remoteState;
   }
 
-  const localMirror = loadLocalMirrorState(defaults);
   if (localMirror) {
     hasRemoteHydratedState = false;
     isDefaultFallbackBootstrap = false;
     remoteStateVersion = null;
     remoteStateToken = null;
     console.warn('[appStorage] Backend indisponível. Carregando espelho local seguro.');
-    return localMirror;
+    return localMirror.state;
   }
 
   // Sem backend e sem espelho local: usa memória local até reidratação remota.

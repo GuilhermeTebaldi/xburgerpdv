@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import Header from './components/Header';
 import ProductCard from './components/ProductCard';
 import InventoryManager from './components/InventoryManager';
@@ -118,6 +118,25 @@ const resolveSiteRootUrl = () => {
   return `${origin}/`;
 };
 
+const toStockMap = <T extends { id: string; currentStock: number }>(items: T[]) =>
+  items.reduce<Record<string, number>>((acc, item) => {
+    acc[item.id] = item.currentStock;
+    return acc;
+  }, {});
+
+const getAppliedStockDelta = (currentStock: number, requestedAmount: number): number => {
+  if (!Number.isFinite(currentStock) || !Number.isFinite(requestedAmount) || requestedAmount === 0) {
+    return 0;
+  }
+
+  const normalizedAmount = requestedAmount < 0 ? Math.max(requestedAmount, -currentStock) : requestedAmount;
+  if (!Number.isFinite(normalizedAmount) || normalizedAmount === 0) {
+    return 0;
+  }
+
+  return Math.max(0, currentStock + normalizedAmount) - currentStock;
+};
+
 const App: React.FC = () => {
   const [view, setView] = useState<ViewMode>(ViewMode.POS);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
@@ -152,6 +171,10 @@ const App: React.FC = () => {
     isVisible: false,
     message: '',
   });
+  const ingredientStockRef = useRef<Record<string, number>>(toStockMap(DEFAULT_APP_STATE.ingredients));
+  const cleaningMaterialStockRef = useRef<Record<string, number>>(
+    toStockMap(DEFAULT_APP_STATE.cleaningMaterials)
+  );
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -292,6 +315,14 @@ const App: React.FC = () => {
     globalCleaningStockEntries,
   ]);
 
+  useEffect(() => {
+    ingredientStockRef.current = toStockMap(ingredients);
+  }, [ingredients]);
+
+  useEffect(() => {
+    cleaningMaterialStockRef.current = toStockMap(cleaningMaterials);
+  }, [cleaningMaterials]);
+
   const showNotification = (message: string) => {
     setNotification({ isVisible: true, message });
   };
@@ -362,14 +393,15 @@ const App: React.FC = () => {
       };
     });
 
-    setIngredients(prev => prev.map(ing => {
+    const ingredientsAfterSale = ingredients.map(ing => {
       const quantity = totals[ing.id];
       if (quantity) {
         return { ...ing, currentStock: Math.max(0, ing.currentStock - quantity) };
       }
       return ing;
-    }));
-
+    });
+    ingredientStockRef.current = toStockMap(ingredientsAfterSale);
+    setIngredients(ingredientsAfterSale);
     setStockEntries(prev => [...prev, ...saleStockEntries]);
     setGlobalStockEntries(prev => [...prev, ...saleStockEntries]);
     setSales(prev => [...prev, newSale]);
@@ -386,15 +418,29 @@ const App: React.FC = () => {
     const lastSale = sales[sales.length - 1];
     if (confirm(`Desfazer a última venda (${lastSale.productName}) e devolver insumos ao estoque?`)) {
       const recipeToRestore = lastSale.stockDebited || lastSale.recipe;
-      if (recipeToRestore) {
-        const totals = aggregateRecipe(recipeToRestore);
-        setIngredients(prev => prev.map(ing => {
-          const quantity = totals[ing.id];
-          if (quantity) {
-            return { ...ing, currentStock: ing.currentStock + quantity };
+      const totals = recipeToRestore ? aggregateRecipe(recipeToRestore) : {};
+      const autoReplenishmentTotals = stockEntries.reduce<Record<string, number>>((acc, entry) => {
+        if (entry.saleId !== lastSale.id || entry.source !== 'AUTO_REPLENISH') {
+          return acc;
+        }
+        acc[entry.ingredientId] = (acc[entry.ingredientId] || 0) + entry.quantity;
+        return acc;
+      }, {});
+
+      if (Object.keys(totals).length > 0 || Object.keys(autoReplenishmentTotals).length > 0) {
+        const restoredIngredients = ingredients.map(ing => {
+          const restoredQuantity = totals[ing.id] || 0;
+          const autoReplenished = autoReplenishmentTotals[ing.id] || 0;
+          if (restoredQuantity !== 0 || autoReplenished !== 0) {
+            return {
+              ...ing,
+              currentStock: Math.max(0, ing.currentStock + restoredQuantity - autoReplenished),
+            };
           }
           return ing;
-        }));
+        });
+        ingredientStockRef.current = toStockMap(restoredIngredients);
+        setIngredients(restoredIngredients);
       }
       setSales(prev => prev.slice(0, -1));
       setStockEntries(prev => prev.filter(entry => entry.saleId !== lastSale.id));
@@ -418,27 +464,33 @@ const App: React.FC = () => {
       return;
     }
 
-    const minAllowed = -ing.currentStock;
-    const normalizedAmount = amount < 0 ? Math.max(amount, minAllowed) : amount;
-    if (normalizedAmount === 0) {
+    const currentStock = ingredientStockRef.current[id] ?? ing.currentStock;
+    const appliedAmount = getAppliedStockDelta(currentStock, amount);
+    if (appliedAmount === 0) {
       showNotification('Estoque insuficiente para a baixa!');
       return;
     }
+
+    ingredientStockRef.current[id] = currentStock + appliedAmount;
+    const timestamp = new Date();
 
     const newEntry: StockEntry = {
       id: 'st-' + Date.now(),
       ingredientId: id,
       ingredientName: ing.name,
-      quantity: normalizedAmount,
+      quantity: appliedAmount,
       unitCost: ing.cost,
-      timestamp: new Date(),
+      timestamp,
       source: 'MANUAL',
     };
 
-    setIngredients(prev => prev.map(i => i.id === id ? { ...i, currentStock: Math.max(0, i.currentStock + normalizedAmount) } : i));
+    setIngredients(prev => prev.map(i =>
+      i.id === id ? { ...i, currentStock: Math.max(0, i.currentStock + appliedAmount) } : i
+    ));
     setStockEntries(prev => [...prev, newEntry]);
     setGlobalStockEntries(prev => [...prev, newEntry]);
-    showNotification(normalizedAmount > 0 ? 'Estoque Atualizado!' : 'Gasto de Insumo Registrado!');
+
+    showNotification(appliedAmount > 0 ? 'Estoque Atualizado!' : 'Gasto de Insumo Registrado!');
   }, [ingredients]);
 
   const handleAddProduct = (product: Product) => {
@@ -465,6 +517,9 @@ const App: React.FC = () => {
   const handleDeleteIngredient = (ingredientId: string) => {
     if (confirm("ATENÇÃO: Excluir este ingrediente irá impactar as receitas que o utilizam. Tem certeza que deseja remover?")) {
       setIngredients(prev => prev.filter(i => i.id !== ingredientId));
+      const nextRef = { ...ingredientStockRef.current };
+      delete nextRef[ingredientId];
+      ingredientStockRef.current = nextRef;
       // Limpa receitas de produtos que usavam esse ingrediente para evitar erros
       setProducts(prev => prev.map(p => ({
         ...p,
@@ -475,6 +530,10 @@ const App: React.FC = () => {
   };
 
   const handleAddIngredient = (ingredient: Ingredient) => {
+    ingredientStockRef.current = {
+      ...ingredientStockRef.current,
+      [ingredient.id]: ingredient.currentStock,
+    };
     setIngredients(prev => [...prev, ingredient]);
     showNotification('Ingrediente Adicionado!');
   };
@@ -484,21 +543,36 @@ const App: React.FC = () => {
   };
 
   const handleSaveIngredient = (updated: Ingredient) => {
+    ingredientStockRef.current = {
+      ...ingredientStockRef.current,
+      [updated.id]: updated.currentStock,
+    };
     setIngredients(prev => prev.map(ing => (ing.id === updated.id ? updated : ing)));
     showNotification('Ingrediente Atualizado!');
   };
 
   const handleAddCleaningMaterial = (material: CleaningMaterial) => {
+    cleaningMaterialStockRef.current = {
+      ...cleaningMaterialStockRef.current,
+      [material.id]: material.currentStock,
+    };
     setCleaningMaterials(prev => [...prev, material]);
     showNotification('Material de limpeza adicionado!');
   };
 
   const handleUpdateCleaningMaterial = (updated: CleaningMaterial) => {
+    cleaningMaterialStockRef.current = {
+      ...cleaningMaterialStockRef.current,
+      [updated.id]: updated.currentStock,
+    };
     setCleaningMaterials(prev => prev.map(material => (material.id === updated.id ? updated : material)));
     showNotification('Material de limpeza atualizado!');
   };
 
   const handleDeleteCleaningMaterial = (materialId: string) => {
+    const nextRef = { ...cleaningMaterialStockRef.current };
+    delete nextRef[materialId];
+    cleaningMaterialStockRef.current = nextRef;
     setCleaningMaterials(prev => prev.filter(material => material.id !== materialId));
     showNotification('Material de limpeza removido!');
   };
@@ -512,34 +586,32 @@ const App: React.FC = () => {
       return;
     }
 
-    const minAllowed = -material.currentStock;
-    const normalizedAmount = amount < 0 ? Math.max(amount, minAllowed) : amount;
-    if (normalizedAmount === 0) {
+    const currentStock = cleaningMaterialStockRef.current[id] ?? material.currentStock;
+    const appliedAmount = getAppliedStockDelta(currentStock, amount);
+    if (appliedAmount === 0) {
       showNotification('Estoque de material insuficiente para baixa!');
       return;
     }
+
+    cleaningMaterialStockRef.current[id] = currentStock + appliedAmount;
 
     const newEntry: CleaningStockEntry = {
       id: `cst-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       materialId: id,
       materialName: material.name,
-      quantity: normalizedAmount,
+      quantity: appliedAmount,
       unitCost: material.cost,
       timestamp: new Date(),
     };
 
     setCleaningMaterials(prev =>
       prev.map(m =>
-        m.id === id ? { ...m, currentStock: Math.max(0, m.currentStock + normalizedAmount) } : m
+        m.id === id ? { ...m, currentStock: Math.max(0, m.currentStock + appliedAmount) } : m
       )
     );
     setCleaningStockEntries(prev => [...prev, newEntry]);
     setGlobalCleaningStockEntries(prev => [...prev, newEntry]);
-    showNotification(
-      normalizedAmount > 0
-        ? 'Estoque de material atualizado!'
-        : 'Baixa de material registrada!'
-    );
+    showNotification(appliedAmount > 0 ? 'Estoque de material atualizado!' : 'Baixa de material registrada!');
   }, [cleaningMaterials]);
 
   const handleClearHistory = () => {
@@ -552,6 +624,8 @@ const App: React.FC = () => {
 
   const handleFactoryReset = async () => {
     await clearAppState();
+    ingredientStockRef.current = toStockMap(DEFAULT_APP_STATE.ingredients);
+    cleaningMaterialStockRef.current = toStockMap(DEFAULT_APP_STATE.cleaningMaterials);
     setIngredients(DEFAULT_APP_STATE.ingredients);
     setProducts(DEFAULT_APP_STATE.products);
     setSales(DEFAULT_APP_STATE.sales);
@@ -578,6 +652,15 @@ const App: React.FC = () => {
   };
 
   const handleClearOnlyStock = () => {
+    ingredientStockRef.current = ingredients.reduce<Record<string, number>>((acc, ingredient) => {
+      acc[ingredient.id] = 0;
+      return acc;
+    }, {});
+    cleaningMaterialStockRef.current = cleaningMaterials.reduce<Record<string, number>>((acc, material) => {
+      acc[material.id] = 0;
+      return acc;
+    }, {});
+
     setIngredients(prev =>
       prev.map(ingredient => ({
         ...ingredient,
