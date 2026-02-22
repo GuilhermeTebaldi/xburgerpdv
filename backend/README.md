@@ -151,7 +151,7 @@ Headers de sincronização:
 
 Arquivo de exemplo: `backend/.env.example`
 
-Obrigatórias em produção:
+Obrigatórias em produção (API web):
 - `NODE_ENV=production`
 - `PORT` (Render define automaticamente)
 - `DATABASE_URL`
@@ -166,8 +166,14 @@ Obrigatórias em produção:
 - `APP_STATE_BACKUP_SCHEDULER_ENABLED` (`true|false`, padrão `true`)
 - `APP_STATE_BACKUP_CHECK_INTERVAL_MS` (padrão `3600000`)
 
+Obrigatórias para o cron `backup:run`:
+- `NODE_ENV=production`
+- `DATABASE_URL`
+- `DEFAULT_TIMEZONE`
+- `APP_STATE_BACKUP_RETENTION_DAYS`
+
 Comando utilitário:
-- `npm run backup:run --prefix backend` (força execução de backup diário/versionado + poda por retenção)
+- `npm run backup:run --prefix backend` (força execução de backup diário/versionado + poda por retenção; não exige `JWT_SECRET`)
 
 ## 6) Execução local (sem etapa oculta)
 

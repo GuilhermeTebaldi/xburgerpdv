@@ -2,12 +2,13 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import type { SignOptions, Secret } from 'jsonwebtoken';
 
-import { env } from '../config/env.js';
+import { getAuthEnv } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../utils/http-error.js';
 
 export class AuthService {
   async login(email: string, password: string) {
+    const authEnv = getAuthEnv();
     const normalizedEmail = email.trim().toLowerCase();
 
     const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
@@ -22,9 +23,9 @@ export class AuthService {
 
     const token = jwt.sign(
       { sub: user.id, role: user.role },
-      env.JWT_SECRET as Secret,
+      authEnv.JWT_SECRET as Secret,
       {
-        expiresIn: env.JWT_EXPIRES_IN as SignOptions['expiresIn'],
+        expiresIn: authEnv.JWT_EXPIRES_IN as SignOptions['expiresIn'],
       }
     );
 

@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 
 import jwt from 'jsonwebtoken';
 
-import { env } from '../config/env.js';
+import { getAuthEnv } from '../config/env.js';
 import { HttpError } from '../utils/http-error.js';
 
 interface TokenPayload {
@@ -17,8 +17,10 @@ export const decodeBearerUserId = (header: string | undefined): string | null =>
     throw new HttpError(401, 'Formato de token inválido. Use Bearer <token>.');
   }
 
+  const authEnv = getAuthEnv();
+
   try {
-    const payload = jwt.verify(token, env.JWT_SECRET) as TokenPayload;
+    const payload = jwt.verify(token, authEnv.JWT_SECRET) as TokenPayload;
     return payload.sub;
   } catch {
     throw new HttpError(401, 'Token inválido ou expirado.');

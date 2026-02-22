@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import type { Secret } from 'jsonwebtoken';
 
-import { env } from '../config/env.js';
+import { getAuthEnv } from '../config/env.js';
 import { HttpError } from '../utils/http-error.js';
 
 const STATE_TOKEN_EXPIRATION = '30m';
@@ -22,13 +22,14 @@ interface VerifyStateWriteTokenInput {
 }
 
 export const issueStateWriteToken = (input: IssueStateWriteTokenInput): string => {
+  const authEnv = getAuthEnv();
   return jwt.sign(
     {
       typ: 'state_write',
       ver: input.version,
       sub: input.actorUserId,
     } satisfies StateWriteTokenPayload,
-    env.JWT_SECRET as Secret,
+    authEnv.JWT_SECRET as Secret,
     {
       expiresIn: STATE_TOKEN_EXPIRATION,
     }
@@ -38,8 +39,9 @@ export const issueStateWriteToken = (input: IssueStateWriteTokenInput): string =
 export const verifyStateWriteToken = (
   input: VerifyStateWriteTokenInput
 ): StateWriteTokenPayload => {
+  const authEnv = getAuthEnv();
   try {
-    const payload = jwt.verify(input.token, env.JWT_SECRET) as StateWriteTokenPayload;
+    const payload = jwt.verify(input.token, authEnv.JWT_SECRET) as StateWriteTokenPayload;
 
     if (payload.typ !== 'state_write' || typeof payload.ver !== 'string' || payload.ver.trim() === '') {
       throw new HttpError(401, 'Token de estado inválido.');

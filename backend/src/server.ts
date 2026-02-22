@@ -1,6 +1,8 @@
 import { app } from './app.js';
-import { env } from './config/env.js';
+import { env, getAuthEnv } from './config/env.js';
 import { startStateBackupScheduler, stopStateBackupScheduler } from './jobs/state-backup.scheduler.js';
+
+getAuthEnv();
 
 const server = app.listen(env.PORT, () => {
   // eslint-disable-next-line no-console
