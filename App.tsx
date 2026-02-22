@@ -622,6 +622,7 @@ const App: React.FC = () => {
               sales={globalSales} 
               cancelledSales={globalCancelledSales} 
               stockEntries={globalStockEntries} 
+              allProducts={products}
               allIngredients={ingredients}
               cleaningMaterials={cleaningMaterials}
               cleaningStockEntries={globalCleaningStockEntries}

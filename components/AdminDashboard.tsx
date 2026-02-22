@@ -4,14 +4,17 @@ import {
   CleaningMaterial,
   CleaningStockEntry,
   Ingredient,
+  Product,
   Sale,
   StockEntry,
 } from '../types';
+import AdminSalesAnalyticsTab from './AdminSalesAnalyticsTab';
 
 interface AdminDashboardProps {
   sales: Sale[];
   cancelledSales: Sale[];
   stockEntries: StockEntry[];
+  allProducts: Product[];
   allIngredients: Ingredient[];
   cleaningMaterials: CleaningMaterial[];
   cleaningStockEntries: CleaningStockEntry[];
@@ -26,6 +29,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   sales, 
   cancelledSales, 
   stockEntries, 
+  allProducts,
   allIngredients,
   cleaningMaterials,
   cleaningStockEntries,
@@ -35,7 +39,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onDeleteArchiveDate,
   onDeleteArchiveMonth
 }) => {
-  const [activeTab, setActiveTab] = useState<'geral' | 'vendas' | 'estornos' | 'estoque' | 'materiais' | 'arquivos' | 'configuracao'>('geral');
+  const [activeTab, setActiveTab] = useState<
+    'geral' | 'analytics' | 'vendas' | 'estornos' | 'estoque' | 'materiais' | 'arquivos' | 'configuracao'
+  >('geral');
   const [selectedArchiveDay, setSelectedArchiveDay] = useState<string | null>(null);
   const [selectedArchiveMonth, setSelectedArchiveMonth] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ type: 'month' | 'day'; label: string } | null>(null);
@@ -177,14 +183,23 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
         
         <div className="qb-admin-tabs flex bg-slate-200 p-1 rounded-2xl gap-1 overflow-x-auto scrollbar-hide w-full md:w-auto">
-          {['geral', 'vendas', 'estornos', 'estoque', 'materiais', 'arquivos', 'configuracao'].map((tab) => (
+          {[
+            'geral',
+            'analytics',
+            'vendas',
+            'estornos',
+            'estoque',
+            'materiais',
+            'arquivos',
+            'configuracao',
+          ].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab as any)}
               className={`qb-btn-touch px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === tab ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:bg-slate-300'}`}
             >
               {tab === 'configuracao' && <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>}
-              {tab === 'configuracao' ? 'CONFIG' : tab}
+              {tab === 'configuracao' ? 'CONFIG' : tab === 'analytics' ? 'ANALISE' : tab}
             </button>
           ))}
         </div>
@@ -268,6 +283,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         </div>
       )}
+
+      {activeTab === 'analytics' && <AdminSalesAnalyticsTab sales={sales} products={allProducts} />}
 
       {activeTab === 'estornos' && (
         <div className="qb-admin-panel qb-admin-estornos bg-slate-100 p-8 rounded-[40px] border-2 border-slate-200 min-h-[600px]">

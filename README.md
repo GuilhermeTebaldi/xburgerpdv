@@ -25,3 +25,10 @@ View your app in AI Studio: https://ai.studio/apps/temp/1
 - Controle separado do estoque de alimentos, com subabas internas `MATERIAIS` e `ESTOQUE`.
 - Cadastro de material com `nome`, `unidade`, `custo`, `estoque`, `estoque mínimo` e `URL da foto`.
 - Movimentações de entrada/saída vão para histórico permanente e aparecem na aba `MATERIAIS` do painel `ADMIN`.
+
+## Módulo ADMIN - Aba ANALISE
+
+- Nova aba `ANALISE` no painel `ADMIN` com foco em inteligencia de vendas historicas.
+- Relatorios por produto vendido (sem depender de ingrediente), dia da semana, hora do dia e ranking por data.
+- Indicadores de melhor/pior dia da semana, horario de pico e produtos lideres por dia.
+- A analise usa o historico persistido em `globalSales` (estado sincronizado com o banco via API de estado).
