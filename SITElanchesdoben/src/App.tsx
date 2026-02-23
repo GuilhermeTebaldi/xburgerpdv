@@ -31,6 +31,7 @@ const PRODUCTION_FALLBACK_ORIGIN = 'https://lanchesdoben.com.br';
 const ADMIN_GATE_KEY = 'lanchesdoben_admin_gate';
 const ADMIN_REMEMBER_ACCESS_KEY = 'lanchesdoben_admin_remember_access';
 const ADMIN_SAVED_EMAIL_KEY = 'lanchesdoben_admin_saved_email';
+let hasPlayedHeroCtaIntro = false;
 
 const normalizePath = (value: string) => {
   const trimmed = value.trim();
@@ -137,6 +138,12 @@ export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [isHoursOpen, setIsHoursOpen] = useState(false);
+  const [playHeroCtaIntro, setPlayHeroCtaIntro] = useState(() => {
+    if (prefersReducedMotion) return false;
+    if (hasPlayedHeroCtaIntro) return false;
+    hasPlayedHeroCtaIntro = true;
+    return true;
+  });
   const [isAdminPasswordVisible, setIsAdminPasswordVisible] = useState(false);
   const [rememberAdminAccess, setRememberAdminAccess] = useState(readRememberAdminAccess);
   const [adminEmail, setAdminEmail] = useState('');
@@ -677,22 +684,23 @@ export default function App() {
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <motion.button
-                initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.68 }}
+                initial={false}
                 animate={
-                  prefersReducedMotion
-                    ? { opacity: 1 }
-                    : { opacity: 1, scale: [0.68, 1.16, 0.97, 1] }
+                  playHeroCtaIntro
+                    ? { opacity: 1, scale: [0.88, 1.08, 0.98, 1] }
+                    : { opacity: 1, scale: 1 }
                 }
                 transition={
-                  prefersReducedMotion
-                    ? { duration: 0.45, delay: 0.35 }
-                    : {
-                        duration: 1.05,
-                        delay: 0.45,
-                        times: [0, 0.6, 0.83, 1],
+                  playHeroCtaIntro
+                    ? {
+                        duration: 0.9,
+                        delay: 0.2,
+                        times: [0, 0.55, 0.82, 1],
                         ease: [0.22, 1, 0.36, 1],
                       }
+                    : { duration: 0.2 }
                 }
+                onAnimationComplete={() => setPlayHeroCtaIntro(false)}
                 onClick={handleWhatsApp}
                 className="w-full sm:w-auto bg-brand-red hover:bg-red-700 text-white px-12 py-5 rounded-full font-bold text-xl transition-all transform hover:scale-105 shadow-2xl shadow-brand-red/40"
               >
@@ -736,7 +744,7 @@ export default function App() {
                 Aba de Produtos do Caixa
               </p>
             </div>
-            <div className="rounded-3xl rounded-tl-none border border-white/20 bg-brand-black/70 md:bg-brand-black/55 md:backdrop-blur-sm p-4 md:p-6">
+            <div className="rounded-3xl rounded-tl-none border border-white/20 bg-brand-black/70 md:bg-brand-black/55 p-4 md:p-6">
               {isProductsLoading ? (
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
                   {Array.from({ length: 6 }).map((_, index) => (
@@ -751,46 +759,20 @@ export default function App() {
                   {productsError && (
                     <p className="mb-4 text-amber-300 text-sm font-semibold">{productsError}</p>
                   )}
-                  <div className="product-reveal-frame mb-6" aria-hidden="true">
-                    <div className="product-reveal-phone">
-                      <div className="product-reveal-speaker" />
-                    </div>
-                  </div>
-                  <div className="product-reveal-stage grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 text-left">
-                    {publicProducts.map((product, index) => (
-                      <motion.article
+                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 text-left">
+                    {publicProducts.map((product) => (
+                      <article
                         key={product.id}
-                        initial={
-                          prefersReducedMotion
-                            ? { opacity: 1, y: 0, scale: 1 }
-                            : { opacity: 0, y: 42, scale: 0.97 }
-                        }
-                        whileInView={
-                          prefersReducedMotion
-                            ? { opacity: 1, y: 0, scale: 1 }
-                            : { opacity: 1, y: 0, scale: 1 }
-                        }
-                        viewport={{ once: true, amount: 0.16 }}
-                        transition={
-                          prefersReducedMotion
-                            ? { duration: 0 }
-                            : {
-                                duration: 0.56,
-                                delay: Math.min(index * 0.05, 0.28),
-                                ease: [0.22, 1, 0.36, 1],
-                              }
-                        }
                         className="group rounded-2xl overflow-hidden bg-white/95 border border-white/20 shadow-xl shadow-brand-black/30"
                       >
-                        <div className="relative h-36 overflow-hidden bg-brand-black/95">
+                        <div className="relative h-36 overflow-hidden bg-slate-100">
                           {product.imageUrl ? (
                             <img
                               src={product.imageUrl}
                               alt={`Produto ${product.name}`}
-                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                              loading="lazy"
+                              className="w-full h-full object-cover"
+                              loading="eager"
                               decoding="async"
-                              sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 320px"
                               referrerPolicy="no-referrer"
                             />
                           ) : (
@@ -810,7 +792,7 @@ export default function App() {
                             {BRL_CURRENCY_FORMATTER.format(product.price)}
                           </p>
                         </div>
-                      </motion.article>
+                      </article>
                     ))}
                   </div>
                 </>
@@ -907,7 +889,7 @@ export default function App() {
           />
           <span className="font-display text-4xl tracking-tighter text-brand-red mb-6 block">LANCHESDOBEN</span>
           <p className="text-white/40 text-sm mb-8">
-            © {new Date().getFullYear()} LANCHESDOBEN. Todos os direitos reservados.
+            © {new Date().getFullYear()} LANCHESDOBEN.COM.BR Todos os direitos reservados.
           </p>
           <div className="flex justify-center gap-8 text-white/60 text-sm">
             <a href="#" className="hover:text-white transition-colors">Privacidade</a>
