@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import Header from './components/Header';
 import ProductCard from './components/ProductCard';
 import InventoryManager from './components/InventoryManager';
@@ -127,6 +127,7 @@ const App: React.FC = () => {
   const [isAccessVerified, setIsAccessVerified] = useState(false);
   const [isStateHydrating, setIsStateHydrating] = useState(true);
   const [pendingStateOps, setPendingStateOps] = useState(0);
+  const commandQueueRef = useRef<Promise<void>>(Promise.resolve());
   
   const [ingredients, setIngredients] = useState<Ingredient[]>(DEFAULT_APP_STATE.ingredients);
   const [products, setProducts] = useState<Product[]>(DEFAULT_APP_STATE.products);
@@ -285,23 +286,37 @@ const App: React.FC = () => {
   const runCommandWithSync = useCallback(
     async (command: StateCommand, successMessage?: string): Promise<boolean> => {
       setPendingStateOps((current) => current + 1);
-      try {
-        const nextState = await runStateCommand(command);
-        applyStateSnapshot(nextState);
-        if (successMessage) {
-          showNotification(successMessage);
+      const executeCommand = async (): Promise<boolean> => {
+        try {
+          const nextState = await runStateCommand(command);
+          applyStateSnapshot(nextState);
+          if (successMessage) {
+            showNotification(successMessage);
+          }
+          return true;
+        } catch (error) {
+          const message =
+            error instanceof Error && error.message.trim()
+              ? error.message
+              : 'Falha ao sincronizar com o servidor. Tente novamente.';
+          showNotification(message);
+          return false;
+        } finally {
+          setPendingStateOps((current) => Math.max(0, current - 1));
         }
-        return true;
-      } catch (error) {
-        const message =
-          error instanceof Error && error.message.trim()
-            ? error.message
-            : 'Falha ao sincronizar com o servidor. Tente novamente.';
-        showNotification(message);
-        return false;
-      } finally {
-        setPendingStateOps((current) => Math.max(0, current - 1));
-      }
+      };
+
+      const scheduledExecution = commandQueueRef.current.then(
+        () => executeCommand(),
+        () => executeCommand()
+      );
+
+      commandQueueRef.current = scheduledExecution.then(
+        () => undefined,
+        () => undefined
+      );
+
+      return scheduledExecution;
     },
     [applyStateSnapshot]
   );
