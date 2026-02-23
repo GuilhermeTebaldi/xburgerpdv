@@ -673,7 +673,7 @@ export default function App() {
               </motion.span>
             </motion.h1>
             <p className="text-white/80 text-lg md:text-xl max-w-2xl mx-auto mb-10 font-light">
-              Hambúrgueres artesanais feitos com blends exclusivos, ingredientes frescos e aquele toque especial do Ben.
+              Lanchonete e Hambúrgueria feitos com blends exclusivos, ingredientes frescos e aquele toque especial do Ben.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <motion.button
