@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import React, { startTransition, useEffect, useState } from 'react';
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { 
   Menu as MenuIcon, 
   X, 
@@ -17,7 +17,11 @@ import {
   Star,
   Lock
 } from 'lucide-react';
-import { fetchPublicProducts, type PublicProduct } from './services/publicCatalog';
+import {
+  fetchPublicProducts,
+  readCachedPublicProducts,
+  type PublicProduct,
+} from './services/publicCatalog';
 
 const ADMIN_EMAIL = 'meu@admin.com';
 const ADMIN_PASSWORD = 'ben123';
@@ -62,7 +66,28 @@ const BRL_CURRENCY_FORMATTER = new Intl.NumberFormat('pt-BR', {
 const resolveProductCategoryLabel = (category: string) =>
   PRODUCT_CATEGORY_LABELS[category] || category;
 
+const areProductsEqual = (current: PublicProduct[], next: PublicProduct[]): boolean => {
+  if (current.length !== next.length) return false;
+
+  for (let index = 0; index < current.length; index += 1) {
+    const currentProduct = current[index];
+    const nextProduct = next[index];
+    if (
+      currentProduct.id !== nextProduct.id ||
+      currentProduct.name !== nextProduct.name ||
+      currentProduct.price !== nextProduct.price ||
+      currentProduct.imageUrl !== nextProduct.imageUrl ||
+      currentProduct.category !== nextProduct.category
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
 export default function App() {
+  const prefersReducedMotion = useReducedMotion();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [isHoursOpen, setIsHoursOpen] = useState(false);
@@ -98,8 +123,12 @@ export default function App() {
 
   useEffect(() => {
     let isActive = true;
+    let isRefreshing = false;
 
     const loadProducts = async (isInitialLoad: boolean) => {
+      if (isRefreshing) return;
+      isRefreshing = true;
+
       if (isInitialLoad && isActive) {
         setIsProductsLoading(true);
       }
@@ -107,33 +136,54 @@ export default function App() {
       try {
         const loadedProducts = await fetchPublicProducts();
         if (!isActive) return;
-        setPublicProducts(loadedProducts);
-        setProductsError('');
+        startTransition(() => {
+          setPublicProducts((currentProducts) =>
+            areProductsEqual(currentProducts, loadedProducts) ? currentProducts : loadedProducts
+          );
+          setProductsError('');
+        });
       } catch {
         if (!isActive) return;
         setProductsError('Cardápio indisponível no momento. Tente novamente em instantes.');
       } finally {
+        isRefreshing = false;
         if (isInitialLoad && isActive) {
           setIsProductsLoading(false);
         }
       }
     };
 
-    void loadProducts(true);
+    const cachedProducts = readCachedPublicProducts();
+    if (cachedProducts.length > 0) {
+      setPublicProducts(cachedProducts);
+      setIsProductsLoading(false);
+    }
+
+    void loadProducts(cachedProducts.length === 0);
 
     // Mantém o cardápio sincronizado com as alterações do sistema sem forçar recarregamento manual.
     const refreshIntervalId = window.setInterval(() => {
+      if (document.hidden) return;
       void loadProducts(false);
-    }, 30000);
+    }, 45000);
+
     const refreshOnFocus = () => {
       void loadProducts(false);
     };
+    const refreshOnVisibility = () => {
+      if (!document.hidden) {
+        void loadProducts(false);
+      }
+    };
+
     window.addEventListener('focus', refreshOnFocus);
+    document.addEventListener('visibilitychange', refreshOnVisibility);
 
     return () => {
       isActive = false;
       window.clearInterval(refreshIntervalId);
       window.removeEventListener('focus', refreshOnFocus);
+      document.removeEventListener('visibilitychange', refreshOnVisibility);
     };
   }, []);
 
@@ -189,6 +239,9 @@ export default function App() {
                 src="https://i.pinimg.com/736x/69/40/d9/6940d97853972edd36dd7e77a4a99bc9.jpg" 
                 alt="Logo LANCHESDOBEN" 
                 className="w-12 h-12 rounded-full object-cover border-2 border-brand-red"
+                loading="eager"
+                decoding="async"
+                fetchPriority="high"
                 referrerPolicy="no-referrer"
               />
               <span className="font-display text-3xl tracking-tighter text-brand-red">LANCHESDOBEN</span>
@@ -221,7 +274,7 @@ export default function App() {
                 <Lock size={16} />
                 Admin
               </button>
-              <button 
+              <button
                 onClick={handleWhatsApp}
                 className="bg-brand-red hover:bg-red-700 text-white px-6 py-2 rounded-full font-bold transition-all flex items-center gap-2"
               >
@@ -456,6 +509,9 @@ export default function App() {
             src="https://i.pinimg.com/736x/6b/f7/46/6bf7465d1a625ccc5c1e6d27e92e4936.jpg" 
             alt="Hero Background" 
             className="w-full h-full object-cover opacity-40"
+            loading="eager"
+            decoding="async"
+            fetchPriority="high"
             referrerPolicy="no-referrer"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-brand-black via-transparent to-brand-black/50" />
@@ -469,20 +525,67 @@ export default function App() {
           >
             
             <h2 className="text-brand-red font-display text-2xl md:text-3xl mb-4 tracking-widest uppercase">O Melhor do Rio de Janeiro</h2>
-            <h1 className="text-white font-display text-6xl md:text-9xl mb-8 leading-none tracking-tighter">
-              SABOR QUE <br />
-              <span className="text-brand-red">SURPREENDE</span>
-            </h1>
+            <motion.h1
+              initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: 24 }}
+              animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+              transition={
+                prefersReducedMotion
+                  ? { duration: 0.45, delay: 0.2 }
+                  : { duration: 0.75, delay: 0.2, ease: [0.22, 1, 0.36, 1] }
+              }
+              className="text-white font-display text-6xl md:text-9xl mb-8 leading-none tracking-tighter"
+            >
+              <motion.span
+                initial={prefersReducedMotion ? { opacity: 1 } : { opacity: 0, y: 18, letterSpacing: '0.12em' }}
+                animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, y: 0, letterSpacing: '0.02em' }}
+                transition={
+                  prefersReducedMotion
+                    ? { duration: 0 }
+                    : { duration: 0.65, delay: 0.35, ease: [0.22, 1, 0.36, 1] }
+                }
+                className="block"
+              >
+                SABOR QUE
+              </motion.span>
+              <motion.span
+                initial={prefersReducedMotion ? { opacity: 1 } : { opacity: 0, scale: 0.88 }}
+                animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, scale: 1 }}
+                transition={
+                  prefersReducedMotion
+                    ? { duration: 0 }
+                    : { duration: 0.7, delay: 0.5, ease: [0.22, 1, 0.36, 1] }
+                }
+                className="block hero-special-headline"
+              >
+                SURPREENDE
+              </motion.span>
+            </motion.h1>
             <p className="text-white/80 text-lg md:text-xl max-w-2xl mx-auto mb-10 font-light">
               Hambúrgueres artesanais feitos com blends exclusivos, ingredientes frescos e aquele toque especial do Ben.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <button 
+              <motion.button
+                initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.68 }}
+                animate={
+                  prefersReducedMotion
+                    ? { opacity: 1 }
+                    : { opacity: 1, scale: [0.68, 1.16, 0.97, 1] }
+                }
+                transition={
+                  prefersReducedMotion
+                    ? { duration: 0.45, delay: 0.35 }
+                    : {
+                        duration: 1.05,
+                        delay: 0.45,
+                        times: [0, 0.6, 0.83, 1],
+                        ease: [0.22, 1, 0.36, 1],
+                      }
+                }
                 onClick={handleWhatsApp}
                 className="w-full sm:w-auto bg-brand-red hover:bg-red-700 text-white px-12 py-5 rounded-full font-bold text-xl transition-all transform hover:scale-105 shadow-2xl shadow-brand-red/40"
               >
                 Pedir Agora
-              </button>
+              </motion.button>
             </div>
 
           </motion.div>
@@ -521,7 +624,7 @@ export default function App() {
                 Aba de Produtos do Caixa
               </p>
             </div>
-            <div className="rounded-3xl rounded-tl-none border border-white/20 bg-brand-black/55 backdrop-blur-sm p-4 md:p-6">
+            <div className="rounded-3xl rounded-tl-none border border-white/20 bg-brand-black/70 md:bg-brand-black/55 md:backdrop-blur-sm p-4 md:p-6">
               {isProductsLoading ? (
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
                   {Array.from({ length: 6 }).map((_, index) => (
@@ -536,10 +639,35 @@ export default function App() {
                   {productsError && (
                     <p className="mb-4 text-amber-300 text-sm font-semibold">{productsError}</p>
                   )}
-                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 text-left">
-                    {publicProducts.map((product) => (
-                      <article
+                  <div className="product-reveal-frame mb-6" aria-hidden="true">
+                    <div className="product-reveal-phone">
+                      <div className="product-reveal-speaker" />
+                    </div>
+                  </div>
+                  <div className="product-reveal-stage grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 text-left">
+                    {publicProducts.map((product, index) => (
+                      <motion.article
                         key={product.id}
+                        initial={
+                          prefersReducedMotion
+                            ? { opacity: 1, y: 0, scale: 1 }
+                            : { opacity: 0, y: 42, scale: 0.97 }
+                        }
+                        whileInView={
+                          prefersReducedMotion
+                            ? { opacity: 1, y: 0, scale: 1 }
+                            : { opacity: 1, y: 0, scale: 1 }
+                        }
+                        viewport={{ once: true, amount: 0.16 }}
+                        transition={
+                          prefersReducedMotion
+                            ? { duration: 0 }
+                            : {
+                                duration: 0.56,
+                                delay: Math.min(index * 0.05, 0.28),
+                                ease: [0.22, 1, 0.36, 1],
+                              }
+                        }
                         className="group rounded-2xl overflow-hidden bg-white/95 border border-white/20 shadow-xl shadow-brand-black/30"
                       >
                         <div className="relative h-36 overflow-hidden bg-brand-black/95">
@@ -548,6 +676,9 @@ export default function App() {
                               src={product.imageUrl}
                               alt={`Produto ${product.name}`}
                               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              loading="lazy"
+                              decoding="async"
+                              sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 320px"
                               referrerPolicy="no-referrer"
                             />
                           ) : (
@@ -567,7 +698,7 @@ export default function App() {
                             {BRL_CURRENCY_FORMATTER.format(product.price)}
                           </p>
                         </div>
-                      </article>
+                      </motion.article>
                     ))}
                   </div>
                 </>
@@ -658,6 +789,8 @@ export default function App() {
             src="https://i.pinimg.com/736x/69/40/d9/6940d97853972edd36dd7e77a4a99bc9.jpg" 
             alt="Logo Footer" 
             className="w-20 h-20 rounded-full mx-auto mb-4 border-2 border-brand-red object-cover"
+            loading="lazy"
+            decoding="async"
             referrerPolicy="no-referrer"
           />
           <span className="font-display text-4xl tracking-tighter text-brand-red mb-6 block">LANCHESDOBEN</span>
