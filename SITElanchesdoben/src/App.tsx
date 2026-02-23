@@ -15,7 +15,9 @@ import {
   Phone, 
   Clock,
   Star,
-  Lock
+  Lock,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import {
   fetchPublicProducts,
@@ -26,6 +28,9 @@ import {
 const ADMIN_EMAIL = 'meu@admin.com';
 const ADMIN_PASSWORD = 'ben123';
 const PRODUCTION_FALLBACK_ORIGIN = 'https://lanchesdoben.com.br';
+const ADMIN_GATE_KEY = 'lanchesdoben_admin_gate';
+const ADMIN_REMEMBER_ACCESS_KEY = 'lanchesdoben_admin_remember_access';
+const ADMIN_SAVED_EMAIL_KEY = 'lanchesdoben_admin_saved_email';
 
 const normalizePath = (value: string) => {
   const trimmed = value.trim();
@@ -66,6 +71,47 @@ const BRL_CURRENCY_FORMATTER = new Intl.NumberFormat('pt-BR', {
 const resolveProductCategoryLabel = (category: string) =>
   PRODUCT_CATEGORY_LABELS[category] || category;
 
+const readRememberAdminAccess = (): boolean => {
+  if (typeof window === 'undefined') return true;
+  try {
+    return window.localStorage.getItem(ADMIN_REMEMBER_ACCESS_KEY) !== '0';
+  } catch {
+    return true;
+  }
+};
+
+const persistRememberAdminAccess = (value: boolean): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(ADMIN_REMEMBER_ACCESS_KEY, value ? '1' : '0');
+  } catch {
+    // ignore storage write failures
+  }
+};
+
+const readSavedAdminEmail = (): string => {
+  if (typeof window === 'undefined') return '';
+  try {
+    return (window.localStorage.getItem(ADMIN_SAVED_EMAIL_KEY) || '').trim().toLowerCase();
+  } catch {
+    return '';
+  }
+};
+
+const persistSavedAdminEmail = (email: string): void => {
+  if (typeof window === 'undefined') return;
+  const normalizedEmail = email.trim().toLowerCase();
+  try {
+    if (!normalizedEmail) {
+      window.localStorage.removeItem(ADMIN_SAVED_EMAIL_KEY);
+      return;
+    }
+    window.localStorage.setItem(ADMIN_SAVED_EMAIL_KEY, normalizedEmail);
+  } catch {
+    // ignore storage write failures
+  }
+};
+
 const areProductsEqual = (current: PublicProduct[], next: PublicProduct[]): boolean => {
   if (current.length !== next.length) return false;
 
@@ -91,6 +137,8 @@ export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [isHoursOpen, setIsHoursOpen] = useState(false);
+  const [isAdminPasswordVisible, setIsAdminPasswordVisible] = useState(false);
+  const [rememberAdminAccess, setRememberAdminAccess] = useState(readRememberAdminAccess);
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [adminError, setAdminError] = useState('');
@@ -188,8 +236,22 @@ export default function App() {
   }, []);
 
   const openAdminModal = () => {
-    setAdminEmail('');
+    if (typeof window !== 'undefined') {
+      try {
+        const hasRememberedAccess = window.localStorage.getItem(ADMIN_GATE_KEY) === 'authenticated';
+        if (hasRememberedAccess) {
+          window.sessionStorage.setItem(ADMIN_GATE_KEY, 'authenticated');
+          window.location.href = resolveAdminSystemUrl();
+          return;
+        }
+      } catch {
+        // ignore storage read failures and continue with manual login
+      }
+    }
+
+    setAdminEmail(readSavedAdminEmail());
     setAdminPassword('');
+    setIsAdminPasswordVisible(false);
     setAdminError('');
     setIsAdminModalOpen(true);
   };
@@ -197,6 +259,7 @@ export default function App() {
   const closeAdminModal = () => {
     setIsAdminModalOpen(false);
     setAdminPassword('');
+    setIsAdminPasswordVisible(false);
     setAdminError('');
     setIsAdminRedirecting(false);
   };
@@ -210,8 +273,26 @@ export default function App() {
     if (normalizedEmail === ADMIN_EMAIL && adminPassword === ADMIN_PASSWORD) {
       setIsAdminRedirecting(true);
       setAdminError('');
-      window.sessionStorage.setItem('lanchesdoben_admin_gate', 'authenticated');
-      window.localStorage.removeItem('lanchesdoben_admin_gate');
+      persistRememberAdminAccess(rememberAdminAccess);
+      if (rememberAdminAccess) {
+        persistSavedAdminEmail(normalizedEmail);
+      } else {
+        persistSavedAdminEmail('');
+      }
+      try {
+        window.sessionStorage.setItem(ADMIN_GATE_KEY, 'authenticated');
+      } catch {
+        // ignore storage write failures
+      }
+      try {
+        if (rememberAdminAccess) {
+          window.localStorage.setItem(ADMIN_GATE_KEY, 'authenticated');
+        } else {
+          window.localStorage.removeItem(ADMIN_GATE_KEY);
+        }
+      } catch {
+        // ignore storage write failures
+      }
       const targetUrl = resolveAdminSystemUrl();
       window.location.href = targetUrl;
       setIsAdminRedirecting(false);
@@ -445,17 +526,18 @@ export default function App() {
                 <p className="text-white/80 text-sm">Acesse para gerenciar sua hamburgueria</p>
               </div>
               <div className="p-8">
-                <form className="space-y-6" onSubmit={handleAdminLogin}>
+                <form className="space-y-6" onSubmit={handleAdminLogin} autoComplete="on">
                   <div>
                     <label className="block text-xs font-bold mb-2 uppercase tracking-widest text-gray-400">Usuário</label>
                     <input 
                       type="email"
+                      name="username"
                       value={adminEmail}
                       onChange={(e) => {
                         setAdminEmail(e.target.value);
                         if (adminError) setAdminError('');
                       }}
-                      autoComplete="email"
+                      autoComplete="username"
                       required
                       className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-red outline-none transition-all" 
                       placeholder="meu@admin.com"
@@ -463,19 +545,49 @@ export default function App() {
                   </div>
                   <div>
                     <label className="block text-xs font-bold mb-2 uppercase tracking-widest text-gray-400">Senha</label>
-                    <input 
-                      type="password" 
-                      value={adminPassword}
-                      onChange={(e) => {
-                        setAdminPassword(e.target.value);
-                        if (adminError) setAdminError('');
-                      }}
-                      autoComplete="current-password"
-                      required
-                      className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-red outline-none transition-all" 
-                      placeholder="••••••••"
-                    />
+                    <div className="relative">
+                      <input 
+                        type={isAdminPasswordVisible ? 'text' : 'password'}
+                        name="password"
+                        value={adminPassword}
+                        onChange={(e) => {
+                          setAdminPassword(e.target.value);
+                          if (adminError) setAdminError('');
+                        }}
+                        autoComplete="current-password"
+                        required
+                        className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 pr-12 focus:ring-2 focus:ring-brand-red outline-none transition-all" 
+                        placeholder="••••••••"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setIsAdminPasswordVisible((current) => !current)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-brand-black transition-colors"
+                        aria-label={isAdminPasswordVisible ? 'Ocultar senha' : 'Ver senha'}
+                      >
+                        {isAdminPasswordVisible ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </button>
+                    </div>
                   </div>
+                  <label className="flex items-center gap-3 text-sm text-gray-600 select-none">
+                    <input
+                      type="checkbox"
+                      checked={rememberAdminAccess}
+                      onChange={(event) => {
+                        const next = event.target.checked;
+                        setRememberAdminAccess(next);
+                        persistRememberAdminAccess(next);
+                        if (!next) {
+                          persistSavedAdminEmail('');
+                        }
+                      }}
+                      className="h-4 w-4 accent-brand-red"
+                    />
+                    Salvar senha e acesso neste navegador
+                  </label>
+                  <p className="-mt-4 text-xs text-gray-400">
+                    Ao entrar, seu navegador pode sugerir salvar a senha automaticamente.
+                  </p>
                   {adminError && (
                     <p className="text-sm font-semibold text-red-600 text-center">
                       {adminError}
