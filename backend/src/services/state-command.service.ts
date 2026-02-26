@@ -140,6 +140,15 @@ const pushCleaningMovement = (
 };
 
 const applySaleRegister = (state: FrontAppState, command: Extract<StateCommandInput, { type: 'SALE_REGISTER' }>) => {
+  if (command.clientSaleId) {
+    const alreadyRegistered =
+      state.sales.some((sale) => sale.id === command.clientSaleId) ||
+      state.globalSales.some((sale) => sale.id === command.clientSaleId);
+    if (alreadyRegistered) {
+      return;
+    }
+  }
+
   const product = state.products.find((entry) => entry.id === command.productId);
   if (!product) {
     throw new HttpError(404, 'Produto não encontrado para venda.');
@@ -170,7 +179,7 @@ const applySaleRegister = (state: FrontAppState, command: Extract<StateCommandIn
   }
 
   const timestamp = toTimestampIso();
-  const saleId = createId('s');
+  const saleId = command.clientSaleId || createId('s');
   const finalPrice = command.priceOverride !== undefined ? command.priceOverride : product.price;
   const baseCostInfo = calculateRecipeCost(state.ingredients, product.recipe);
   const baseCost = baseCostInfo.missingIngredientIds.length > 0 ? undefined : baseCostInfo.totalCost;

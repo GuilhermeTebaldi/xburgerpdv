@@ -24,11 +24,30 @@ import {
   RecipeItem,
 } from './types';
 import { DEFAULT_APP_STATE, loadAppState, type AppState } from './data/appStorage';
-import { runStateCommand, type StateCommand } from './data/stateCommandClient';
+import {
+  runStateCommand,
+  StateCommandSyncError,
+  type StateCommand,
+} from './data/stateCommandClient';
 
 const ADMIN_GATE_KEY = 'lanchesdoben_admin_gate';
 const ADMIN_SESSION_KEY = 'lanchesdoben_admin_session';
 const ADMIN_SESSION_BACKUP_KEY = 'lanchesdoben_admin_session_backup';
+const OFFLINE_SALE_QUEUE_KEY = 'qb_offline_sale_queue_v1';
+
+type SaleRegisterCommand = Extract<StateCommand, { type: 'SALE_REGISTER' }>;
+
+interface OfflineQueuedSale {
+  command: SaleRegisterCommand;
+  queuedAt: string;
+  attempts: number;
+  lastError?: string;
+}
+
+interface RunCommandOptions {
+  skipOfflineQueue?: boolean;
+  silentSuccessNotification?: boolean;
+}
 
 interface AdminSessionBarrier {
   token: string;
@@ -119,6 +138,141 @@ const resolveSiteRootUrl = () => {
   return `${origin}/`;
 };
 
+const createClientId = (prefix: string): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `${prefix}-${crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
+const isSaleRegisterCommand = (command: StateCommand): command is SaleRegisterCommand =>
+  command.type === 'SALE_REGISTER';
+
+const ensureSaleCommandIdentifiers = (command: SaleRegisterCommand): SaleRegisterCommand => ({
+  ...command,
+  commandId: command.commandId?.trim() || createClientId('cmd'),
+  clientSaleId: command.clientSaleId?.trim() || createClientId('sale'),
+});
+
+const getStateSyncErrorMessage = (error: unknown): string => {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  return 'Falha ao sincronizar com o servidor. Tente novamente.';
+};
+
+const isRetryableSyncError = (error: unknown): boolean => {
+  if (error instanceof StateCommandSyncError) {
+    return error.retryable;
+  }
+  if (error instanceof Error) {
+    const normalizedMessage = error.message.toLowerCase();
+    return (
+      normalizedMessage.includes('network') ||
+      normalizedMessage.includes('fetch') ||
+      normalizedMessage.includes('timeout') ||
+      normalizedMessage.includes('conex')
+    );
+  }
+  return false;
+};
+
+const normalizeRecipeOverride = (value: unknown): RecipeItem[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+
+  const normalized = value
+    .map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const candidate = item as Record<string, unknown>;
+      const ingredientId =
+        typeof candidate.ingredientId === 'string' ? candidate.ingredientId.trim() : '';
+      const quantity = Number(candidate.quantity);
+
+      if (!ingredientId || !Number.isFinite(quantity) || quantity <= 0) {
+        return null;
+      }
+
+      return {
+        ingredientId,
+        quantity,
+      };
+    })
+    .filter((item): item is RecipeItem => item !== null);
+
+  return normalized.length > 0 ? normalized : undefined;
+};
+
+const normalizeQueuedSale = (value: unknown): OfflineQueuedSale | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const commandRecord =
+    record.command && typeof record.command === 'object' && !Array.isArray(record.command)
+      ? (record.command as Record<string, unknown>)
+      : null;
+  if (!commandRecord || commandRecord.type !== 'SALE_REGISTER') return null;
+
+  const productId = typeof commandRecord.productId === 'string' ? commandRecord.productId.trim() : '';
+  if (!productId) return null;
+
+  const recipeOverride = normalizeRecipeOverride(commandRecord.recipeOverride);
+  const priceOverrideRaw = Number(commandRecord.priceOverride);
+  const priceOverride =
+    Number.isFinite(priceOverrideRaw) && priceOverrideRaw >= 0 ? priceOverrideRaw : undefined;
+
+  const command = ensureSaleCommandIdentifiers({
+    type: 'SALE_REGISTER',
+    productId,
+    recipeOverride,
+    priceOverride,
+    commandId: typeof commandRecord.commandId === 'string' ? commandRecord.commandId : undefined,
+    clientSaleId:
+      typeof commandRecord.clientSaleId === 'string' ? commandRecord.clientSaleId : undefined,
+  });
+
+  const queuedAtCandidate =
+    typeof record.queuedAt === 'string' && !Number.isNaN(Date.parse(record.queuedAt))
+      ? record.queuedAt
+      : new Date().toISOString();
+  const attemptsCandidate = Number(record.attempts);
+  const attempts =
+    Number.isFinite(attemptsCandidate) && attemptsCandidate >= 0 ? Math.floor(attemptsCandidate) : 0;
+  const lastError =
+    typeof record.lastError === 'string' && record.lastError.trim() ? record.lastError : undefined;
+
+  return {
+    command,
+    queuedAt: queuedAtCandidate,
+    attempts,
+    lastError,
+  };
+};
+
+const loadOfflineSaleQueue = (): OfflineQueuedSale[] => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(OFFLINE_SALE_QUEUE_KEY);
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((item) => normalizeQueuedSale(item))
+      .filter((item): item is OfflineQueuedSale => item !== null);
+  } catch {
+    return [];
+  }
+};
+
+const saveOfflineSaleQueue = (queue: OfflineQueuedSale[]): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(OFFLINE_SALE_QUEUE_KEY, JSON.stringify(queue));
+  } catch {
+    // ignore storage write failures
+  }
+};
+
 const App: React.FC = () => {
   const [view, setView] = useState<ViewMode>(ViewMode.POS);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
@@ -127,7 +281,11 @@ const App: React.FC = () => {
   const [isAccessVerified, setIsAccessVerified] = useState(false);
   const [isStateHydrating, setIsStateHydrating] = useState(true);
   const [pendingStateOps, setPendingStateOps] = useState(0);
+  const [pendingOfflineSales, setPendingOfflineSales] = useState(0);
   const commandQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const offlineSalesQueueRef = useRef<OfflineQueuedSale[]>([]);
+  const isFlushingOfflineSalesRef = useRef(false);
+  const isOfflineQueueHydratedRef = useRef(false);
   
   const [ingredients, setIngredients] = useState<Ingredient[]>(DEFAULT_APP_STATE.ingredients);
   const [products, setProducts] = useState<Product[]>(DEFAULT_APP_STATE.products);
@@ -270,6 +428,49 @@ const App: React.FC = () => {
     setNotification({ isVisible: true, message });
   };
 
+  const replaceOfflineSalesQueue = useCallback((nextQueue: OfflineQueuedSale[]) => {
+    offlineSalesQueueRef.current = nextQueue;
+    setPendingOfflineSales(nextQueue.length);
+    saveOfflineSaleQueue(nextQueue);
+    isOfflineQueueHydratedRef.current = true;
+  }, []);
+
+  const hydrateOfflineSalesQueue = useCallback(() => {
+    if (isOfflineQueueHydratedRef.current) return;
+    const loadedQueue = loadOfflineSaleQueue();
+    offlineSalesQueueRef.current = loadedQueue;
+    setPendingOfflineSales(loadedQueue.length);
+    isOfflineQueueHydratedRef.current = true;
+  }, []);
+
+  const queueOfflineSale = useCallback(
+    (command: SaleRegisterCommand, errorMessage: string) => {
+      hydrateOfflineSalesQueue();
+      const dedupeKey = command.clientSaleId || command.commandId;
+      const alreadyQueued = offlineSalesQueueRef.current.some((item) => {
+        const queuedKey = item.command.clientSaleId || item.command.commandId;
+        return Boolean(dedupeKey && queuedKey && dedupeKey === queuedKey);
+      });
+
+      if (!alreadyQueued) {
+        replaceOfflineSalesQueue([
+          ...offlineSalesQueueRef.current,
+          {
+            command,
+            queuedAt: new Date().toISOString(),
+            attempts: 0,
+            lastError: errorMessage,
+          },
+        ]);
+      }
+    },
+    [hydrateOfflineSalesQueue, replaceOfflineSalesQueue]
+  );
+
+  useEffect(() => {
+    hydrateOfflineSalesQueue();
+  }, [hydrateOfflineSalesQueue]);
+
   const applyStateSnapshot = useCallback((state: AppState) => {
     setIngredients(state.ingredients);
     setProducts(state.products);
@@ -283,24 +484,17 @@ const App: React.FC = () => {
     setGlobalCleaningStockEntries(state.globalCleaningStockEntries);
   }, []);
 
-  const runCommandWithSync = useCallback(
-    async (command: StateCommand, successMessage?: string): Promise<boolean> => {
+  const executeSyncedCommand = useCallback(
+    async (command: StateCommand): Promise<{ ok: true } | { ok: false; error: unknown }> => {
       setPendingStateOps((current) => current + 1);
-      const executeCommand = async (): Promise<boolean> => {
+
+      const executeCommand = async (): Promise<{ ok: true } | { ok: false; error: unknown }> => {
         try {
           const nextState = await runStateCommand(command);
           applyStateSnapshot(nextState);
-          if (successMessage) {
-            showNotification(successMessage);
-          }
-          return true;
+          return { ok: true };
         } catch (error) {
-          const message =
-            error instanceof Error && error.message.trim()
-              ? error.message
-              : 'Falha ao sincronizar com o servidor. Tente novamente.';
-          showNotification(message);
-          return false;
+          return { ok: false, error };
         } finally {
           setPendingStateOps((current) => Math.max(0, current - 1));
         }
@@ -321,10 +515,128 @@ const App: React.FC = () => {
     [applyStateSnapshot]
   );
 
-  const isSyncIndicatorVisible = isStateHydrating || pendingStateOps > 0;
+  const runCommandWithSync = useCallback(
+    async (
+      command: StateCommand,
+      successMessage?: string,
+      options: RunCommandOptions = {}
+    ): Promise<boolean> => {
+      const normalizedCommand = isSaleRegisterCommand(command)
+        ? ensureSaleCommandIdentifiers(command)
+        : command;
+      const result = await executeSyncedCommand(normalizedCommand);
+
+      if (result.ok) {
+        if (successMessage && !options.silentSuccessNotification) {
+          showNotification(successMessage);
+        }
+        return true;
+      }
+
+      const message = getStateSyncErrorMessage(result.error);
+      const shouldQueueOfflineSale =
+        !options.skipOfflineQueue &&
+        isSaleRegisterCommand(normalizedCommand) &&
+        isRetryableSyncError(result.error);
+
+      if (shouldQueueOfflineSale) {
+        queueOfflineSale(normalizedCommand, message);
+        showNotification(
+          `Sem internet. Venda guardada no navegador (${offlineSalesQueueRef.current.length} pendente(s)).`
+        );
+        return true;
+      }
+
+      showNotification(message);
+      return false;
+    },
+    [executeSyncedCommand, queueOfflineSale]
+  );
+
+  const flushOfflineSalesQueue = useCallback(async (): Promise<void> => {
+    hydrateOfflineSalesQueue();
+    if (isStateHydrating) return;
+    if (isFlushingOfflineSalesRef.current) return;
+    if (offlineSalesQueueRef.current.length === 0) return;
+
+    isFlushingOfflineSalesRef.current = true;
+    let syncedCount = 0;
+
+    try {
+      while (offlineSalesQueueRef.current.length > 0) {
+        const current = offlineSalesQueueRef.current[0];
+        const result = await executeSyncedCommand(current.command);
+
+        if (result.ok) {
+          syncedCount += 1;
+          replaceOfflineSalesQueue(offlineSalesQueueRef.current.slice(1));
+          continue;
+        }
+
+        const errorMessage = getStateSyncErrorMessage(result.error);
+        if (isRetryableSyncError(result.error)) {
+          const updatedHead: OfflineQueuedSale = {
+            ...current,
+            attempts: current.attempts + 1,
+            lastError: errorMessage,
+          };
+          replaceOfflineSalesQueue([
+            updatedHead,
+            ...offlineSalesQueueRef.current.slice(1),
+          ]);
+          break;
+        }
+
+        const failedProductName =
+          products.find((product) => product.id === current.command.productId)?.name ||
+          current.command.productId;
+        showNotification(
+          `Falha permanente ao sincronizar venda pendente (${failedProductName}). Removida da fila.`
+        );
+        replaceOfflineSalesQueue(offlineSalesQueueRef.current.slice(1));
+      }
+    } finally {
+      isFlushingOfflineSalesRef.current = false;
+      if (syncedCount > 0) {
+        showNotification(`${syncedCount} venda(s) offline sincronizada(s).`);
+      }
+    }
+  }, [executeSyncedCommand, hydrateOfflineSalesQueue, isStateHydrating, products, replaceOfflineSalesQueue]);
+
+  useEffect(() => {
+    if (!isAccessVerified || isStateHydrating) return;
+    if (offlineSalesQueueRef.current.length === 0) return;
+    void flushOfflineSalesQueue();
+  }, [isAccessVerified, isStateHydrating, pendingOfflineSales, flushOfflineSalesQueue]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleOnline = () => {
+      void flushOfflineSalesQueue();
+    };
+
+    window.addEventListener('online', handleOnline);
+    const intervalId = window.setInterval(() => {
+      if (offlineSalesQueueRef.current.length === 0) return;
+      void flushOfflineSalesQueue();
+    }, 12000);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.clearInterval(intervalId);
+    };
+  }, [flushOfflineSalesQueue]);
+
+  const totalPendingOps = pendingStateOps + pendingOfflineSales;
+  const isSyncIndicatorVisible = isStateHydrating || totalPendingOps > 0;
   const syncIndicatorMessage = isStateHydrating
     ? 'Carregando dados do servidor...'
-    : 'Aguardando resposta do banco/API...';
+    : pendingStateOps > 0
+      ? 'Aguardando resposta do banco/API...'
+      : pendingOfflineSales > 0
+        ? `Sem internet estável. ${pendingOfflineSales} venda(s) aguardando envio.`
+        : 'Sistema sincronizado.';
 
   const handleAdminLogin = useCallback((success: boolean) => {
     if (!success) return;
@@ -530,7 +842,7 @@ const App: React.FC = () => {
       <SyncStatusOverlay
         visible={isSyncIndicatorVisible}
         message={syncIndicatorMessage}
-        pendingCount={Math.max(1, pendingStateOps)}
+        pendingCount={Math.max(1, totalPendingOps)}
       />
       
       <main className="qb-main flex-1 pb-20">

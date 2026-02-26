@@ -65,6 +65,27 @@ test('sale register and undo keep stock and history consistent', () => {
   assert.equal(undone.ingredients.find((entry) => entry.id === 'i-sauce')?.currentStock, 200);
 });
 
+test('sale register is idempotent when clientSaleId is retried', () => {
+  const base = createBaseState();
+  const command = {
+    type: 'SALE_REGISTER',
+    productId: 'p-burger',
+    clientSaleId: 'sale-client-001',
+  } as const;
+
+  const first = applyStateCommand(base, command);
+  const retried = applyStateCommand(first, command);
+
+  assert.equal(retried.sales.length, 1);
+  assert.equal(retried.globalSales.length, 1);
+  assert.equal(retried.stockEntries.length, 3);
+  assert.equal(retried.globalStockEntries.length, 3);
+  assert.equal(retried.sales[0]?.id, 'sale-client-001');
+  assert.equal(retried.ingredients.find((entry) => entry.id === 'i-bread')?.currentStock, 49);
+  assert.equal(retried.ingredients.find((entry) => entry.id === 'i-meat')?.currentStock, 39);
+  assert.equal(retried.ingredients.find((entry) => entry.id === 'i-sauce')?.currentStock, 180);
+});
+
 test('deleting ingredient updates products recipes without touching unrelated data', () => {
   const base = createBaseState();
   const next = applyStateCommand(base, {

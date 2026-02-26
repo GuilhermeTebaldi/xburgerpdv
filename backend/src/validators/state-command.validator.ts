@@ -57,6 +57,7 @@ const saleRegisterCommandSchema = baseCommandSchema.extend({
   productId: idSchema,
   recipeOverride: z.array(recipeItemSchema).min(1).optional(),
   priceOverride: z.coerce.number().finite().min(0).optional(),
+  clientSaleId: idSchema.optional(),
 });
 
 const saleUndoCommandSchema = baseCommandSchema.extend({

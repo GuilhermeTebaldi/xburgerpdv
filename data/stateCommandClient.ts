@@ -13,12 +13,31 @@ type BaseCommand = {
   commandId?: string;
 };
 
+interface StateCommandSyncErrorOptions {
+  statusCode?: number;
+  retryable?: boolean;
+  cause?: unknown;
+}
+
+export class StateCommandSyncError extends Error {
+  readonly statusCode?: number;
+  readonly retryable: boolean;
+
+  constructor(message: string, options: StateCommandSyncErrorOptions = {}) {
+    super(message, options.cause ? { cause: options.cause } : undefined);
+    this.name = 'StateCommandSyncError';
+    this.statusCode = options.statusCode;
+    this.retryable = options.retryable ?? false;
+  }
+}
+
 export type StateCommand =
   | (BaseCommand & {
       type: 'SALE_REGISTER';
       productId: string;
       recipeOverride?: RecipeItem[];
       priceOverride?: number;
+      clientSaleId?: string;
     })
   | (BaseCommand & { type: 'SALE_UNDO_LAST' })
   | (BaseCommand & { type: 'INGREDIENT_STOCK_MOVE'; ingredientId: string; amount: number })
@@ -63,6 +82,28 @@ const getStateApiUrl = (): string => {
 
 const getStateCommandsApiUrl = (): string => `${getStateApiUrl()}/commands`;
 
+const isRetryableHttpStatus = (statusCode: number): boolean =>
+  statusCode === 408 || statusCode === 425 || statusCode === 429 || statusCode >= 500;
+
+const asRetryableNetworkError = (error: unknown): StateCommandSyncError => {
+  if (error instanceof StateCommandSyncError) return error;
+  const isAbortError =
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error as { name?: string }).name === 'AbortError';
+  if (isAbortError) {
+    return new StateCommandSyncError('Tempo limite ao comunicar com o servidor.', {
+      retryable: true,
+      cause: error,
+    });
+  }
+  return new StateCommandSyncError('Falha de conexão com o servidor.', {
+    retryable: true,
+    cause: error,
+  });
+};
+
 const fetchWithTimeout = async (
   input: RequestInfo | URL,
   init: RequestInit = {},
@@ -72,10 +113,14 @@ const fetchWithTimeout = async (
   const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return await fetch(input, {
-      ...init,
-      signal: controller.signal,
-    });
+    try {
+      return await fetch(input, {
+        ...init,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      throw asRetryableNetworkError(error);
+    }
   } finally {
     globalThis.clearTimeout(timer);
   }
@@ -154,6 +199,14 @@ const readApiErrorMessage = async (response: Response): Promise<string> => {
   }
 };
 
+const toApiError = async (response: Response): Promise<StateCommandSyncError> => {
+  const message = await readApiErrorMessage(response);
+  return new StateCommandSyncError(message, {
+    statusCode: response.status,
+    retryable: isRetryableHttpStatus(response.status),
+  });
+};
+
 const withCommandId = (command: StateCommand): StateCommand => {
   if (command.commandId && command.commandId.trim()) {
     return command;
@@ -173,8 +226,7 @@ const refreshWriteContext = async (): Promise<void> => {
   });
 
   if (!response.ok) {
-    const errorMessage = await readApiErrorMessage(response);
-    throw new Error(errorMessage);
+    throw await toApiError(response);
   }
 
   writeContext = readContextFromResponse(response);
@@ -190,7 +242,7 @@ export const runStateCommand = async (command: StateCommand): Promise<AppState> 
 
     const context = writeContext;
     if (!context) {
-      throw new Error('Contexto de escrita indisponível.');
+      throw new StateCommandSyncError('Contexto de escrita indisponível.');
     }
 
     const response = await fetchWithTimeout(getStateCommandsApiUrl(), {
@@ -215,9 +267,8 @@ export const runStateCommand = async (command: StateCommand): Promise<AppState> 
       continue;
     }
 
-    const errorMessage = await readApiErrorMessage(response);
-    throw new Error(errorMessage);
+    throw await toApiError(response);
   }
 
-  throw new Error('Não foi possível sincronizar o comando de estado.');
+  throw new StateCommandSyncError('Não foi possível sincronizar o comando de estado.');
 };
