@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { ComboItem, Ingredient, Product, RecipeItem } from '../types';
-import { buildRecipeFromComboItems } from '../utils/recipe';
+import { aggregateRecipe, buildRecipeFromComboItems } from '../utils/recipe';
 import ComboItemsBuilder from './ComboItemsBuilder';
 
 interface EditProductModalProps {
@@ -12,6 +12,64 @@ interface EditProductModalProps {
   onClose: () => void;
   onSave: (product: Product) => void;
 }
+
+const recipeTotalsToItems = (totals: Record<string, number>): RecipeItem[] => {
+  return Object.entries(totals)
+    .filter(([, quantity]) => Number.isFinite(quantity) && quantity > 0)
+    .map(([ingredientId, quantity]) => ({ ingredientId, quantity }))
+    .sort((a, b) => a.ingredientId.localeCompare(b.ingredientId));
+};
+
+const combineRecipes = (...recipes: RecipeItem[][]): RecipeItem[] => {
+  const totals: Record<string, number> = {};
+
+  recipes.forEach((recipe) => {
+    const partialTotals = aggregateRecipe(recipe);
+    Object.entries(partialTotals).forEach(([ingredientId, quantity]) => {
+      totals[ingredientId] = (totals[ingredientId] || 0) + quantity;
+    });
+  });
+
+  return recipeTotalsToItems(totals);
+};
+
+const subtractRecipe = (source: RecipeItem[], subtracting: RecipeItem[]): RecipeItem[] => {
+  const sourceTotals = aggregateRecipe(source);
+  const subtractingTotals = aggregateRecipe(subtracting);
+  const resultTotals: Record<string, number> = {};
+
+  Object.entries(sourceTotals).forEach(([ingredientId, sourceQty]) => {
+    const remaining = sourceQty - (subtractingTotals[ingredientId] || 0);
+    if (remaining > 0) {
+      resultTotals[ingredientId] = remaining;
+    }
+  });
+
+  return recipeTotalsToItems(resultTotals);
+};
+
+const updateRecipeItemQuantity = (
+  currentRecipe: RecipeItem[],
+  ingredientId: string,
+  delta: number
+): RecipeItem[] => {
+  const existing = currentRecipe.find((item) => item.ingredientId === ingredientId);
+  if (existing) {
+    const newQty = Math.max(0, existing.quantity + delta);
+    if (newQty === 0) {
+      return currentRecipe.filter((item) => item.ingredientId !== ingredientId);
+    }
+    return currentRecipe.map((item) =>
+      item.ingredientId === ingredientId ? { ...item, quantity: newQty } : item
+    );
+  }
+
+  if (delta > 0) {
+    return [...currentRecipe, { ingredientId, quantity: delta }];
+  }
+
+  return currentRecipe;
+};
 
 const EditProductModal: React.FC<EditProductModalProps> = ({
   isOpen,
@@ -27,7 +85,9 @@ const EditProductModal: React.FC<EditProductModalProps> = ({
   const [imageUrl, setImageUrl] = useState('');
   const [recipe, setRecipe] = useState<RecipeItem[]>([]);
   const [comboItems, setComboItems] = useState<ComboItem[]>([]);
+  const [comboExtraRecipe, setComboExtraRecipe] = useState<RecipeItem[]>([]);
   const [hasTouchedComboItems, setHasTouchedComboItems] = useState(false);
+  const [hasTouchedComboExtras, setHasTouchedComboExtras] = useState(false);
 
   useEffect(() => {
     if (!product) return;
@@ -36,8 +96,21 @@ const EditProductModal: React.FC<EditProductModalProps> = ({
     setCategory(product.category);
     setImageUrl(product.imageUrl);
     setRecipe(product.recipe);
-    setComboItems(product.comboItems || []);
+    const initialComboItems = product.comboItems || [];
+    setComboItems(initialComboItems);
+    const initialComboBaseRecipe = buildRecipeFromComboItems(
+      products.filter((item) => item.id !== product.id),
+      initialComboItems
+    );
+    setComboExtraRecipe(
+      product.category === 'Combo'
+        ? initialComboItems.length > 0
+          ? subtractRecipe(product.recipe, initialComboBaseRecipe)
+          : product.recipe
+        : []
+    );
     setHasTouchedComboItems(false);
+    setHasTouchedComboExtras(false);
   }, [product]);
 
   const currentProductId = product?.id ?? null;
@@ -49,33 +122,81 @@ const EditProductModal: React.FC<EditProductModalProps> = ({
       comboItems
     );
   }, [products, comboItems, currentProductId]);
+  const comboRecipeWithExtras = useMemo(
+    () => combineRecipes(comboRecipe, comboExtraRecipe),
+    [comboRecipe, comboExtraRecipe]
+  );
 
   const isCombo = category === 'Combo';
   const isLegacyCombo = product?.category === 'Combo' && (product.comboItems?.length || 0) === 0;
-  const shouldKeepLegacyRecipe = isCombo && isLegacyCombo && !hasTouchedComboItems && comboItems.length === 0;
-  const recipeToPersist = isCombo ? (shouldKeepLegacyRecipe ? recipe : comboRecipe) : recipe;
+  const shouldKeepLegacyRecipe =
+    isCombo && isLegacyCombo && !hasTouchedComboItems && !hasTouchedComboExtras && comboItems.length === 0;
+  const recipeToPersist = isCombo ? (shouldKeepLegacyRecipe ? recipe : comboRecipeWithExtras) : recipe;
 
   if (!isOpen || !product) return null;
 
   const handleComboItemsChange = (items: ComboItem[]) => {
+    if (isLegacyCombo && !hasTouchedComboItems && !hasTouchedComboExtras && comboItems.length === 0 && items.length > 0) {
+      setComboExtraRecipe([]);
+    }
     setHasTouchedComboItems(true);
     setComboItems(items);
   };
 
   const handleUpdateRecipe = (ingredientId: string, delta: number) => {
-    setRecipe(prev => {
-      const existing = prev.find(item => item.ingredientId === ingredientId);
-      if (existing) {
-        const newQty = Math.max(0, existing.quantity + delta);
-        if (newQty === 0) {
-          return prev.filter(item => item.ingredientId !== ingredientId);
-        }
-        return prev.map(item => item.ingredientId === ingredientId ? { ...item, quantity: newQty } : item);
-      } else if (delta > 0) {
-        return [...prev, { ingredientId, quantity: delta }];
-      }
-      return prev;
-    });
+    setRecipe((prev) => updateRecipeItemQuantity(prev, ingredientId, delta));
+  };
+
+  const handleUpdateComboExtraRecipe = (ingredientId: string, delta: number) => {
+    setHasTouchedComboExtras(true);
+    setComboExtraRecipe((prev) => updateRecipeItemQuantity(prev, ingredientId, delta));
+  };
+
+  const renderIngredientSelector = (
+    selectedRecipe: RecipeItem[],
+    onUpdateRecipe: (ingredientId: string, delta: number) => void
+  ) => {
+    const selectedQuantities = new Map<string, number>(
+      selectedRecipe.map((item): [string, number] => [item.ingredientId, item.quantity])
+    );
+
+    return (
+      <div className="qb-recipe-grid grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {ingredients.map((ing) => {
+          const qty = selectedQuantities.get(ing.id) || 0;
+          return (
+            <div
+              key={ing.id}
+              className={`qb-recipe-item p-3 rounded-2xl border-2 transition-all flex items-center justify-between ${
+                qty > 0 ? 'border-red-500 bg-red-50/30' : 'border-slate-100 bg-white'
+              }`}
+            >
+              <div className="flex-1 min-w-0 pr-2">
+                <p className="font-extrabold text-slate-800 text-sm truncate uppercase">{ing.name}</p>
+                <p className="text-[9px] font-bold text-slate-400 uppercase">{ing.unit}</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => onUpdateRecipe(ing.id, -1)}
+                  className="qb-btn-touch w-8 h-8 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center font-black"
+                >
+                  -
+                </button>
+                <span className="font-black text-slate-800 min-w-[15px] text-center">{qty}</span>
+                <button
+                  type="button"
+                  onClick={() => onUpdateRecipe(ing.id, 1)}
+                  className="qb-btn-touch w-8 h-8 rounded-xl bg-red-600 text-white flex items-center justify-center font-black"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -172,7 +293,9 @@ const EditProductModal: React.FC<EditProductModalProps> = ({
                 {isCombo ? 'Montagem do Combo (Produtos)' : 'Montagem da Receita (Ingredientes)'}
               </label>
               <span className="text-[10px] font-black text-red-500 uppercase">
-                {isCombo ? `${comboItems.length} Produtos Selecionados` : `${recipe.length} Itens Selecionados`}
+                {isCombo
+                  ? `${comboItems.length} Produtos + ${comboExtraRecipe.length} Extras`
+                  : `${recipe.length} Itens Selecionados`}
               </span>
             </div>
 
@@ -185,45 +308,25 @@ const EditProductModal: React.FC<EditProductModalProps> = ({
                   currentProductId={product.id}
                 />
                 <div className="rounded-2xl bg-slate-100 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">
-                  Receita gerada automaticamente: {recipeToPersist.length} insumos
+                  Insumos vindos dos produtos do combo: {comboRecipe.length}
+                </div>
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      Ingredientes Extras do Combo (Opcional)
+                    </label>
+                    <span className="text-[10px] font-black text-red-500 uppercase">
+                      {comboExtraRecipe.length} Itens Extras
+                    </span>
+                  </div>
+                  {renderIngredientSelector(comboExtraRecipe, handleUpdateComboExtraRecipe)}
+                </div>
+                <div className="rounded-2xl bg-slate-100 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                  Receita final do combo: {recipeToPersist.length} insumos
                 </div>
               </>
             ) : (
-              <div className="qb-recipe-grid grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {ingredients.map((ing) => {
-                  const qty = recipe.find((r) => r.ingredientId === ing.id)?.quantity || 0;
-                  return (
-                    <div
-                      key={ing.id}
-                      className={`qb-recipe-item p-3 rounded-2xl border-2 transition-all flex items-center justify-between ${
-                        qty > 0 ? 'border-red-500 bg-red-50/30' : 'border-slate-100 bg-white'
-                      }`}
-                    >
-                      <div className="flex-1 min-w-0 pr-2">
-                        <p className="font-extrabold text-slate-800 text-sm truncate uppercase">{ing.name}</p>
-                        <p className="text-[9px] font-bold text-slate-400 uppercase">{ing.unit}</p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <button
-                          type="button"
-                          onClick={() => handleUpdateRecipe(ing.id, -1)}
-                          className="qb-btn-touch w-8 h-8 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center font-black"
-                        >
-                          -
-                        </button>
-                        <span className="font-black text-slate-800 min-w-[15px] text-center">{qty}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleUpdateRecipe(ing.id, 1)}
-                          className="qb-btn-touch w-8 h-8 rounded-xl bg-red-600 text-white flex items-center justify-center font-black"
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              renderIngredientSelector(recipe, handleUpdateRecipe)
             )}
           </div>
 
