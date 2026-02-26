@@ -5,6 +5,8 @@ import {
   allowsFractionalStockInput,
   formatIngredientStockQuantity,
   formatStockQuantityByUnit,
+  getStockInputUnitLabel,
+  getStockQuantityFromInputQuantity,
   getStockInputStep,
 } from '../utils/recipe';
 
@@ -30,9 +32,12 @@ const parseStockMoveAmount = (
   const allowsFractional = allowsFractionalStockInput(ingredient);
   if (!allowsFractional && !Number.isInteger(parsed)) return null;
 
-  const normalizedAmount = allowsFractional ? Number(parsed.toFixed(6)) : Math.trunc(parsed);
-  if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) return null;
-  return normalizedAmount;
+  const normalizedInputAmount = allowsFractional ? Number(parsed.toFixed(6)) : Math.trunc(parsed);
+  if (!Number.isFinite(normalizedInputAmount) || normalizedInputAmount <= 0) return null;
+
+  const stockAmount = getStockQuantityFromInputQuantity(ingredient, normalizedInputAmount);
+  if (!Number.isFinite(stockAmount) || stockAmount <= 0) return null;
+  return Number(stockAmount.toFixed(6));
 };
 
 const InventoryManager: React.FC<InventoryManagerProps> = ({
@@ -172,6 +177,7 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
           const canReplenish = parsedValue !== null;
           const canConsume =
             parsedValue !== null && ing.currentStock + Number.EPSILON >= parsedValue;
+          const inputUnitLabel = getStockInputUnitLabel(ing);
 
           return (
             <div 
@@ -262,7 +268,7 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
                     inputMode="decimal"
                     value={inputValue}
                     onChange={(e) => handleInputChange(ing.id, e.target.value)}
-                    placeholder="Qtd"
+                    placeholder={`Qtd (${inputUnitLabel})`}
                     className="w-full bg-slate-100 border-none rounded-2xl px-4 py-2 font-black text-slate-800 focus:ring-2 focus:ring-red-500 placeholder:text-slate-300"
                   />
                   <button 

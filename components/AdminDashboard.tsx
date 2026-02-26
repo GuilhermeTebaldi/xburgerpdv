@@ -8,6 +8,7 @@ import {
   Sale,
   StockEntry,
 } from '../types';
+import { formatIngredientStockQuantity, formatStockQuantityByUnit } from '../utils/recipe';
 import AdminSalesAnalyticsTab from './AdminSalesAnalyticsTab';
 
 interface AdminDashboardProps {
@@ -78,6 +79,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const totalProfit = totalRevenue - totalCost;
   const totalCleaningStockValue = useMemo(
     () => cleaningMaterials.reduce((sum, material) => sum + material.currentStock * material.cost, 0),
+    [cleaningMaterials]
+  );
+  const ingredientsById = useMemo(
+    () => new Map(allIngredients.map((ingredient) => [ingredient.id, ingredient])),
+    [allIngredients]
+  );
+  const cleaningMaterialsById = useMemo(
+    () => new Map(cleaningMaterials.map((material) => [material.id, material])),
     [cleaningMaterials]
   );
 
@@ -878,6 +887,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                   <tbody className="divide-y divide-slate-50">
                                     {materialsGroups[month][day].slice().reverse().map(entry => {
                                       const isOut = entry.quantity < 0;
+                                      const material = cleaningMaterialsById.get(entry.materialId);
+                                      const quantityLabel = material
+                                        ? formatStockQuantityByUnit(material.unit, Math.abs(entry.quantity))
+                                        : formatStockQuantityByUnit('', Math.abs(entry.quantity));
                                       const totalCost = Math.abs(entry.quantity) * (entry.unitCost ?? 0);
                                       return (
                                         <tr key={entry.id}>
@@ -887,7 +900,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                             {isOut ? 'Saída' : 'Entrada'}
                                           </td>
                                           <td className={`px-4 py-3 text-xs font-black text-right ${isOut ? 'text-red-600' : 'text-blue-600'}`}>
-                                            {isOut ? '-' : '+'}{Math.abs(entry.quantity)}
+                                            {isOut ? '-' : '+'}{quantityLabel}
+                                            {material?.unit ? ` ${material.unit}` : ''}
                                           </td>
                                           <td className="px-4 py-3 text-xs font-black text-slate-800 text-right">R$ {totalCost.toFixed(2)}</td>
                                         </tr>
@@ -998,13 +1012,17 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                   <tbody className="divide-y divide-slate-50">
                                     {stockGroups[month][day].slice().reverse().map(entry => {
                                       const isOut = entry.quantity < 0;
-                                      const displayQty = Math.abs(entry.quantity);
+                                      const ingredient = ingredientsById.get(entry.ingredientId);
+                                      const displayQty = ingredient
+                                        ? formatIngredientStockQuantity(ingredient, Math.abs(entry.quantity))
+                                        : formatStockQuantityByUnit('', Math.abs(entry.quantity));
                                       return (
                                         <tr key={entry.id}>
                                           <td className="px-4 py-3 text-xs font-bold text-slate-500">{entry.timestamp.toLocaleTimeString()}</td>
                                           <td className="px-4 py-3 font-black text-slate-800 uppercase text-xs">{entry.ingredientName}</td>
                                           <td className={`px-4 py-3 text-xs font-black text-right ${isOut ? 'text-red-600' : 'text-blue-600'}`}>
                                             {isOut ? '-' : '+'}{displayQty}
+                                            {ingredient?.unit ? ` ${ingredient.unit}` : ''}
                                           </td>
                                         </tr>
                                       );

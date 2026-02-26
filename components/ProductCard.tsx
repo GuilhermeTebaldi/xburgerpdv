@@ -119,6 +119,45 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
     });
   };
 
+  const handleSetCustomIngredientQuantity = (ingredientId: string, rawValue: string) => {
+    const normalizedRaw = rawValue.trim().replace(',', '.');
+
+    setCustomRecipe((prev) => {
+      const normalizedCurrentRecipe = normalizeRecipeItems(prev);
+      const totals = aggregateRecipe(normalizedCurrentRecipe);
+      const ingredient = allIngredients.find((item) => item.id === ingredientId);
+      if (!ingredient) return normalizedCurrentRecipe;
+
+      if (!normalizedRaw) {
+        delete totals[ingredientId];
+        return Object.entries(totals)
+          .map(([id, quantity]) => ({ ingredientId: id, quantity: normalizeRecipeQuantity(quantity) }))
+          .filter((item) => item.quantity > 0)
+          .sort((a, b) => a.ingredientId.localeCompare(b.ingredientId));
+      }
+
+      const parsed = Number(normalizedRaw);
+      if (!Number.isFinite(parsed) || parsed < 0) return normalizedCurrentRecipe;
+
+      const nextQty = normalizeRecipeQuantity(parsed);
+      const requiredStockQuantity = getStockQuantityFromRecipeQuantity(ingredient, nextQty);
+      if (ingredient.currentStock + Number.EPSILON < requiredStockQuantity) {
+        return normalizedCurrentRecipe;
+      }
+
+      if (nextQty > 0) {
+        totals[ingredientId] = nextQty;
+      } else {
+        delete totals[ingredientId];
+      }
+
+      return Object.entries(totals)
+        .map(([id, quantity]) => ({ ingredientId: id, quantity: normalizeRecipeQuantity(quantity) }))
+        .filter((item) => item.quantity > 0)
+        .sort((a, b) => a.ingredientId.localeCompare(b.ingredientId));
+    });
+  };
+
   const canIncrementCustomIngredient = (ingredient: Ingredient): boolean => {
     const totals = aggregateRecipe(customRecipe);
     const selectedQty = totals[ingredient.id] || 0;
@@ -332,7 +371,16 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
                             onClick={() => updateCustomIngredient(ing.id, -1)}
                             className="qb-btn-touch w-10 h-10 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center font-black text-xl active:scale-90"
                           >-</button>
-                          <span className="text-xl font-black min-w-[20px] text-center">{formatQuantity(currentQty)}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step={getRecipeAdjustmentStep(ing, currentQty)}
+                            inputMode="decimal"
+                            value={currentQty > 0 ? formatQuantity(currentQty) : ''}
+                            onChange={(e) => handleSetCustomIngredientQuantity(ing.id, e.target.value)}
+                            placeholder="0"
+                            className="w-20 rounded-2xl border border-slate-200 bg-white px-2 py-1 text-center text-base font-black text-slate-800 outline-none focus:border-red-400"
+                          />
                           <span className="text-[10px] font-black uppercase text-slate-400 -ml-2">
                             {recipeUnitLabel}
                           </span>

@@ -63,6 +63,31 @@ const AddProductModal: React.FC<AddProductModalProps> = ({
     });
   };
 
+  const handleSetRecipeQuantity = (ingredientId: string, rawValue: string) => {
+    const normalizedRaw = rawValue.trim().replace(',', '.');
+    if (!normalizedRaw) {
+      setRecipe((prev) => prev.filter((item) => item.ingredientId !== ingredientId));
+      return;
+    }
+
+    const parsed = Number(normalizedRaw);
+    if (!Number.isFinite(parsed) || parsed < 0) return;
+    const nextQty = normalizeRecipeQuantity(parsed);
+
+    setRecipe((prev) => {
+      const exists = prev.some((item) => item.ingredientId === ingredientId);
+      if (nextQty <= 0) {
+        return prev.filter((item) => item.ingredientId !== ingredientId);
+      }
+      if (exists) {
+        return prev.map((item) =>
+          item.ingredientId === ingredientId ? { ...item, quantity: nextQty } : item
+        );
+      }
+      return [...prev, { ingredientId, quantity: nextQty }];
+    });
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !price || !imageUrl || recipeToPersist.length === 0) {
@@ -202,9 +227,16 @@ const AddProductModal: React.FC<AddProductModalProps> = ({
                         >
                           -
                         </button>
-                        <span className="font-black text-slate-800 min-w-[15px] text-center">
-                          {formatQuantity(qty)}
-                        </span>
+                        <input
+                          type="number"
+                          min="0"
+                          step={getRecipeAdjustmentStep(ing, qty)}
+                          inputMode="decimal"
+                          value={qty > 0 ? formatQuantity(qty) : ''}
+                          onChange={(e) => handleSetRecipeQuantity(ing.id, e.target.value)}
+                          placeholder="0"
+                          className="w-20 rounded-xl border border-slate-200 bg-white px-2 py-1 text-center text-sm font-black text-slate-800 outline-none focus:border-red-400"
+                        />
                         <button
                           type="button"
                           onClick={() => handleUpdateRecipe(ing.id, 1)}

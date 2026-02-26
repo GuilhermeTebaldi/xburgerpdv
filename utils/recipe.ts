@@ -75,10 +75,27 @@ export const allowsFractionalStockInput = (ingredient: Pick<Ingredient, 'unit'>)
   return getRecipeUnitConversion(ingredient) !== null;
 };
 
+export const getStockInputUnitLabel = (ingredient: Pick<Ingredient, 'unit'>): string => {
+  const conversion = getRecipeUnitConversion(ingredient);
+  if (conversion) return conversion.recipeUnitLabel;
+  return ingredient.unit;
+};
+
+export const getStockQuantityFromInputQuantity = (
+  ingredient: Pick<Ingredient, 'unit'>,
+  inputQuantity: number
+): number => {
+  if (!Number.isFinite(inputQuantity) || inputQuantity <= 0) return 0;
+  const conversion = getRecipeUnitConversion(ingredient);
+  if (!conversion) return inputQuantity;
+  // For stock manual moves, converted units are always typed in display unit (g/ml).
+  return inputQuantity / conversion.ratio;
+};
+
 export const getStockInputStep = (ingredient: Pick<Ingredient, 'unit'>): number => {
   const conversion = getRecipeUnitConversion(ingredient);
   if (conversion) {
-    return Number((1 / conversion.ratio).toFixed(6));
+    return 1;
   }
   const unit = normalizeUnit(ingredient.unit || '');
   if (isGramUnit(unit) || isMlUnit(unit)) {
