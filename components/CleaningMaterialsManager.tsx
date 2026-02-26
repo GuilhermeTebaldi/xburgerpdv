@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { CleaningMaterial, CleaningStockEntry } from '../types';
+import { formatStockQuantityByUnit } from '../utils/recipe';
 
 interface CleaningMaterialsManagerProps {
   materials: CleaningMaterial[];
@@ -50,6 +51,10 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
   const sortedEntries = useMemo(
     () => entries.slice().sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()),
     [entries]
+  );
+  const materialsById = useMemo(
+    () => new Map(materials.map((material) => [material.id, material])),
+    [materials]
   );
 
   const handleFormChange = (field: keyof MaterialFormState, value: string) => {
@@ -164,6 +169,7 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
   const handleStockMove = (material: CleaningMaterial, direction: 'in' | 'out') => {
     const amount = Number(stockValues[material.id]);
     if (!Number.isFinite(amount) || amount <= 0) return;
+    if (direction === 'out' && material.currentStock + Number.EPSILON < amount) return;
 
     onUpdateStock(material.id, direction === 'out' ? -amount : amount);
     setStockValues((prev) => ({ ...prev, [material.id]: '' }));
@@ -269,7 +275,7 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
                         </button>
                         <div className="text-right">
                           <p className={`text-xl font-black ${isLow ? 'text-yellow-600' : 'text-slate-900'}`}>
-                            {material.currentStock}
+                            {formatStockQuantityByUnit(material.unit, material.currentStock)}
                           </p>
                           <p className="text-[10px] font-black text-slate-400 uppercase">{material.unit}</p>
                         </div>
@@ -317,6 +323,7 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
                   const inputValue = stockValues[material.id] || '';
                   const parsed = Number(inputValue);
                   const hasValidValue = Number.isFinite(parsed) && parsed > 0;
+                  const canConsume = hasValidValue && material.currentStock + Number.EPSILON >= parsed;
 
                   return (
                     <div key={material.id} className="qb-cleaning-stock-card bg-slate-50 border border-slate-200 rounded-3xl p-4 space-y-3">
@@ -340,7 +347,9 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="text-xl font-black text-slate-900">{material.currentStock}</p>
+                          <p className="text-xl font-black text-slate-900">
+                            {formatStockQuantityByUnit(material.unit, material.currentStock)}
+                          </p>
                           <p className="text-[10px] font-black text-slate-400 uppercase">{material.unit}</p>
                         </div>
                       </div>
@@ -357,7 +366,7 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
                       <div className="grid grid-cols-2 gap-2">
                         <button
                           onClick={() => handleStockMove(material, 'out')}
-                          disabled={!hasValidValue}
+                          disabled={!canConsume}
                           className="qb-btn-touch bg-slate-700 disabled:bg-slate-300 text-white py-2.5 rounded-xl text-[11px] font-black uppercase"
                         >
                           Dar Baixa
@@ -404,7 +413,10 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
                           <td className="px-3 py-3 text-xs font-black uppercase text-slate-800">{entry.materialName}</td>
                           <td className={`px-3 py-3 text-xs font-black text-right ${isOut ? 'text-red-600' : 'text-green-600'}`}>
                             {isOut ? '-' : '+'}
-                            {Math.abs(entry.quantity)}
+                            {formatStockQuantityByUnit(
+                              materialsById.get(entry.materialId)?.unit || '',
+                              Math.abs(entry.quantity)
+                            )}
                           </td>
                         </tr>
                       );

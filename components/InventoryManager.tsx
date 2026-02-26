@@ -1,6 +1,12 @@
 
 import React, { useMemo, useRef, useState } from 'react';
 import { Ingredient, StockEntry } from '../types';
+import {
+  allowsFractionalStockInput,
+  formatIngredientStockQuantity,
+  formatStockQuantityByUnit,
+  getStockInputStep,
+} from '../utils/recipe';
 
 interface InventoryManagerProps {
   ingredients: Ingredient[];
@@ -10,6 +16,24 @@ interface InventoryManagerProps {
   onEditIngredient: (ingredient: Ingredient) => void;
   onDeleteIngredient?: (id: string) => void;
 }
+
+const parseStockMoveAmount = (
+  rawValue: string,
+  ingredient: Pick<Ingredient, 'unit'>
+): number | null => {
+  const normalizedValue = rawValue.trim().replace(',', '.');
+  if (!normalizedValue) return null;
+
+  const parsed = Number(normalizedValue);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+
+  const allowsFractional = allowsFractionalStockInput(ingredient);
+  if (!allowsFractional && !Number.isInteger(parsed)) return null;
+
+  const normalizedAmount = allowsFractional ? Number(parsed.toFixed(6)) : Math.trunc(parsed);
+  if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) return null;
+  return normalizedAmount;
+};
 
 const InventoryManager: React.FC<InventoryManagerProps> = ({
   ingredients,
@@ -26,6 +50,9 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
   
   const timerRef = useRef<number | null>(null);
   const normalizedSearch = searchValue.trim().toLowerCase();
+  const ingredientsById = useMemo(() => {
+    return new Map(ingredients.map((ingredient) => [ingredient.id, ingredient]));
+  }, [ingredients]);
 
   const filteredIngredients = useMemo(() => {
     if (!normalizedSearch) return ingredients;
@@ -40,15 +67,20 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
   };
 
   const handleReplenish = (id: string) => {
-    const amount = parseInt(replenishValues[id]);
-    if (isNaN(amount) || amount <= 0) return;
+    const ingredient = ingredients.find((item) => item.id === id);
+    if (!ingredient) return;
+    const amount = parseStockMoveAmount(replenishValues[id] || '', ingredient);
+    if (amount === null) return;
     onUpdateStock(id, amount);
     setReplenishValues(prev => ({ ...prev, [id]: '' }));
   };
 
   const handleConsume = (id: string) => {
-    const amount = parseInt(replenishValues[id]);
-    if (isNaN(amount) || amount <= 0) return;
+    const ingredient = ingredients.find((item) => item.id === id);
+    if (!ingredient) return;
+    const amount = parseStockMoveAmount(replenishValues[id] || '', ingredient);
+    if (amount === null) return;
+    if (ingredient.currentStock + Number.EPSILON < amount) return;
     onUpdateStock(id, -amount);
     setReplenishValues(prev => ({ ...prev, [id]: '' }));
   };
@@ -136,8 +168,10 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
           const isCritical = ing.currentStock <= ing.minStock * 0.5;
           const isLow = ing.currentStock <= ing.minStock;
           const inputValue = replenishValues[ing.id] || '';
-          const parsedValue = parseInt(inputValue);
-          const hasValidValue = !isNaN(parsedValue) && parsedValue > 0;
+          const parsedValue = parseStockMoveAmount(inputValue, ing);
+          const canReplenish = parsedValue !== null;
+          const canConsume =
+            parsedValue !== null && ing.currentStock + Number.EPSILON >= parsedValue;
 
           return (
             <div 
@@ -198,7 +232,7 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
                   </button>
                   <div className="text-right">
                     <span className={`text-2xl font-black ${isCritical ? 'text-red-600' : isLow ? 'text-yellow-600' : 'text-slate-900'}`}>
-                      {ing.currentStock}
+                      {formatIngredientStockQuantity(ing, ing.currentStock)}
                     </span>
                     <span className="text-xs font-bold text-slate-400 ml-1 uppercase">{ing.unit}</span>
                   </div>
@@ -223,6 +257,9 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
                 <div className="qb-stock-controls flex gap-2">
                   <input 
                     type="number"
+                    min="0"
+                    step={getStockInputStep(ing)}
+                    inputMode="decimal"
                     value={inputValue}
                     onChange={(e) => handleInputChange(ing.id, e.target.value)}
                     placeholder="Qtd"
@@ -230,7 +267,7 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
                   />
                   <button 
                     onClick={() => handleConsume(ing.id)}
-                    disabled={!hasValidValue}
+                    disabled={!canConsume}
                     className="qb-btn-touch bg-slate-700 hover:bg-slate-800 disabled:bg-slate-300 text-white p-2.5 rounded-2xl font-black transition-all flex items-center justify-center min-w-[50px] shadow-sm active:scale-90"
                     title="Dar baixa no estoque (gasto)"
                   >
@@ -238,7 +275,7 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
                   </button>
                   <button 
                     onClick={() => handleReplenish(ing.id)}
-                    disabled={!hasValidValue}
+                    disabled={!canReplenish}
                     className="qb-btn-touch bg-red-600 hover:bg-red-700 disabled:bg-slate-300 text-white p-2.5 rounded-2xl font-black transition-all flex items-center justify-center min-w-[50px] shadow-sm active:scale-90"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
@@ -278,7 +315,11 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
               ) : (
                 entries.slice().reverse().map(entry => {
                   const isOut = entry.quantity < 0;
-                  const displayQty = Math.abs(entry.quantity);
+                  const ingredient = ingredientsById.get(entry.ingredientId);
+                  const unitLabel = ingredient?.unit || '';
+                  const displayQty = ingredient
+                    ? formatIngredientStockQuantity(ingredient, Math.abs(entry.quantity))
+                    : formatStockQuantityByUnit('', Math.abs(entry.quantity));
                   return (
                     <div key={entry.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                       <div className="flex items-center gap-4">
@@ -296,7 +337,7 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
                       </div>
                       <div className="text-right">
                         <p className={`text-lg font-black ${isOut ? 'text-red-600' : 'text-green-600'}`}>
-                          {isOut ? '-' : '+'}{displayQty}
+                          {isOut ? '-' : '+'}{displayQty}{unitLabel ? ` ${unitLabel}` : ''}
                         </p>
                       </div>
                     </div>

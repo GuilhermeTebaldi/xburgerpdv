@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Sale, Ingredient, StockEntry } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { formatStockQuantityByUnit, getRecipeQuantityUnitLabel } from '../utils/recipe';
 
 interface SalesSummaryProps {
   sales: Sale[];
@@ -75,6 +76,9 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({ sales, allIngredients, stoc
 
   const selectedSale = sales.find(s => s.id === selectedSaleId);
   const stockOutEntries = stockEntries.filter(entry => entry.quantity < 0);
+  const ingredientsById = new Map(allIngredients.map((ingredient) => [ingredient.id, ingredient]));
+  const formatQuantity = (value: number) =>
+    Number.isInteger(value) ? String(value) : value.toFixed(3).replace(/\.?0+$/, '');
   const selectedAdjustment = selectedSale?.priceAdjustment ?? (selectedSale?.basePrice !== undefined ? selectedSale.total - selectedSale.basePrice : 0);
   const hasPriceAdjustment = selectedSale !== undefined && Math.abs(selectedAdjustment) > 0.009;
   const basePrice = selectedSale?.basePrice;
@@ -185,22 +189,30 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({ sales, allIngredients, stoc
           <div className="qb-sales-stock-card bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm flex flex-col h-[320px]">
             <h3 className="text-lg font-black text-slate-800 mb-6 uppercase tracking-tight">Saídas de Estoque</h3>
             <div className="qb-sales-stock-content flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-hide">
-              {stockOutEntries.slice().reverse().map(entry => (
-                <div key={entry.id} className="w-full flex items-center justify-between p-4 rounded-2xl border border-slate-100 bg-slate-50">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center font-black bg-red-100 text-red-600">
-                      -
+              {stockOutEntries.slice().reverse().map((entry) => {
+                const ingredient = ingredientsById.get(entry.ingredientId);
+                const unit = ingredient?.unit || '';
+                const quantityLabel = formatStockQuantityByUnit(unit, Math.abs(entry.quantity));
+
+                return (
+                  <div key={entry.id} className="w-full flex items-center justify-between p-4 rounded-2xl border border-slate-100 bg-slate-50">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center font-black bg-red-100 text-red-600">
+                        -
+                      </div>
+                      <div>
+                        <p className="font-black text-sm uppercase tracking-tighter text-slate-800">{entry.ingredientName}</p>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{entry.timestamp.toLocaleTimeString()}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-black text-sm uppercase tracking-tighter text-slate-800">{entry.ingredientName}</p>
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{entry.timestamp.toLocaleTimeString()}</p>
+                    <div className="text-right">
+                      <p className="font-black text-sm text-red-600">
+                        -{quantityLabel}{unit ? ` ${unit}` : ''}
+                      </p>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="font-black text-sm text-red-600">-{Math.abs(entry.quantity)}</p>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
               {stockOutEntries.length === 0 && (
                 <div className="flex flex-col items-center justify-center h-full py-16 text-slate-300">
                   <p className="font-black uppercase tracking-widest text-xs">Sem Baixas no Estoque</p>
@@ -227,10 +239,11 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({ sales, allIngredients, stoc
           <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1 scrollbar-hide">
             {selectedSale.recipe?.map(item => {
               const ing = allIngredients.find(i => i.id === item.ingredientId);
+              const recipeUnitLabel = ing ? getRecipeQuantityUnitLabel(ing, item.quantity) : '';
               return (
                 <div key={item.ingredientId} className="flex justify-between items-center p-2.5 bg-slate-800/80 rounded-xl border border-slate-700/30 text-[10px]">
                   <span className="font-bold text-slate-100 uppercase truncate max-w-[140px]">{ing ? ing.name : 'Insumo'}</span>
-                  <span className="font-black text-yellow-400">{item.quantity} {ing?.unit}</span>
+                  <span className="font-black text-yellow-400">{formatQuantity(item.quantity)} {recipeUnitLabel}</span>
                 </div>
               );
             })}

@@ -2,7 +2,13 @@
 import React, { useMemo, useState } from 'react';
 
 import { ComboItem, Ingredient, Product, RecipeItem } from '../types';
-import { buildRecipeFromComboItems } from '../utils/recipe';
+import {
+  buildRecipeFromComboItems,
+  getRecipeAdjustmentStep,
+  getRecipeQuantityUnitLabel,
+  normalizeRecipeItems,
+  normalizeRecipeQuantity,
+} from '../utils/recipe';
 import ComboItemsBuilder from './ComboItemsBuilder';
 
 interface AddProductModalProps {
@@ -32,21 +38,26 @@ const AddProductModal: React.FC<AddProductModalProps> = ({
   }, [products, comboItems]);
 
   const isCombo = category === 'Combo';
-  const recipeToPersist = isCombo ? comboRecipe : recipe;
+  const recipeToPersist = normalizeRecipeItems(isCombo ? comboRecipe : recipe);
 
   if (!isOpen) return null;
 
   const handleUpdateRecipe = (ingredientId: string, delta: number) => {
     setRecipe(prev => {
+      const ingredient = ingredients.find((item) => item.id === ingredientId);
+      if (!ingredient) return prev;
       const existing = prev.find(item => item.ingredientId === ingredientId);
+      const currentQty = existing?.quantity || 0;
+      const step = getRecipeAdjustmentStep(ingredient, currentQty);
+      const nextDelta = delta > 0 ? step : -step;
       if (existing) {
-        const newQty = Math.max(0, existing.quantity + delta);
+        const newQty = Math.max(0, normalizeRecipeQuantity(existing.quantity + nextDelta));
         if (newQty === 0) {
           return prev.filter(item => item.ingredientId !== ingredientId);
         }
         return prev.map(item => item.ingredientId === ingredientId ? { ...item, quantity: newQty } : item);
-      } else if (delta > 0) {
-        return [...prev, { ingredientId, quantity: delta }];
+      } else if (delta > 0 && nextDelta > 0) {
+        return [...prev, { ingredientId, quantity: nextDelta }];
       }
       return prev;
     });
@@ -79,6 +90,9 @@ const AddProductModal: React.FC<AddProductModalProps> = ({
     setComboItems([]);
     onClose();
   };
+
+  const formatQuantity = (value: number) =>
+    Number.isInteger(value) ? String(value) : value.toFixed(3).replace(/\.?0+$/, '');
 
   return (
     <div className="qb-modal-overlay fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[250] flex items-center justify-center p-4">
@@ -168,6 +182,7 @@ const AddProductModal: React.FC<AddProductModalProps> = ({
               <div className="qb-recipe-grid grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {ingredients.map((ing) => {
                   const qty = recipe.find((r) => r.ingredientId === ing.id)?.quantity || 0;
+                  const recipeUnitLabel = getRecipeQuantityUnitLabel(ing, qty);
                   return (
                     <div
                       key={ing.id}
@@ -177,7 +192,7 @@ const AddProductModal: React.FC<AddProductModalProps> = ({
                     >
                       <div className="flex-1 min-w-0 pr-2">
                         <p className="font-extrabold text-slate-800 text-sm truncate uppercase">{ing.name}</p>
-                        <p className="text-[9px] font-bold text-slate-400 uppercase">{ing.unit}</p>
+                        <p className="text-[9px] font-bold text-slate-400 uppercase">{recipeUnitLabel}</p>
                       </div>
                       <div className="flex items-center gap-3">
                         <button
@@ -187,7 +202,9 @@ const AddProductModal: React.FC<AddProductModalProps> = ({
                         >
                           -
                         </button>
-                        <span className="font-black text-slate-800 min-w-[15px] text-center">{qty}</span>
+                        <span className="font-black text-slate-800 min-w-[15px] text-center">
+                          {formatQuantity(qty)}
+                        </span>
                         <button
                           type="button"
                           onClick={() => handleUpdateRecipe(ing.id, 1)}

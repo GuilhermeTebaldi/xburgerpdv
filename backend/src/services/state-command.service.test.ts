@@ -86,6 +86,304 @@ test('sale register is idempotent when clientSaleId is retried', () => {
   assert.equal(retried.ingredients.find((entry) => entry.id === 'i-sauce')?.currentStock, 180);
 });
 
+test('sale register treats kg recipe quantity as grams for stock and cost', () => {
+  const state: FrontAppState = {
+    ingredients: [
+      { id: 'i-bacon', name: 'Bacon', unit: 'kg', currentStock: 8, minStock: 1, cost: 40 },
+    ],
+    products: [
+      {
+        id: 'p-bacon-burger',
+        name: 'Bacon Burger',
+        price: 25,
+        imageUrl: 'https://example.com/bacon-burger.jpg',
+        category: 'Snack',
+        recipe: [{ ingredientId: 'i-bacon', quantity: 30 }],
+      },
+    ],
+    sales: [],
+    stockEntries: [],
+    cleaningMaterials: [],
+    cleaningStockEntries: [],
+    globalSales: [],
+    globalCancelledSales: [],
+    globalStockEntries: [],
+    globalCleaningStockEntries: [],
+  };
+
+  const sold = applyStateCommand(state, {
+    type: 'SALE_REGISTER',
+    productId: 'p-bacon-burger',
+  });
+
+  const bacon = sold.ingredients.find((entry) => entry.id === 'i-bacon');
+  assert.ok(bacon);
+  assert.equal(Number((bacon.currentStock).toFixed(3)), 7.97);
+  assert.equal(Number((sold.sales[0]?.totalCost || 0).toFixed(2)), 1.2);
+  assert.equal(Number((sold.stockEntries[0]?.quantity || 0).toFixed(3)), -0.03);
+});
+
+test('sale register with 20g from 8kg leaves 7.98kg and computes cost correctly', () => {
+  const state: FrontAppState = {
+    ingredients: [
+      { id: 'i-bacon', name: 'Bacon', unit: 'kg', currentStock: 8, minStock: 1, cost: 40 },
+    ],
+    products: [
+      {
+        id: 'p-bacon-light',
+        name: 'Bacon Light',
+        price: 25,
+        imageUrl: 'https://example.com/bacon-light.jpg',
+        category: 'Snack',
+        recipe: [{ ingredientId: 'i-bacon', quantity: 20 }],
+      },
+    ],
+    sales: [],
+    stockEntries: [],
+    cleaningMaterials: [],
+    cleaningStockEntries: [],
+    globalSales: [],
+    globalCancelledSales: [],
+    globalStockEntries: [],
+    globalCleaningStockEntries: [],
+  };
+
+  const sold = applyStateCommand(state, {
+    type: 'SALE_REGISTER',
+    productId: 'p-bacon-light',
+  });
+
+  const bacon = sold.ingredients.find((entry) => entry.id === 'i-bacon');
+  assert.ok(bacon);
+  assert.equal(Number((bacon.currentStock).toFixed(2)), 7.98);
+  assert.equal(Number((sold.sales[0]?.totalCost || 0).toFixed(2)), 0.8);
+  assert.equal(Number((sold.stockEntries[0]?.quantity || 0).toFixed(2)), -0.02);
+});
+
+test('sale register converts legacy unit label "Quilo (kg)" as kg to grams', () => {
+  const state: FrontAppState = {
+    ingredients: [
+      { id: 'i-bacon', name: 'Bacon', unit: 'Quilo (kg)', currentStock: 8, minStock: 1, cost: 40 },
+    ],
+    products: [
+      {
+        id: 'p-bacon-legacy-label',
+        name: 'Bacon Legacy Label',
+        price: 25,
+        imageUrl: 'https://example.com/bacon-legacy-label.jpg',
+        category: 'Snack',
+        recipe: [{ ingredientId: 'i-bacon', quantity: 10 }],
+      },
+    ],
+    sales: [],
+    stockEntries: [],
+    cleaningMaterials: [],
+    cleaningStockEntries: [],
+    globalSales: [],
+    globalCancelledSales: [],
+    globalStockEntries: [],
+    globalCleaningStockEntries: [],
+  };
+
+  const sold = applyStateCommand(state, {
+    type: 'SALE_REGISTER',
+    productId: 'p-bacon-legacy-label',
+  });
+
+  const bacon = sold.ingredients.find((entry) => entry.id === 'i-bacon');
+  assert.ok(bacon);
+  assert.equal(Number((bacon.currentStock).toFixed(2)), 7.99);
+  assert.equal(Number((sold.stockEntries[0]?.quantity || 0).toFixed(2)), -0.01);
+});
+
+test('sale register treats liter recipe quantity as milliliters for stock and cost', () => {
+  const state: FrontAppState = {
+    ingredients: [
+      { id: 'i-syrup', name: 'Xarope', unit: 'l', currentStock: 4, minStock: 1, cost: 12 },
+    ],
+    products: [
+      {
+        id: 'p-soda',
+        name: 'Refrigerante Especial',
+        price: 14,
+        imageUrl: 'https://example.com/soda.jpg',
+        category: 'Drink',
+        recipe: [{ ingredientId: 'i-syrup', quantity: 150 }],
+      },
+    ],
+    sales: [],
+    stockEntries: [],
+    cleaningMaterials: [],
+    cleaningStockEntries: [],
+    globalSales: [],
+    globalCancelledSales: [],
+    globalStockEntries: [],
+    globalCleaningStockEntries: [],
+  };
+
+  const sold = applyStateCommand(state, {
+    type: 'SALE_REGISTER',
+    productId: 'p-soda',
+  });
+
+  const syrup = sold.ingredients.find((entry) => entry.id === 'i-syrup');
+  assert.ok(syrup);
+  assert.equal(Number((syrup.currentStock).toFixed(2)), 3.85);
+  assert.equal(Number((sold.sales[0]?.totalCost || 0).toFixed(2)), 1.8);
+  assert.equal(Number((sold.stockEntries[0]?.quantity || 0).toFixed(2)), -0.15);
+});
+
+test('manual stock move accepts decimal amounts for kg without truncation', () => {
+  const state: FrontAppState = {
+    ingredients: [
+      { id: 'i-bacon', name: 'Bacon', unit: 'kg', currentStock: 8, minStock: 1, cost: 40 },
+    ],
+    products: [],
+    sales: [],
+    stockEntries: [],
+    cleaningMaterials: [],
+    cleaningStockEntries: [],
+    globalSales: [],
+    globalCancelledSales: [],
+    globalStockEntries: [],
+    globalCleaningStockEntries: [],
+  };
+
+  const moved = applyStateCommand(state, {
+    type: 'INGREDIENT_STOCK_MOVE',
+    ingredientId: 'i-bacon',
+    amount: -0.02,
+  });
+
+  const bacon = moved.ingredients.find((entry) => entry.id === 'i-bacon');
+  assert.ok(bacon);
+  assert.equal(Number((bacon.currentStock).toFixed(2)), 7.98);
+  assert.equal(Number((moved.stockEntries[0]?.quantity || 0).toFixed(2)), -0.02);
+});
+
+test('sale register with price override keeps discount and stock/cost consistency', () => {
+  const state: FrontAppState = {
+    ingredients: [
+      { id: 'i-bread', name: 'Pao', unit: 'un', currentStock: 50, minStock: 10, cost: 1.5 },
+      { id: 'i-meat', name: 'Carne', unit: 'un', currentStock: 40, minStock: 8, cost: 4.2 },
+    ],
+    products: [
+      {
+        id: 'p-burger-discount',
+        name: 'Burger Desconto',
+        price: 20,
+        imageUrl: 'https://example.com/burger-discount.jpg',
+        category: 'Snack',
+        recipe: [
+          { ingredientId: 'i-bread', quantity: 1 },
+          { ingredientId: 'i-meat', quantity: 1 },
+        ],
+      },
+    ],
+    sales: [],
+    stockEntries: [],
+    cleaningMaterials: [],
+    cleaningStockEntries: [],
+    globalSales: [],
+    globalCancelledSales: [],
+    globalStockEntries: [],
+    globalCleaningStockEntries: [],
+  };
+
+  const sold = applyStateCommand(state, {
+    type: 'SALE_REGISTER',
+    productId: 'p-burger-discount',
+    priceOverride: 18,
+  });
+
+  const sale = sold.sales[0];
+  assert.ok(sale);
+  assert.equal(sale.total, 18);
+  assert.equal(sale.basePrice, 20);
+  assert.equal(sale.priceAdjustment, -2);
+  assert.equal(Number((sale.totalCost || 0).toFixed(2)), 5.7);
+  assert.equal(sold.ingredients.find((entry) => entry.id === 'i-bread')?.currentStock, 49);
+  assert.equal(sold.ingredients.find((entry) => entry.id === 'i-meat')?.currentStock, 39);
+});
+
+test('undo last sale restores legacy kg stock using recorded stock entries', () => {
+  const state: FrontAppState = {
+    ingredients: [
+      { id: 'i-bacon', name: 'Bacon', unit: 'kg', currentStock: 7, minStock: 1, cost: 40 },
+    ],
+    products: [
+      {
+        id: 'p-bacon-burger',
+        name: 'Bacon Burger',
+        price: 25,
+        imageUrl: 'https://example.com/bacon-burger.jpg',
+        category: 'Snack',
+        recipe: [{ ingredientId: 'i-bacon', quantity: 1 }],
+      },
+    ],
+    sales: [
+      {
+        id: 'legacy-sale-kg',
+        productId: 'p-bacon-burger',
+        productName: 'Bacon Burger',
+        timestamp: new Date().toISOString(),
+        total: 25,
+        totalCost: 40,
+        recipe: [{ ingredientId: 'i-bacon', quantity: 1 }],
+        stockDebited: [{ ingredientId: 'i-bacon', quantity: 1 }],
+      },
+    ],
+    stockEntries: [
+      {
+        id: 'st-sale-legacy-sale-kg-i-bacon',
+        ingredientId: 'i-bacon',
+        ingredientName: 'Bacon',
+        quantity: -1,
+        unitCost: 40,
+        timestamp: new Date().toISOString(),
+        source: 'SALE',
+        saleId: 'legacy-sale-kg',
+      },
+    ],
+    cleaningMaterials: [],
+    cleaningStockEntries: [],
+    globalSales: [
+      {
+        id: 'legacy-sale-kg',
+        productId: 'p-bacon-burger',
+        productName: 'Bacon Burger',
+        timestamp: new Date().toISOString(),
+        total: 25,
+        totalCost: 40,
+        recipe: [{ ingredientId: 'i-bacon', quantity: 1 }],
+        stockDebited: [{ ingredientId: 'i-bacon', quantity: 1 }],
+      },
+    ],
+    globalCancelledSales: [],
+    globalStockEntries: [
+      {
+        id: 'st-sale-legacy-sale-kg-i-bacon',
+        ingredientId: 'i-bacon',
+        ingredientName: 'Bacon',
+        quantity: -1,
+        unitCost: 40,
+        timestamp: new Date().toISOString(),
+        source: 'SALE',
+        saleId: 'legacy-sale-kg',
+      },
+    ],
+    globalCleaningStockEntries: [],
+  };
+
+  const undone = applyStateCommand(state, {
+    type: 'SALE_UNDO_LAST',
+  });
+
+  assert.equal(undone.ingredients.find((entry) => entry.id === 'i-bacon')?.currentStock, 8);
+  assert.equal(undone.sales.length, 0);
+  assert.equal(undone.stockEntries.length, 0);
+});
+
 test('deleting ingredient updates products recipes without touching unrelated data', () => {
   const base = createBaseState();
   const next = applyStateCommand(base, {
@@ -96,6 +394,31 @@ test('deleting ingredient updates products recipes without touching unrelated da
   assert.equal(next.ingredients.some((entry) => entry.id === 'i-sauce'), false);
   assert.equal(next.products.length, 1);
   assert.deepEqual(next.products[0].recipe.map((entry) => entry.ingredientId), ['i-bread', 'i-meat']);
+});
+
+test('product create normalizes duplicated recipe items by ingredient', () => {
+  const base = createBaseState();
+  const next = applyStateCommand(base, {
+    type: 'PRODUCT_CREATE',
+    product: {
+      id: 'p-dup-recipe',
+      name: 'Produto Duplicado',
+      price: 10,
+      imageUrl: 'https://example.com/p-dup-recipe.jpg',
+      category: 'Snack',
+      recipe: [
+        { ingredientId: 'i-sauce', quantity: 10 },
+        { ingredientId: 'i-sauce', quantity: 5 },
+        { ingredientId: 'i-bread', quantity: 1 },
+      ],
+    },
+  });
+
+  const created = next.products.find((entry) => entry.id === 'p-dup-recipe');
+  assert.ok(created);
+  assert.equal(created.recipe.length, 2);
+  assert.equal(created.recipe.find((item) => item.ingredientId === 'i-sauce')?.quantity, 15);
+  assert.equal(created.recipe.find((item) => item.ingredientId === 'i-bread')?.quantity, 1);
 });
 
 test('stress: repeated mixed operations never produce negative stocks', () => {

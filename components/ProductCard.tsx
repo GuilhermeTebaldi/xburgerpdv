@@ -1,7 +1,16 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Product, Ingredient, RecipeItem } from '../types';
-import { aggregateRecipe, calculateRecipeCost } from '../utils/recipe';
+import {
+  aggregateRecipe,
+  calculateRecipeCost,
+  formatIngredientStockQuantity,
+  getRecipeAdjustmentStep,
+  getRecipeQuantityUnitLabel,
+  getStockQuantityFromRecipeQuantity,
+  normalizeRecipeItems,
+  normalizeRecipeQuantity,
+} from '../utils/recipe';
 
 interface ProductCardProps {
   product: Product;
@@ -20,6 +29,8 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
   const [showDeleteMenu, setShowDeleteMenu] = useState(false);
   
   const timerRef = useRef<number | null>(null);
+  const formatQuantity = (value: number) =>
+    Number.isInteger(value) ? String(value) : value.toFixed(3).replace(/\.?0+$/, '');
 
   // Calcula disponibilidade baseada no ingrediente mais limitante
   const canMakeCount = React.useMemo(() => {
@@ -32,7 +43,9 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
     const limits = entries.map(([ingredientId, quantity]) => {
       const ingredient = allIngredients.find(i => i.id === ingredientId);
       if (!ingredient) return 0;
-      return Math.floor(ingredient.currentStock / quantity);
+      const requiredStockQuantity = getStockQuantityFromRecipeQuantity(ingredient, quantity);
+      if (requiredStockQuantity <= 0) return 0;
+      return Math.floor((ingredient.currentStock + Number.EPSILON) / requiredStockQuantity);
     });
     
     return Math.min(...limits);
@@ -71,7 +84,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
 
   const handleOpenCustomizer = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setCustomRecipe([...product.recipe]);
+    setCustomRecipe(normalizeRecipeItems(product.recipe));
     setIsPriceManual(false);
     setEditingPrice(product.price.toFixed(2));
     setShowCustomizer(true);
@@ -79,29 +92,45 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
 
   const updateCustomIngredient = (ingredientId: string, delta: number) => {
     setCustomRecipe(prev => {
-      const existing = prev.find(item => item.ingredientId === ingredientId);
+      const normalizedCurrentRecipe = normalizeRecipeItems(prev);
+      const totals = aggregateRecipe(normalizedCurrentRecipe);
       const ingredient = allIngredients.find(i => i.id === ingredientId);
-      
-      if (existing) {
-        const newQty = Math.max(0, existing.quantity + delta);
-        if (delta > 0 && ingredient && ingredient.currentStock < newQty) {
-          return prev;
-        }
-        return prev.map(item => 
-          item.ingredientId === ingredientId ? { ...item, quantity: newQty } : item
-        );
-      } else if (delta > 0) {
-        if (ingredient && ingredient.currentStock >= delta) {
-          return [...prev, { ingredientId, quantity: delta }];
-        }
+      if (!ingredient) return normalizedCurrentRecipe;
+      const currentQty = totals[ingredientId] || 0;
+      const step = getRecipeAdjustmentStep(ingredient, currentQty);
+      const nextDelta = delta > 0 ? step : -step;
+      const nextQty = Math.max(0, normalizeRecipeQuantity(currentQty + nextDelta));
+      const requiredStockQuantity = getStockQuantityFromRecipeQuantity(ingredient, nextQty);
+
+      if (ingredient.currentStock + Number.EPSILON < requiredStockQuantity) {
+        return normalizedCurrentRecipe;
       }
-      return prev;
+
+      if (nextQty > 0) {
+        totals[ingredientId] = nextQty;
+      } else {
+        delete totals[ingredientId];
+      }
+
+      return Object.entries(totals)
+        .map(([id, quantity]) => ({ ingredientId: id, quantity: normalizeRecipeQuantity(quantity) }))
+        .filter((item) => item.quantity > 0)
+        .sort((a, b) => a.ingredientId.localeCompare(b.ingredientId));
     });
+  };
+
+  const canIncrementCustomIngredient = (ingredient: Ingredient): boolean => {
+    const totals = aggregateRecipe(customRecipe);
+    const selectedQty = totals[ingredient.id] || 0;
+    const step = getRecipeAdjustmentStep(ingredient, selectedQty);
+    const nextRecipeQty = normalizeRecipeQuantity((totals[ingredient.id] || 0) + step);
+    const nextRequiredStock = getStockQuantityFromRecipeQuantity(ingredient, nextRecipeQty);
+    return ingredient.currentStock + Number.EPSILON >= nextRequiredStock;
   };
 
   const handleConfirmCustomSale = () => {
     if (!canConfirmCustomSale) return;
-    const finalRecipe = customRecipe.filter(r => r.quantity > 0);
+    const finalRecipe = normalizeRecipeItems(customRecipe);
     const finalPrice = parseFloat(editingPrice);
     onSale(product, finalRecipe, isNaN(finalPrice) ? product.price : finalPrice);
     setShowCustomizer(false);
@@ -140,7 +169,9 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
       const addonUnit = Number.isFinite(ingredient.addonPrice)
         ? (ingredient.addonPrice as number)
         : ingredient.cost * markupFactor;
-      extraPrice += delta * addonUnit;
+      const deltaInStockUnit =
+        Math.sign(delta) * getStockQuantityFromRecipeQuantity(ingredient, Math.abs(delta));
+      extraPrice += deltaInStockUnit * addonUnit;
     });
 
     const computed = product.price + extraPrice;
@@ -148,7 +179,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
   }, [customRecipe, ingredientsById, markupFactor, product.price, product.recipe]);
 
   const canConfirmCustomSale = React.useMemo(() => {
-    const finalRecipe = customRecipe.filter((item) => item.quantity > 0);
+    const finalRecipe = normalizeRecipeItems(customRecipe);
     const totals = aggregateRecipe(finalRecipe);
     const entries = Object.entries(totals);
     if (entries.length === 0) return false;
@@ -156,9 +187,12 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
     return entries.every(([ingredientId, quantity]) => {
       const ingredient = ingredientsById.get(ingredientId);
       if (!ingredient) return false;
-      return ingredient.currentStock >= quantity;
+      const requiredStockQuantity = getStockQuantityFromRecipeQuantity(ingredient, quantity);
+      return ingredient.currentStock + Number.EPSILON >= requiredStockQuantity;
     });
   }, [customRecipe, ingredientsById]);
+
+  const customTotals = React.useMemo(() => aggregateRecipe(customRecipe), [customRecipe]);
 
   useEffect(() => {
     if (!showCustomizer) return;
@@ -283,22 +317,28 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
                     product.recipe.some(r => r.ingredientId === ing.id) || 
                     customRecipe.some(r => r.ingredientId === ing.id)
                   ).map(ing => {
-                    const currentQty = customRecipe.find(r => r.ingredientId === ing.id)?.quantity || 0;
+                    const currentQty = customTotals[ing.id] || 0;
+                    const recipeUnitLabel = getRecipeQuantityUnitLabel(ing, currentQty);
                     return (
                       <div key={ing.id} className="qb-sale-customizer-row flex items-center justify-between p-4 bg-white rounded-3xl border-2 border-slate-100 shadow-sm">
                         <div>
                           <p className="font-extrabold text-slate-800 uppercase text-sm">{ing.name}</p>
-                          <p className="text-[10px] font-bold text-slate-400 uppercase">Estoque: {ing.currentStock} {ing.unit}</p>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase">
+                            Estoque: {formatIngredientStockQuantity(ing, ing.currentStock)} {ing.unit}
+                          </p>
                         </div>
                         <div className="qb-sale-customizer-controls flex items-center gap-4">
                           <button 
                             onClick={() => updateCustomIngredient(ing.id, -1)}
                             className="qb-btn-touch w-10 h-10 rounded-2xl bg-slate-100 text-slate-500 flex items-center justify-center font-black text-xl active:scale-90"
                           >-</button>
-                          <span className="text-xl font-black min-w-[20px] text-center">{currentQty}</span>
+                          <span className="text-xl font-black min-w-[20px] text-center">{formatQuantity(currentQty)}</span>
+                          <span className="text-[10px] font-black uppercase text-slate-400 -ml-2">
+                            {recipeUnitLabel}
+                          </span>
                           <button 
                             onClick={() => updateCustomIngredient(ing.id, 1)}
-                            disabled={ing.currentStock <= currentQty}
+                            disabled={!canIncrementCustomIngredient(ing)}
                             className="qb-btn-touch w-10 h-10 rounded-2xl bg-yellow-400 text-red-800 flex items-center justify-center font-black text-xl active:scale-90"
                           >+</button>
                         </div>

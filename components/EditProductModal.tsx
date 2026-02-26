@@ -1,7 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { ComboItem, Ingredient, Product, RecipeItem } from '../types';
-import { aggregateRecipe, buildRecipeFromComboItems } from '../utils/recipe';
+import {
+  aggregateRecipe,
+  buildRecipeFromComboItems,
+  getRecipeAdjustmentStep,
+  getRecipeQuantityUnitLabel,
+  normalizeRecipeItems,
+  normalizeRecipeQuantity,
+} from '../utils/recipe';
 import ComboItemsBuilder from './ComboItemsBuilder';
 
 interface EditProductModalProps {
@@ -55,7 +62,7 @@ const updateRecipeItemQuantity = (
 ): RecipeItem[] => {
   const existing = currentRecipe.find((item) => item.ingredientId === ingredientId);
   if (existing) {
-    const newQty = Math.max(0, existing.quantity + delta);
+    const newQty = Math.max(0, normalizeRecipeQuantity(existing.quantity + delta));
     if (newQty === 0) {
       return currentRecipe.filter((item) => item.ingredientId !== ingredientId);
     }
@@ -65,7 +72,7 @@ const updateRecipeItemQuantity = (
   }
 
   if (delta > 0) {
-    return [...currentRecipe, { ingredientId, quantity: delta }];
+    return [...currentRecipe, { ingredientId, quantity: normalizeRecipeQuantity(delta) }];
   }
 
   return currentRecipe;
@@ -131,7 +138,9 @@ const EditProductModal: React.FC<EditProductModalProps> = ({
   const isLegacyCombo = product?.category === 'Combo' && (product.comboItems?.length || 0) === 0;
   const shouldKeepLegacyRecipe =
     isCombo && isLegacyCombo && !hasTouchedComboItems && !hasTouchedComboExtras && comboItems.length === 0;
-  const recipeToPersist = isCombo ? (shouldKeepLegacyRecipe ? recipe : comboRecipeWithExtras) : recipe;
+  const recipeToPersist = normalizeRecipeItems(
+    isCombo ? (shouldKeepLegacyRecipe ? recipe : comboRecipeWithExtras) : recipe
+  );
 
   if (!isOpen || !product) return null;
 
@@ -144,18 +153,34 @@ const EditProductModal: React.FC<EditProductModalProps> = ({
   };
 
   const handleUpdateRecipe = (ingredientId: string, delta: number) => {
-    setRecipe((prev) => updateRecipeItemQuantity(prev, ingredientId, delta));
+    setRecipe((prev) => {
+      const ingredient = ingredients.find((item) => item.id === ingredientId);
+      if (!ingredient) return prev;
+      const currentQty = prev.find((item) => item.ingredientId === ingredientId)?.quantity || 0;
+      const step = getRecipeAdjustmentStep(ingredient, currentQty);
+      const nextDelta = delta > 0 ? step : -step;
+      return updateRecipeItemQuantity(prev, ingredientId, nextDelta);
+    });
   };
 
   const handleUpdateComboExtraRecipe = (ingredientId: string, delta: number) => {
     setHasTouchedComboExtras(true);
-    setComboExtraRecipe((prev) => updateRecipeItemQuantity(prev, ingredientId, delta));
+    setComboExtraRecipe((prev) => {
+      const ingredient = ingredients.find((item) => item.id === ingredientId);
+      if (!ingredient) return prev;
+      const currentQty = prev.find((item) => item.ingredientId === ingredientId)?.quantity || 0;
+      const step = getRecipeAdjustmentStep(ingredient, currentQty);
+      const nextDelta = delta > 0 ? step : -step;
+      return updateRecipeItemQuantity(prev, ingredientId, nextDelta);
+    });
   };
 
   const renderIngredientSelector = (
     selectedRecipe: RecipeItem[],
     onUpdateRecipe: (ingredientId: string, delta: number) => void
   ) => {
+    const formatQuantity = (value: number) =>
+      Number.isInteger(value) ? String(value) : value.toFixed(3).replace(/\.?0+$/, '');
     const selectedQuantities = new Map<string, number>(
       selectedRecipe.map((item): [string, number] => [item.ingredientId, item.quantity])
     );
@@ -164,6 +189,7 @@ const EditProductModal: React.FC<EditProductModalProps> = ({
       <div className="qb-recipe-grid grid grid-cols-1 sm:grid-cols-2 gap-3">
         {ingredients.map((ing) => {
           const qty = selectedQuantities.get(ing.id) || 0;
+          const recipeUnitLabel = getRecipeQuantityUnitLabel(ing, qty);
           return (
             <div
               key={ing.id}
@@ -173,7 +199,7 @@ const EditProductModal: React.FC<EditProductModalProps> = ({
             >
               <div className="flex-1 min-w-0 pr-2">
                 <p className="font-extrabold text-slate-800 text-sm truncate uppercase">{ing.name}</p>
-                <p className="text-[9px] font-bold text-slate-400 uppercase">{ing.unit}</p>
+                <p className="text-[9px] font-bold text-slate-400 uppercase">{recipeUnitLabel}</p>
               </div>
               <div className="flex items-center gap-3">
                 <button
@@ -183,7 +209,7 @@ const EditProductModal: React.FC<EditProductModalProps> = ({
                 >
                   -
                 </button>
-                <span className="font-black text-slate-800 min-w-[15px] text-center">{qty}</span>
+                <span className="font-black text-slate-800 min-w-[15px] text-center">{formatQuantity(qty)}</span>
                 <button
                   type="button"
                   onClick={() => onUpdateRecipe(ing.id, 1)}

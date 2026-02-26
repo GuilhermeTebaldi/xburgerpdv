@@ -32,6 +32,72 @@ const aggregateRecipe = (recipe: FrontRecipeItem[] = []): Record<string, number>
   }, {});
 };
 
+const normalizeRecipeItems = (recipe: FrontRecipeItem[] = []): FrontRecipeItem[] =>
+  Object.entries(aggregateRecipe(recipe))
+    .map(([ingredientId, quantity]) => ({ ingredientId, quantity: Number(quantity.toFixed(6)) }))
+    .filter((item) => Number.isFinite(item.quantity) && item.quantity > 0)
+    .sort((a, b) => a.ingredientId.localeCompare(b.ingredientId));
+
+interface RecipeUnitConversionProfile {
+  ratio: number;
+  matches: (unit: string) => boolean;
+}
+
+const normalizeUnit = (value: string): string => value.trim().toLowerCase();
+
+const hasToken = (unit: string, token: string): boolean =>
+  new RegExp(`(^|[^a-z])${token}([^a-z]|$)`).test(unit);
+
+const isKgUnit = (unit: string): boolean =>
+  hasToken(unit, 'kg') || unit.includes('quilo') || unit.includes('kilogram');
+
+const isMlUnit = (unit: string): boolean =>
+  hasToken(unit, 'ml') || unit.includes('mililit');
+
+const isLiterUnit = (unit: string): boolean =>
+  !isMlUnit(unit) &&
+  (hasToken(unit, 'l') ||
+    hasToken(unit, 'lt') ||
+    hasToken(unit, 'lts') ||
+    unit.includes('litro'));
+
+const RECIPE_UNIT_CONVERSIONS: RecipeUnitConversionProfile[] = [
+  {
+    ratio: 1000,
+    matches: isKgUnit,
+  },
+  {
+    ratio: 1000,
+    matches: isLiterUnit,
+  },
+];
+
+const getRecipeUnitConversion = (
+  ingredient: Pick<FrontIngredient, 'unit'>
+): RecipeUnitConversionProfile | null => {
+  const unit = normalizeUnit(ingredient.unit || '');
+  if (!unit) return null;
+  return RECIPE_UNIT_CONVERSIONS.find((profile) => profile.matches(unit)) || null;
+};
+
+const isLegacyBaseQuantity = (value: number): boolean =>
+  Number.isFinite(value) && value > 0 && value < 1;
+
+const toStockQuantity = (ingredient: Pick<FrontIngredient, 'unit'>, recipeQuantity: number): number => {
+  if (!Number.isFinite(recipeQuantity) || recipeQuantity <= 0) return 0;
+  const conversion = getRecipeUnitConversion(ingredient);
+  if (!conversion) return recipeQuantity;
+
+  // Legacy compatibility:
+  // - quantities < 1 keep historical stock-unit behavior (kg/l)
+  // - quantities >= 1 are interpreted in recipe unit (g/ml)
+  if (isLegacyBaseQuantity(recipeQuantity)) {
+    return recipeQuantity;
+  }
+
+  return recipeQuantity / conversion.ratio;
+};
+
 const calculateRecipeCost = (
   ingredients: FrontIngredient[],
   recipe: FrontRecipeItem[]
@@ -46,7 +112,8 @@ const calculateRecipeCost = (
       missingIngredientIds.push(ingredientId);
       return;
     }
-    totalCost += ingredient.cost * quantity;
+    const stockQuantity = toStockQuantity(ingredient, quantity);
+    totalCost += ingredient.cost * stockQuantity;
   });
 
   return { totalCost, missingIngredientIds, totals };
@@ -154,10 +221,7 @@ const applySaleRegister = (state: FrontAppState, command: Extract<StateCommandIn
     throw new HttpError(404, 'Produto não encontrado para venda.');
   }
 
-  const recipeToUse = (command.recipeOverride || product.recipe).map((item) => ({
-    ingredientId: item.ingredientId,
-    quantity: item.quantity,
-  }));
+  const recipeToUse = normalizeRecipeItems(command.recipeOverride || product.recipe);
 
   const { totalCost, missingIngredientIds, totals } = calculateRecipeCost(state.ingredients, recipeToUse);
   if (Object.keys(totals).length === 0) {
@@ -167,12 +231,13 @@ const applySaleRegister = (state: FrontAppState, command: Extract<StateCommandIn
     throw new HttpError(422, 'Receita com insumos ausentes.', { missingIngredientIds });
   }
 
-  for (const [ingredientId, requiredQuantity] of Object.entries(totals)) {
+  for (const [ingredientId, requiredRecipeQuantity] of Object.entries(totals)) {
     const ingredient = requireIngredient(state, ingredientId);
-    if (ingredient.currentStock + Number.EPSILON < requiredQuantity) {
+    const requiredStockQuantity = toStockQuantity(ingredient, requiredRecipeQuantity);
+    if (ingredient.currentStock + Number.EPSILON < requiredStockQuantity) {
       throw new HttpError(409, `Estoque insuficiente para ${ingredient.name}.`, {
         ingredientId,
-        required: requiredQuantity,
+        required: requiredStockQuantity,
         available: ingredient.currentStock,
       });
     }
@@ -203,19 +268,21 @@ const applySaleRegister = (state: FrontAppState, command: Extract<StateCommandIn
   };
 
   Object.entries(totals).forEach(([ingredientId, quantity]) => {
+    const ingredient = requireIngredient(state, ingredientId);
+    const stockQuantity = toStockQuantity(ingredient, quantity);
     state.ingredients = state.ingredients.map((ingredient) =>
       ingredient.id === ingredientId
-        ? { ...ingredient, currentStock: Math.max(0, ingredient.currentStock - quantity) }
+        ? { ...ingredient, currentStock: Math.max(0, ingredient.currentStock - stockQuantity) }
         : ingredient
     );
 
-    const ingredient = requireIngredient(state, ingredientId);
+    const updatedIngredient = requireIngredient(state, ingredientId);
     const entry: FrontStockEntry = {
       id: `st-sale-${saleId}-${ingredientId}`,
       ingredientId,
-      ingredientName: ingredient.name,
-      quantity: -quantity,
-      unitCost: ingredient.cost,
+      ingredientName: updatedIngredient.name,
+      quantity: -stockQuantity,
+      unitCost: updatedIngredient.cost,
       timestamp,
       source: 'SALE',
       saleId,
@@ -235,6 +302,13 @@ const applyUndoLastSale = (state: FrontAppState) => {
   const lastSale = state.sales[state.sales.length - 1];
   const recipeToRestore = lastSale.stockDebited || lastSale.recipe;
   const totals = recipeToRestore ? aggregateRecipe(recipeToRestore) : {};
+  const saleMovementTotals = state.stockEntries.reduce<Record<string, number>>((acc, entry) => {
+    if (entry.saleId !== lastSale.id || entry.source !== 'SALE') {
+      return acc;
+    }
+    acc[entry.ingredientId] = (acc[entry.ingredientId] || 0) + Math.max(0, -entry.quantity);
+    return acc;
+  }, {});
   const autoReplenishmentTotals = state.stockEntries.reduce<Record<string, number>>((acc, entry) => {
     if (entry.saleId !== lastSale.id || entry.source !== 'AUTO_REPLENISH') {
       return acc;
@@ -243,14 +317,21 @@ const applyUndoLastSale = (state: FrontAppState) => {
     return acc;
   }, {});
 
-  if (Object.keys(totals).length > 0 || Object.keys(autoReplenishmentTotals).length > 0) {
+  if (
+    Object.keys(totals).length > 0 ||
+    Object.keys(saleMovementTotals).length > 0 ||
+    Object.keys(autoReplenishmentTotals).length > 0
+  ) {
     state.ingredients = state.ingredients.map((ingredient) => {
-      const restoredQuantity = totals[ingredient.id] || 0;
+      const restoredRecipeQuantity = totals[ingredient.id] || 0;
+      const restoredStockQuantity =
+        saleMovementTotals[ingredient.id] ??
+        toStockQuantity(ingredient, restoredRecipeQuantity);
       const autoReplenished = autoReplenishmentTotals[ingredient.id] || 0;
-      if (restoredQuantity === 0 && autoReplenished === 0) return ingredient;
+      if (restoredStockQuantity === 0 && autoReplenished === 0) return ingredient;
       return {
         ...ingredient,
-        currentStock: Math.max(0, ingredient.currentStock + restoredQuantity - autoReplenished),
+        currentStock: Math.max(0, ingredient.currentStock + restoredStockQuantity - autoReplenished),
       };
     });
   }
@@ -273,7 +354,11 @@ const applyIngredientStockMove = (
   const ingredient = requireIngredient(state, command.ingredientId);
   const appliedAmount = getAppliedStockDelta(ingredient.currentStock, command.amount);
   if (appliedAmount === 0) {
-    throw new HttpError(409, 'Estoque insuficiente para baixa.');
+    throw new HttpError(409, 'Estoque insuficiente para baixa.', {
+      ingredientId: command.ingredientId,
+      requested: Math.abs(command.amount),
+      available: ingredient.currentStock,
+    });
   }
 
   const timestamp = toTimestampIso();
@@ -303,7 +388,11 @@ const applyCleaningStockMove = (
   const material = requireMaterial(state, command.materialId);
   const appliedAmount = getAppliedStockDelta(material.currentStock, command.amount);
   if (appliedAmount === 0) {
-    throw new HttpError(409, 'Estoque de material insuficiente para baixa.');
+    throw new HttpError(409, 'Estoque de material insuficiente para baixa.', {
+      materialId: command.materialId,
+      requested: Math.abs(command.amount),
+      available: material.currentStock,
+    });
   }
 
   const timestamp = toTimestampIso();
@@ -383,7 +472,7 @@ export const applyStateCommand = (
       ensureUniqueId(state, 'product', command.product.id);
       state.products.push({
         ...command.product,
-        recipe: cloneRecipe(command.product.recipe) || [],
+        recipe: normalizeRecipeItems(command.product.recipe),
         comboItems: command.product.comboItems?.map((item) => ({ ...item })),
       });
       return state;
@@ -395,7 +484,7 @@ export const applyStateCommand = (
         entry.id === command.product.id
           ? {
               ...command.product,
-              recipe: cloneRecipe(command.product.recipe) || [],
+              recipe: normalizeRecipeItems(command.product.recipe),
               comboItems: command.product.comboItems?.map((item) => ({ ...item })),
             }
           : entry

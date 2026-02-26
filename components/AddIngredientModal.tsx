@@ -85,6 +85,7 @@ const AddIngredientModal: React.FC<AddIngredientModalProps> = ({ isOpen, onClose
             >
               <option value="un">Unidade (un)</option>
               <option value="kg">Quilo (kg)</option>
+              <option value="l">Litro (L)</option>
               <option value="g">Grama (g)</option>
               <option value="fatias">Fatias</option>
               <option value="porções">Porções</option>
