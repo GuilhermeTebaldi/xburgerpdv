@@ -1,0 +1,255 @@
+.
+├── .env.local
+├── .gitignore
+├── .vscode
+│   └── settings.json
+├── App.tsx
+├── README.md
+├── SITElanchesdoben
+│   ├── .env.example
+│   ├── .gitignore
+│   ├── README.md
+│   ├── dist
+│   │   ├── assets
+│   │   │   ├── index-01Au3lZN.js
+│   │   │   └── index-BPfL5apT.css
+│   │   ├── favicon-lanchesdoben.png
+│   │   ├── favicon-lanchesdoben1.png
+│   │   └── index.html
+│   ├── index.html
+│   ├── metadata.json
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── public
+│   │   ├── favicon-lanchesdoben.png
+│   │   └── favicon-lanchesdoben1.png
+│   ├── src
+│   │   ├── App.tsx
+│   │   ├── ChatGPT Image 20 de fev. de 2026, 13_35_30.png
+│   │   ├── index.css
+│   │   ├── main.tsx
+│   │   ├── services
+│   │   │   └── publicCatalog.ts
+│   │   └── vite-env.d.ts
+│   ├── tsconfig.json
+│   └── vite.config.ts
+├── backend
+│   ├── .env.example
+│   ├── .gitignore
+│   ├── README.md
+│   ├── dist
+│   │   ├── app.js
+│   │   ├── config
+│   │   │   └── env.js
+│   │   ├── controllers
+│   │   │   ├── audit.controller.js
+│   │   │   ├── auth.controller.js
+│   │   │   ├── cleaning-material.controller.js
+│   │   │   ├── ingredient.controller.js
+│   │   │   ├── product.controller.js
+│   │   │   ├── report.controller.js
+│   │   │   ├── sale.controller.js
+│   │   │   ├── session.controller.js
+│   │   │   └── state.controller.js
+│   │   ├── db
+│   │   │   └── prisma.js
+│   │   ├── jobs
+│   │   │   └── state-backup.scheduler.js
+│   │   ├── middlewares
+│   │   │   ├── auth.middleware.js
+│   │   │   ├── error.middleware.js
+│   │   │   ├── not-found.middleware.js
+│   │   │   ├── request-context.middleware.js
+│   │   │   └── state-auth.middleware.js
+│   │   ├── routes
+│   │   │   ├── audit.routes.js
+│   │   │   ├── auth.routes.js
+│   │   │   ├── cleaning-material.routes.js
+│   │   │   ├── index.js
+│   │   │   ├── ingredient.routes.js
+│   │   │   ├── product.routes.js
+│   │   │   ├── report.routes.js
+│   │   │   ├── sale.routes.js
+│   │   │   ├── session.routes.js
+│   │   │   └── state.routes.js
+│   │   ├── scripts
+│   │   │   └── run-state-backup.js
+│   │   ├── server.js
+│   │   ├── services
+│   │   │   ├── audit-query.service.js
+│   │   │   ├── audit.service.js
+│   │   │   ├── auth.service.js
+│   │   │   ├── cleaning-material.service.js
+│   │   │   ├── ingredient.service.js
+│   │   │   ├── mappers.service.js
+│   │   │   ├── product.service.js
+│   │   │   ├── report.service.js
+│   │   │   ├── sale-refund.utils.js
+│   │   │   ├── sale-refund.utils.test.js
+│   │   │   ├── sale.service.js
+│   │   │   ├── session.service.js
+│   │   │   ├── state-auth.service.js
+│   │   │   ├── state-auth.service.test.js
+│   │   │   ├── state-backup.utils.js
+│   │   │   ├── state-backup.utils.test.js
+│   │   │   ├── state-command.service.js
+│   │   │   ├── state-command.service.test.js
+│   │   │   └── state.service.js
+│   │   ├── types
+│   │   │   ├── frontend.js
+│   │   │   └── request-context.js
+│   │   ├── utils
+│   │   │   ├── async-handler.js
+│   │   │   ├── decimal.js
+│   │   │   └── http-error.js
+│   │   └── validators
+│   │       ├── auth.validator.js
+│   │       ├── cleaning-material.validator.js
+│   │       ├── ingredient.validator.js
+│   │       ├── product.validator.js
+│   │       ├── report.validator.js
+│   │       ├── sale.validator.js
+│   │       ├── session.validator.js
+│   │       └── state-command.validator.js
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── prisma
+│   │   ├── migrations
+│   │   │   ├── 20260220170000_init
+│   │   │   │   └── migration.sql
+│   │   │   ├── 20260220190000_add_app_state_snapshot
+│   │   │   │   └── migration.sql
+│   │   │   ├── 20260221120000_add_app_state_backups
+│   │   │   │   └── migration.sql
+│   │   │   └── migration_lock.toml
+│   │   ├── schema.prisma
+│   │   └── seed.ts
+│   ├── render.yaml
+│   ├── src
+│   │   ├── app.ts
+│   │   ├── config
+│   │   │   ├── env.test.ts
+│   │   │   └── env.ts
+│   │   ├── controllers
+│   │   │   ├── audit.controller.ts
+│   │   │   ├── auth.controller.ts
+│   │   │   ├── cleaning-material.controller.ts
+│   │   │   ├── ingredient.controller.ts
+│   │   │   ├── product.controller.ts
+│   │   │   ├── report.controller.ts
+│   │   │   ├── sale.controller.ts
+│   │   │   ├── session.controller.ts
+│   │   │   └── state.controller.ts
+│   │   ├── db
+│   │   │   └── prisma.ts
+│   │   ├── jobs
+│   │   │   └── state-backup.scheduler.ts
+│   │   ├── middlewares
+│   │   │   ├── auth.middleware.ts
+│   │   │   ├── error.middleware.ts
+│   │   │   ├── not-found.middleware.ts
+│   │   │   ├── request-context.middleware.ts
+│   │   │   └── state-auth.middleware.ts
+│   │   ├── routes
+│   │   │   ├── audit.routes.ts
+│   │   │   ├── auth.routes.ts
+│   │   │   ├── cleaning-material.routes.ts
+│   │   │   ├── index.ts
+│   │   │   ├── ingredient.routes.ts
+│   │   │   ├── product.routes.ts
+│   │   │   ├── report.routes.ts
+│   │   │   ├── sale.routes.ts
+│   │   │   ├── session.routes.ts
+│   │   │   └── state.routes.ts
+│   │   ├── scripts
+│   │   │   └── run-state-backup.ts
+│   │   ├── server.ts
+│   │   ├── services
+│   │   │   ├── audit-query.service.ts
+│   │   │   ├── audit.service.ts
+│   │   │   ├── auth.service.ts
+│   │   │   ├── cleaning-material.service.ts
+│   │   │   ├── ingredient.service.ts
+│   │   │   ├── mappers.service.ts
+│   │   │   ├── product.service.ts
+│   │   │   ├── report.service.ts
+│   │   │   ├── sale-refund.utils.test.ts
+│   │   │   ├── sale-refund.utils.ts
+│   │   │   ├── sale.service.ts
+│   │   │   ├── session.service.ts
+│   │   │   ├── state-auth.service.test.ts
+│   │   │   ├── state-auth.service.ts
+│   │   │   ├── state-backup.utils.test.ts
+│   │   │   ├── state-backup.utils.ts
+│   │   │   ├── state-command.service.test.ts
+│   │   │   ├── state-command.service.ts
+│   │   │   └── state.service.ts
+│   │   ├── types
+│   │   │   ├── express.d.ts
+│   │   │   ├── frontend.ts
+│   │   │   └── request-context.ts
+│   │   ├── utils
+│   │   │   ├── async-handler.ts
+│   │   │   ├── decimal.ts
+│   │   │   └── http-error.ts
+│   │   └── validators
+│   │       ├── auth.validator.ts
+│   │       ├── cleaning-material.validator.ts
+│   │       ├── ingredient.validator.ts
+│   │       ├── product.validator.ts
+│   │       ├── report.validator.ts
+│   │       ├── sale.validator.ts
+│   │       ├── session.validator.ts
+│   │       └── state-command.validator.ts
+│   └── tsconfig.json
+├── components
+│   ├── AddIngredientModal.tsx
+│   ├── AddProductModal.tsx
+│   ├── AdminDashboard.tsx
+│   ├── AdminLogin.tsx
+│   ├── AdminSalesAnalyticsTab.tsx
+│   ├── CleaningMaterialsManager.tsx
+│   ├── ComboItemsBuilder.tsx
+│   ├── EditIngredientModal.tsx
+│   ├── EditProductModal.tsx
+│   ├── Header.tsx
+│   ├── InventoryManager.tsx
+│   ├── Notification.tsx
+│   ├── ProductCard.tsx
+│   ├── SalesSummary.tsx
+│   └── SyncStatusOverlay.tsx
+├── constants.tsx
+├── data
+│   ├── appStorage.ts
+│   ├── localDb.ts
+│   └── stateCommandClient.ts
+├── dist
+│   ├── assets
+│   │   ├── index-CCaLim25.css
+│   │   └── index-DKWSMF4b.js
+│   ├── favicon-lanchesdoben.png
+│   ├── favicon-lanchesdoben1.png
+│   ├── index.html
+│   └── sistema
+│       ├── assets
+│       │   ├── index-CLsvXlj9.css
+│       │   └── index-Cx11rNFc.js
+│       └── index.html
+├── estrutura_pastas.txt
+├── index.css
+├── index.html
+├── index.tsx
+├── metadata.json
+├── package-lock.json
+├── package.json
+├── scripts
+│   └── merge-builds.mjs
+├── tsconfig.json
+├── types.ts
+├── utils
+│   ├── recipe.ts
+│   └── salesAnalytics.ts
+├── vercel.json
+└── vite.config.ts
+
+46 directories, 207 files

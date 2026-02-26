@@ -16,7 +16,6 @@ const EditIngredientModal: React.FC<EditIngredientModalProps> = ({
 }) => {
   const [name, setName] = useState('');
   const [unit, setUnit] = useState('un');
-  const [currentStock, setCurrentStock] = useState('');
   const [minStock, setMinStock] = useState('');
   const [cost, setCost] = useState('');
   const [addonPrice, setAddonPrice] = useState('');
@@ -26,7 +25,6 @@ const EditIngredientModal: React.FC<EditIngredientModalProps> = ({
     if (!ingredient) return;
     setName(ingredient.name);
     setUnit(ingredient.unit);
-    setCurrentStock(String(ingredient.currentStock));
     setMinStock(String(ingredient.minStock));
     setCost(String(ingredient.cost));
     setAddonPrice(ingredient.addonPrice !== undefined ? String(ingredient.addonPrice) : '');
@@ -37,7 +35,7 @@ const EditIngredientModal: React.FC<EditIngredientModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !currentStock || !minStock || !cost) {
+    if (!name || !minStock || !cost) {
       alert('Por favor, preencha todos os campos!');
       return;
     }
@@ -46,7 +44,7 @@ const EditIngredientModal: React.FC<EditIngredientModalProps> = ({
       ...ingredient,
       name: name.trim(),
       unit,
-      currentStock: parseFloat(currentStock),
+      currentStock: ingredient.currentStock,
       minStock: parseFloat(minStock),
       cost: parseFloat(cost),
       addonPrice: addonPrice.trim() ? parseFloat(addonPrice) : undefined,
@@ -85,33 +83,21 @@ const EditIngredientModal: React.FC<EditIngredientModalProps> = ({
             />
           </div>
 
-          <div className="qb-ingredient-grid grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Unidade de Medida</label>
-              <select 
-                value={unit}
-                onChange={e => setUnit(e.target.value)}
-                className="w-full bg-slate-100 border-none rounded-2xl px-4 py-3 font-bold text-slate-800 focus:ring-2 focus:ring-red-500 appearance-none cursor-pointer"
-              >
-                <option value="un">Unidade (un)</option>
-                <option value="kg">Quilo (kg)</option>
-                <option value="g">Grama (g)</option>
-                <option value="fatias">Fatias</option>
-                <option value="porções">Porções</option>
-                <option value="lata">Lata</option>
-                <option value="ml">Mililitros (ml)</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Estoque Atual</label>
-              <input 
-                type="number" 
-                value={currentStock}
-                onChange={e => setCurrentStock(e.target.value)}
-                placeholder="0"
-                className="w-full bg-slate-100 border-none rounded-2xl px-4 py-3 font-bold text-slate-800 focus:ring-2 focus:ring-red-500"
-              />
-            </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Unidade de Medida</label>
+            <select 
+              value={unit}
+              onChange={e => setUnit(e.target.value)}
+              className="w-full bg-slate-100 border-none rounded-2xl px-4 py-3 font-bold text-slate-800 focus:ring-2 focus:ring-red-500 appearance-none cursor-pointer"
+            >
+              <option value="un">Unidade (un)</option>
+              <option value="kg">Quilo (kg)</option>
+              <option value="g">Grama (g)</option>
+              <option value="fatias">Fatias</option>
+              <option value="porções">Porções</option>
+              <option value="lata">Lata</option>
+              <option value="ml">Mililitros (ml)</option>
+            </select>
           </div>
 
           <div className="qb-ingredient-grid grid grid-cols-1 sm:grid-cols-2 gap-4">
