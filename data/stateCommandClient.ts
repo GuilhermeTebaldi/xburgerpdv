@@ -190,10 +190,40 @@ const normalizeAppState = (payload: unknown): AppState => {
   };
 };
 
+interface ApiErrorPayload {
+  error?: string;
+  message?: string;
+  details?: {
+    fieldErrors?: Record<string, string[] | undefined>;
+    formErrors?: string[];
+  };
+}
+
+const extractValidationDetail = (payload: ApiErrorPayload): string | null => {
+  const formError = payload.details?.formErrors?.find((entry) => typeof entry === 'string' && entry.trim());
+  if (formError) return formError.trim();
+
+  const fieldErrors = payload.details?.fieldErrors;
+  if (!fieldErrors || typeof fieldErrors !== 'object') return null;
+
+  for (const [field, errors] of Object.entries(fieldErrors)) {
+    if (!Array.isArray(errors) || errors.length === 0) continue;
+    const firstError = errors.find((entry) => typeof entry === 'string' && entry.trim());
+    if (firstError) return `${field}: ${firstError.trim()}`;
+  }
+
+  return null;
+};
+
 const readApiErrorMessage = async (response: Response): Promise<string> => {
   try {
-    const payload = (await response.json()) as { error?: string; message?: string };
-    return payload.error || payload.message || `Falha na API (${response.status}).`;
+    const payload = (await response.json()) as ApiErrorPayload;
+    const base = payload.error || payload.message || `Falha na API (${response.status}).`;
+    if (base === 'Payload inválido') {
+      const detail = extractValidationDetail(payload);
+      if (detail) return `${base}: ${detail}`;
+    }
+    return base;
   } catch {
     return `Falha na API (${response.status}).`;
   }

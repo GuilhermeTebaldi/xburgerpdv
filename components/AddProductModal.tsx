@@ -90,19 +90,35 @@ const AddProductModal: React.FC<AddProductModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !price || !imageUrl || recipeToPersist.length === 0) {
+    const normalizedName = name.trim();
+    const normalizedImageUrl = imageUrl.trim();
+    const normalizedPriceRaw = price.trim().replace(',', '.');
+    const parsedPrice = Number(normalizedPriceRaw);
+
+    if (!normalizedName || !normalizedImageUrl || recipeToPersist.length === 0) {
       alert("Preencha todos os campos e adicione pelo menos um ingrediente à receita!");
       return;
     }
+    if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+      alert('Preço de venda inválido. Informe um número maior ou igual a zero.');
+      return;
+    }
+
+    const nextComboItems = isCombo
+      ? comboItems.filter((item) => {
+          const qty = Number(item.quantity);
+          return item.productId.trim() !== '' && Number.isInteger(qty) && qty > 0;
+        })
+      : undefined;
 
     const newProduct: Product = {
       id: 'p-' + Math.random().toString(36).substr(2, 9),
-      name,
-      price: parseFloat(price),
+      name: normalizedName,
+      price: parsedPrice,
       category,
-      imageUrl,
+      imageUrl: normalizedImageUrl,
       recipe: recipeToPersist,
-      comboItems: isCombo ? comboItems : undefined,
+      comboItems: nextComboItems,
     };
 
     onAdd(newProduct);

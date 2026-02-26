@@ -35,19 +35,44 @@ const EditIngredientModal: React.FC<EditIngredientModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !minStock || !cost) {
+    const normalizedName = name.trim();
+    const normalizedMinStockRaw = minStock.trim().replace(',', '.');
+    const normalizedCostRaw = cost.trim().replace(',', '.');
+    const normalizedAddonRaw = addonPrice.trim().replace(',', '.');
+    const parsedMinStock = Number(normalizedMinStockRaw);
+    const parsedCost = Number(normalizedCostRaw);
+
+    if (!normalizedName || !normalizedMinStockRaw || !normalizedCostRaw) {
       alert('Por favor, preencha todos os campos!');
       return;
+    }
+    if (!Number.isFinite(parsedMinStock) || parsedMinStock < 0) {
+      alert('Estoque mínimo inválido. Informe um número maior ou igual a zero.');
+      return;
+    }
+    if (!Number.isFinite(parsedCost) || parsedCost < 0) {
+      alert('Preço de custo inválido. Informe um número maior ou igual a zero.');
+      return;
+    }
+
+    let parsedAddonPrice: number | undefined;
+    if (normalizedAddonRaw) {
+      const addonCandidate = Number(normalizedAddonRaw);
+      if (!Number.isFinite(addonCandidate) || addonCandidate < 0) {
+        alert('Preço adicional inválido. Informe um número maior ou igual a zero.');
+        return;
+      }
+      parsedAddonPrice = addonCandidate;
     }
 
     const updated: Ingredient = {
       ...ingredient,
-      name: name.trim(),
+      name: normalizedName,
       unit,
       currentStock: ingredient.currentStock,
-      minStock: parseFloat(minStock),
-      cost: parseFloat(cost),
-      addonPrice: addonPrice.trim() ? parseFloat(addonPrice) : undefined,
+      minStock: parsedMinStock,
+      cost: parsedCost,
+      addonPrice: parsedAddonPrice,
       imageUrl: imageUrl.trim() ? imageUrl.trim() : undefined,
     };
 
