@@ -174,6 +174,12 @@ const formatSaleDateTime = (timestamp: Date | string): string => {
   return saleDate.toLocaleString('pt-BR');
 };
 
+const getSaleDayKey = (timestamp: Date | string): string | null => {
+  const saleDate = toSaleDate(timestamp);
+  if (!saleDate) return null;
+  return saleDate.toLocaleDateString('pt-BR');
+};
+
 const getStateSyncErrorMessage = (error: unknown): string => {
   if (error instanceof Error && error.message.trim()) {
     return error.message;
@@ -690,7 +696,9 @@ const App: React.FC = () => {
   };
 
   const handleOpenUndoHistory = () => {
-    if (sales.length === 0) {
+    const todayKey = new Date().toLocaleDateString('pt-BR');
+    const hasTodaySale = sales.some((sale) => getSaleDayKey(sale.timestamp) === todayKey);
+    if (!hasTodaySale) {
       showNotification('Nenhuma venda para desfazer!');
       return;
     }
@@ -862,14 +870,22 @@ const App: React.FC = () => {
   };
 
   const dailyTotal = useMemo(() => sales.reduce((acc, sale) => acc + sale.total, 0), [sales]);
-  const recentSalesForUndo = useMemo(() => sales.slice().reverse(), [sales]);
+  const todaySaleDayKey = new Date().toLocaleDateString('pt-BR');
+  const recentSalesForUndo = useMemo(
+    () =>
+      sales
+        .filter((sale) => getSaleDayKey(sale.timestamp) === todaySaleDayKey)
+        .slice()
+        .reverse(),
+    [sales, todaySaleDayKey]
+  );
 
   useEffect(() => {
     if (!isUndoHistoryOpen) return;
-    if (sales.length === 0 || view !== ViewMode.POS) {
+    if (recentSalesForUndo.length === 0 || view !== ViewMode.POS) {
       setIsUndoHistoryOpen(false);
     }
-  }, [isUndoHistoryOpen, sales.length, view]);
+  }, [isUndoHistoryOpen, recentSalesForUndo.length, view]);
 
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
@@ -933,7 +949,7 @@ const App: React.FC = () => {
                 </button>
                 <button
                   onClick={handleOpenUndoHistory}
-                  disabled={sales.length === 0}
+                  disabled={recentSalesForUndo.length === 0}
                   className="qb-btn-touch bg-white text-slate-800 px-4 py-3 rounded-2xl font-black text-[10px] uppercase tracking-tighter shadow-sm border border-slate-200 hover:border-red-400 hover:text-red-600 active:scale-95 transition-all disabled:opacity-30 disabled:grayscale disabled:scale-100 whitespace-nowrap flex items-center gap-2"
                   title="Selecionar venda no histórico para desfazer"
                 >
@@ -1039,7 +1055,7 @@ const App: React.FC = () => {
               <div>
                 <h3 className="text-xl font-black uppercase tracking-tight">Histórico para Desfazer</h3>
                 <p className="text-[10px] uppercase tracking-widest text-slate-300">
-                  Selecione uma venda específica para estornar
+                  Apenas vendas do dia atual (até Fechar Dia / Reiniciar)
                 </p>
               </div>
               <button
