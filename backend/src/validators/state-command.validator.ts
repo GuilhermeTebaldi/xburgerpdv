@@ -3,6 +3,7 @@ import { z } from 'zod';
 const idSchema = z.string().trim().min(1).max(200);
 const quantitySchema = z.coerce.number().finite();
 const positiveQuantitySchema = quantitySchema.gt(0);
+const snapshotImageUrlSchema = z.string().trim().max(200_000);
 
 const recipeItemSchema = z.object({
   ingredientId: idSchema,
@@ -23,7 +24,7 @@ const ingredientSchema = z.object({
   cost: z.coerce.number().finite().min(0),
   autoReplenishEnabled: z.boolean().optional(),
   autoReplenishQuantity: z.coerce.number().finite().min(0).optional(),
-  imageUrl: z.string().trim().max(1024).optional(),
+  imageUrl: snapshotImageUrlSchema.optional(),
   addonPrice: z.coerce.number().finite().min(0).optional(),
   icon: z.string().trim().max(200).optional(),
 });
@@ -32,7 +33,7 @@ const productSchema = z.object({
   id: idSchema,
   name: z.string().trim().min(1).max(200),
   price: z.coerce.number().finite().min(0),
-  imageUrl: z.string().trim().min(1).max(1024),
+  imageUrl: snapshotImageUrlSchema.min(1),
   category: z.enum(['Snack', 'Drink', 'Side', 'Combo']),
   recipe: z.array(recipeItemSchema).min(1),
   comboItems: z.array(comboItemSchema).optional(),
@@ -45,7 +46,7 @@ const cleaningMaterialSchema = z.object({
   currentStock: z.coerce.number().finite().min(0),
   minStock: z.coerce.number().finite().min(0),
   cost: z.coerce.number().finite().min(0),
-  imageUrl: z.string().trim().max(1024).optional(),
+  imageUrl: snapshotImageUrlSchema.optional(),
 });
 
 const baseCommandSchema = z.object({
