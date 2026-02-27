@@ -24,6 +24,7 @@ import {
   readCachedPublicProducts,
   type PublicProduct,
 } from './services/publicCatalog';
+import DeveloperPortal from './developer/DeveloperPortal';
 
 const ADMIN_EMAIL = 'meu@admin.com';
 const ADMIN_PASSWORD = 'ben123';
@@ -133,7 +134,12 @@ const areProductsEqual = (current: PublicProduct[], next: PublicProduct[]): bool
   return true;
 };
 
-export default function App() {
+const isDeveloperRoute = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  return window.location.pathname.startsWith('/desenvolvedor');
+};
+
+function MainSiteApp() {
   const prefersReducedMotion = useReducedMotion();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
@@ -900,4 +906,11 @@ export default function App() {
       </footer>
     </div>
   );
+}
+
+export default function App() {
+  if (isDeveloperRoute()) {
+    return <DeveloperPortal />;
+  }
+  return <MainSiteApp />;
 }

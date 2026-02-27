@@ -261,6 +261,255 @@ test('manual stock move accepts decimal amounts for kg without truncation', () =
   assert.equal(Number((moved.stockEntries[0]?.quantity || 0).toFixed(2)), -0.02);
 });
 
+test('sale register with unit "un" debits one unit and applies exact unit cost', () => {
+  const state: FrontAppState = {
+    ingredients: [
+      { id: 'i-box', name: 'Caixa 25cm', unit: 'un', currentStock: 150, minStock: 10, cost: 0.99 },
+    ],
+    products: [
+      {
+        id: 'p-box',
+        name: 'Produto Caixa',
+        price: 10,
+        imageUrl: 'https://example.com/box.jpg',
+        category: 'Side',
+        recipe: [{ ingredientId: 'i-box', quantity: 1 }],
+      },
+    ],
+    sales: [],
+    stockEntries: [],
+    cleaningMaterials: [],
+    cleaningStockEntries: [],
+    globalSales: [],
+    globalCancelledSales: [],
+    globalStockEntries: [],
+    globalCleaningStockEntries: [],
+  };
+
+  const sold = applyStateCommand(state, {
+    type: 'SALE_REGISTER',
+    productId: 'p-box',
+  });
+
+  assert.equal(sold.ingredients.find((entry) => entry.id === 'i-box')?.currentStock, 149);
+  assert.equal(Number((sold.sales[0]?.totalCost || 0).toFixed(2)), 0.99);
+  assert.equal(Number((sold.stockEntries[0]?.quantity || 0).toFixed(2)), -1);
+});
+
+test('sale register with unit "g" keeps gram arithmetic for stock and cost', () => {
+  const state: FrontAppState = {
+    ingredients: [
+      { id: 'i-salt', name: 'Sal', unit: 'g', currentStock: 1000, minStock: 100, cost: 0.01 },
+    ],
+    products: [
+      {
+        id: 'p-salted',
+        name: 'Produto Salgado',
+        price: 15,
+        imageUrl: 'https://example.com/salted.jpg',
+        category: 'Snack',
+        recipe: [{ ingredientId: 'i-salt', quantity: 30 }],
+      },
+    ],
+    sales: [],
+    stockEntries: [],
+    cleaningMaterials: [],
+    cleaningStockEntries: [],
+    globalSales: [],
+    globalCancelledSales: [],
+    globalStockEntries: [],
+    globalCleaningStockEntries: [],
+  };
+
+  const sold = applyStateCommand(state, {
+    type: 'SALE_REGISTER',
+    productId: 'p-salted',
+  });
+
+  assert.equal(sold.ingredients.find((entry) => entry.id === 'i-salt')?.currentStock, 970);
+  assert.equal(Number((sold.sales[0]?.totalCost || 0).toFixed(2)), 0.30);
+  assert.equal(Number((sold.stockEntries[0]?.quantity || 0).toFixed(2)), -30);
+});
+
+test('sale register with 10g from ingredient in kg applies fractional kg cost correctly', () => {
+  const state: FrontAppState = {
+    ingredients: [
+      { id: 'i-bacon', name: 'Bacon', unit: 'kg', currentStock: 8, minStock: 1, cost: 1 },
+    ],
+    products: [
+      {
+        id: 'p-bacon-10g',
+        name: 'Bacon 10g',
+        price: 14,
+        imageUrl: 'https://example.com/bacon-10g.jpg',
+        category: 'Snack',
+        recipe: [{ ingredientId: 'i-bacon', quantity: 10 }],
+      },
+    ],
+    sales: [],
+    stockEntries: [],
+    cleaningMaterials: [],
+    cleaningStockEntries: [],
+    globalSales: [],
+    globalCancelledSales: [],
+    globalStockEntries: [],
+    globalCleaningStockEntries: [],
+  };
+
+  const sold = applyStateCommand(state, {
+    type: 'SALE_REGISTER',
+    productId: 'p-bacon-10g',
+  });
+
+  assert.equal(Number((sold.ingredients.find((entry) => entry.id === 'i-bacon')?.currentStock || 0).toFixed(3)), 7.99);
+  assert.equal(Number((sold.sales[0]?.totalCost || 0).toFixed(2)), 0.01);
+  assert.equal(Number((sold.stockEntries[0]?.quantity || 0).toFixed(3)), -0.01);
+});
+
+test('sale register with 300ml from ingredient in l applies liter conversion and cost correctly', () => {
+  const state: FrontAppState = {
+    ingredients: [
+      { id: 'i-syrup', name: 'Xarope', unit: 'l', currentStock: 8, minStock: 1, cost: 1 },
+    ],
+    products: [
+      {
+        id: 'p-syrup-300ml',
+        name: 'Xarope 300ml',
+        price: 12,
+        imageUrl: 'https://example.com/syrup-300ml.jpg',
+        category: 'Drink',
+        recipe: [{ ingredientId: 'i-syrup', quantity: 300 }],
+      },
+    ],
+    sales: [],
+    stockEntries: [],
+    cleaningMaterials: [],
+    cleaningStockEntries: [],
+    globalSales: [],
+    globalCancelledSales: [],
+    globalStockEntries: [],
+    globalCleaningStockEntries: [],
+  };
+
+  const sold = applyStateCommand(state, {
+    type: 'SALE_REGISTER',
+    productId: 'p-syrup-300ml',
+  });
+
+  assert.equal(Number((sold.ingredients.find((entry) => entry.id === 'i-syrup')?.currentStock || 0).toFixed(3)), 7.7);
+  assert.equal(Number((sold.sales[0]?.totalCost || 0).toFixed(2)), 0.30);
+  assert.equal(Number((sold.stockEntries[0]?.quantity || 0).toFixed(3)), -0.3);
+});
+
+test('sale register with unit "ml" uses direct ml arithmetic without conversion', () => {
+  const state: FrontAppState = {
+    ingredients: [
+      { id: 'i-essence', name: 'Essencia', unit: 'ml', currentStock: 1000, minStock: 100, cost: 0.01 },
+    ],
+    products: [
+      {
+        id: 'p-essence',
+        name: 'Essencia Drink',
+        price: 9,
+        imageUrl: 'https://example.com/essence.jpg',
+        category: 'Drink',
+        recipe: [{ ingredientId: 'i-essence', quantity: 50 }],
+      },
+    ],
+    sales: [],
+    stockEntries: [],
+    cleaningMaterials: [],
+    cleaningStockEntries: [],
+    globalSales: [],
+    globalCancelledSales: [],
+    globalStockEntries: [],
+    globalCleaningStockEntries: [],
+  };
+
+  const sold = applyStateCommand(state, {
+    type: 'SALE_REGISTER',
+    productId: 'p-essence',
+  });
+
+  assert.equal(sold.ingredients.find((entry) => entry.id === 'i-essence')?.currentStock, 950);
+  assert.equal(Number((sold.sales[0]?.totalCost || 0).toFixed(2)), 0.50);
+  assert.equal(Number((sold.stockEntries[0]?.quantity || 0).toFixed(2)), -50);
+});
+
+test('sale register with custom unit keeps direct quantity arithmetic', () => {
+  const state: FrontAppState = {
+    ingredients: [
+      { id: 'i-cheese-slice', name: 'Queijo', unit: 'fatias', currentStock: 120, minStock: 20, cost: 0.4 },
+    ],
+    products: [
+      {
+        id: 'p-cheese',
+        name: 'Cheese Burger',
+        price: 18,
+        imageUrl: 'https://example.com/cheese.jpg',
+        category: 'Snack',
+        recipe: [{ ingredientId: 'i-cheese-slice', quantity: 3 }],
+      },
+    ],
+    sales: [],
+    stockEntries: [],
+    cleaningMaterials: [],
+    cleaningStockEntries: [],
+    globalSales: [],
+    globalCancelledSales: [],
+    globalStockEntries: [],
+    globalCleaningStockEntries: [],
+  };
+
+  const sold = applyStateCommand(state, {
+    type: 'SALE_REGISTER',
+    productId: 'p-cheese',
+  });
+
+  assert.equal(sold.ingredients.find((entry) => entry.id === 'i-cheese-slice')?.currentStock, 117);
+  assert.equal(Number((sold.sales[0]?.totalCost || 0).toFixed(2)), 1.20);
+  assert.equal(Number((sold.stockEntries[0]?.quantity || 0).toFixed(2)), -3);
+});
+
+test('sale register blocks when requested grams exceed available kg stock', () => {
+  const state: FrontAppState = {
+    ingredients: [
+      { id: 'i-bacon', name: 'Bacon', unit: 'kg', currentStock: 8, minStock: 1, cost: 20 },
+    ],
+    products: [
+      {
+        id: 'p-bacon-over',
+        name: 'Bacon Over',
+        price: 30,
+        imageUrl: 'https://example.com/bacon-over.jpg',
+        category: 'Snack',
+        recipe: [{ ingredientId: 'i-bacon', quantity: 9000 }],
+      },
+    ],
+    sales: [],
+    stockEntries: [],
+    cleaningMaterials: [],
+    cleaningStockEntries: [],
+    globalSales: [],
+    globalCancelledSales: [],
+    globalStockEntries: [],
+    globalCleaningStockEntries: [],
+  };
+
+  assert.throws(
+    () =>
+      applyStateCommand(state, {
+        type: 'SALE_REGISTER',
+        productId: 'p-bacon-over',
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof HttpError);
+      assert.equal(error.statusCode, 409);
+      return true;
+    }
+  );
+});
+
 test('sale register with price override keeps discount and stock/cost consistency', () => {
   const state: FrontAppState = {
     ingredients: [
