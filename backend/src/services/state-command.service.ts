@@ -294,23 +294,24 @@ const applySaleRegister = (state: FrontAppState, command: Extract<StateCommandIn
   state.globalSales.push({ ...newSale });
 };
 
-const applyUndoLastSale = (state: FrontAppState) => {
-  if (state.sales.length === 0) {
-    throw new HttpError(404, 'Nenhuma venda para desfazer.');
+const applyUndoSaleById = (state: FrontAppState, saleId: string) => {
+  const saleIndex = state.sales.map((sale) => sale.id).lastIndexOf(saleId);
+  if (saleIndex < 0) {
+    throw new HttpError(404, 'Venda não encontrada para desfazer.');
   }
 
-  const lastSale = state.sales[state.sales.length - 1];
-  const recipeToRestore = lastSale.stockDebited || lastSale.recipe;
+  const targetSale = state.sales[saleIndex];
+  const recipeToRestore = targetSale.stockDebited || targetSale.recipe;
   const totals = recipeToRestore ? aggregateRecipe(recipeToRestore) : {};
   const saleMovementTotals = state.stockEntries.reduce<Record<string, number>>((acc, entry) => {
-    if (entry.saleId !== lastSale.id || entry.source !== 'SALE') {
+    if (entry.saleId !== targetSale.id || entry.source !== 'SALE') {
       return acc;
     }
     acc[entry.ingredientId] = (acc[entry.ingredientId] || 0) + Math.max(0, -entry.quantity);
     return acc;
   }, {});
   const autoReplenishmentTotals = state.stockEntries.reduce<Record<string, number>>((acc, entry) => {
-    if (entry.saleId !== lastSale.id || entry.source !== 'AUTO_REPLENISH') {
+    if (entry.saleId !== targetSale.id || entry.source !== 'AUTO_REPLENISH') {
       return acc;
     }
     acc[entry.ingredientId] = (acc[entry.ingredientId] || 0) + entry.quantity;
@@ -336,15 +337,24 @@ const applyUndoLastSale = (state: FrontAppState) => {
     });
   }
 
-  state.sales = state.sales.slice(0, -1);
-  state.stockEntries = state.stockEntries.filter((entry) => entry.saleId !== lastSale.id);
-  state.globalStockEntries = state.globalStockEntries.filter((entry) => entry.saleId !== lastSale.id);
+  state.sales = state.sales.filter((_sale, index) => index !== saleIndex);
+  state.stockEntries = state.stockEntries.filter((entry) => entry.saleId !== targetSale.id);
+  state.globalStockEntries = state.globalStockEntries.filter((entry) => entry.saleId !== targetSale.id);
 
-  const globalIndex = state.globalSales.map((sale) => sale.id).lastIndexOf(lastSale.id);
+  const globalIndex = state.globalSales.map((sale) => sale.id).lastIndexOf(targetSale.id);
   if (globalIndex >= 0) {
     state.globalSales = state.globalSales.filter((_sale, index) => index !== globalIndex);
   }
-  state.globalCancelledSales.push({ ...lastSale });
+  state.globalCancelledSales.push({ ...targetSale });
+};
+
+const applyUndoLastSale = (state: FrontAppState) => {
+  if (state.sales.length === 0) {
+    throw new HttpError(404, 'Nenhuma venda para desfazer.');
+  }
+
+  const lastSale = state.sales[state.sales.length - 1];
+  applyUndoSaleById(state, lastSale.id);
 };
 
 const applyIngredientStockMove = (
@@ -442,6 +452,9 @@ export const applyStateCommand = (
       return state;
     case 'SALE_UNDO_LAST':
       applyUndoLastSale(state);
+      return state;
+    case 'SALE_UNDO_BY_ID':
+      applyUndoSaleById(state, command.saleId);
       return state;
     case 'INGREDIENT_STOCK_MOVE':
       applyIngredientStockMove(state, command);

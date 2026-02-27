@@ -65,6 +65,11 @@ const saleUndoCommandSchema = baseCommandSchema.extend({
   type: z.literal('SALE_UNDO_LAST'),
 });
 
+const saleUndoByIdCommandSchema = baseCommandSchema.extend({
+  type: z.literal('SALE_UNDO_BY_ID'),
+  saleId: idSchema,
+});
+
 const ingredientStockMoveCommandSchema = baseCommandSchema.extend({
   type: z.literal('INGREDIENT_STOCK_MOVE'),
   ingredientId: idSchema,
@@ -146,6 +151,7 @@ const deleteArchiveSalesCommandSchema = baseCommandSchema.extend({
 export const stateCommandSchema = z.discriminatedUnion('type', [
   saleRegisterCommandSchema,
   saleUndoCommandSchema,
+  saleUndoByIdCommandSchema,
   ingredientStockMoveCommandSchema,
   ingredientCreateCommandSchema,
   ingredientUpdateCommandSchema,

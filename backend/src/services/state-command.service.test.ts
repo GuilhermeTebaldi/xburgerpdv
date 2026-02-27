@@ -296,6 +296,91 @@ test('sale register with unit "un" debits one unit and applies exact unit cost',
   assert.equal(Number((sold.stockEntries[0]?.quantity || 0).toFixed(2)), -1);
 });
 
+test('sale undo by id restores only selected sale and keeps other sales intact', () => {
+  const state: FrontAppState = {
+    ingredients: [
+      { id: 'i-box', name: 'Caixa 25cm', unit: 'un', currentStock: 100, minStock: 10, cost: 1 },
+      { id: 'i-bacon', name: 'Bacon', unit: 'kg', currentStock: 8, minStock: 1, cost: 10 },
+    ],
+    products: [
+      {
+        id: 'p-box',
+        name: 'Produto Caixa',
+        price: 12,
+        imageUrl: 'https://example.com/box.jpg',
+        category: 'Side',
+        recipe: [{ ingredientId: 'i-box', quantity: 1 }],
+      },
+      {
+        id: 'p-bacon-10g',
+        name: 'Bacon 10g',
+        price: 16,
+        imageUrl: 'https://example.com/bacon.jpg',
+        category: 'Snack',
+        recipe: [{ ingredientId: 'i-bacon', quantity: 10 }],
+      },
+    ],
+    sales: [],
+    stockEntries: [],
+    cleaningMaterials: [],
+    cleaningStockEntries: [],
+    globalSales: [],
+    globalCancelledSales: [],
+    globalStockEntries: [],
+    globalCleaningStockEntries: [],
+  };
+
+  const first = applyStateCommand(state, {
+    type: 'SALE_REGISTER',
+    productId: 'p-box',
+    clientSaleId: 'sale-box-001',
+  });
+  const second = applyStateCommand(first, {
+    type: 'SALE_REGISTER',
+    productId: 'p-bacon-10g',
+    clientSaleId: 'sale-bacon-001',
+  });
+
+  const undone = applyStateCommand(second, {
+    type: 'SALE_UNDO_BY_ID',
+    saleId: 'sale-box-001',
+  });
+
+  assert.equal(undone.sales.length, 1);
+  assert.equal(undone.sales[0]?.id, 'sale-bacon-001');
+  assert.equal(undone.globalSales.length, 1);
+  assert.equal(undone.globalSales[0]?.id, 'sale-bacon-001');
+  assert.equal(undone.globalCancelledSales.length, 1);
+  assert.equal(undone.globalCancelledSales[0]?.id, 'sale-box-001');
+  assert.equal(undone.ingredients.find((entry) => entry.id === 'i-box')?.currentStock, 100);
+  assert.equal(Number((undone.ingredients.find((entry) => entry.id === 'i-bacon')?.currentStock || 0).toFixed(3)), 7.99);
+  assert.equal(
+    undone.stockEntries.some((entry) => entry.saleId === 'sale-box-001'),
+    false
+  );
+  assert.equal(
+    undone.stockEntries.some((entry) => entry.saleId === 'sale-bacon-001'),
+    true
+  );
+});
+
+test('sale undo by id returns 404 when sale does not exist in session history', () => {
+  const state = createBaseState();
+
+  assert.throws(
+    () =>
+      applyStateCommand(state, {
+        type: 'SALE_UNDO_BY_ID',
+        saleId: 'sale-missing',
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof HttpError);
+      assert.equal(error.statusCode, 404);
+      return true;
+    }
+  );
+});
+
 test('sale register with unit "g" keeps gram arithmetic for stock and cost', () => {
   const state: FrontAppState = {
     ingredients: [

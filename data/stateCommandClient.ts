@@ -40,6 +40,7 @@ export type StateCommand =
       clientSaleId?: string;
     })
   | (BaseCommand & { type: 'SALE_UNDO_LAST' })
+  | (BaseCommand & { type: 'SALE_UNDO_BY_ID'; saleId: string })
   | (BaseCommand & { type: 'INGREDIENT_STOCK_MOVE'; ingredientId: string; amount: number })
   | (BaseCommand & { type: 'INGREDIENT_CREATE'; ingredient: Ingredient })
   | (BaseCommand & { type: 'INGREDIENT_UPDATE'; ingredient: Ingredient })

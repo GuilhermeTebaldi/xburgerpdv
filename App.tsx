@@ -154,6 +154,26 @@ const ensureSaleCommandIdentifiers = (command: SaleRegisterCommand): SaleRegiste
   clientSaleId: command.clientSaleId?.trim() || createClientId('sale'),
 });
 
+const toSaleDate = (timestamp: Date | string): Date | null => {
+  if (timestamp instanceof Date) {
+    return Number.isFinite(timestamp.getTime()) ? timestamp : null;
+  }
+  const parsed = new Date(timestamp);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+};
+
+const formatSaleTime = (timestamp: Date | string): string => {
+  const saleDate = toSaleDate(timestamp);
+  if (!saleDate) return '--:--';
+  return saleDate.toLocaleTimeString();
+};
+
+const formatSaleDateTime = (timestamp: Date | string): string => {
+  const saleDate = toSaleDate(timestamp);
+  if (!saleDate) return '--';
+  return saleDate.toLocaleString('pt-BR');
+};
+
 const getStateSyncErrorMessage = (error: unknown): string => {
   if (error instanceof Error && error.message.trim()) {
     return error.message;
@@ -313,6 +333,7 @@ const App: React.FC = () => {
     isVisible: false,
     message: '',
   });
+  const [isUndoHistoryOpen, setIsUndoHistoryOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -668,6 +689,37 @@ const App: React.FC = () => {
     }
   };
 
+  const handleOpenUndoHistory = () => {
+    if (sales.length === 0) {
+      showNotification('Nenhuma venda para desfazer!');
+      return;
+    }
+    setIsUndoHistoryOpen(true);
+  };
+
+  const handleUndoSaleById = async (saleId: string) => {
+    const targetSale = sales.find((sale) => sale.id === saleId);
+    if (!targetSale) {
+      showNotification('Venda selecionada não encontrada.');
+      setIsUndoHistoryOpen(false);
+      return;
+    }
+
+    const saleTime = formatSaleTime(targetSale.timestamp);
+    const confirmed = confirm(
+      `Desfazer venda selecionada?\nProduto: ${targetSale.productName}\nHorário: ${saleTime}\nValor: R$ ${targetSale.total.toFixed(2)}`
+    );
+    if (!confirmed) return;
+
+    const ok = await runCommandWithSync(
+      { type: 'SALE_UNDO_BY_ID', saleId: targetSale.id },
+      'Venda Estornada!'
+    );
+    if (ok) {
+      setIsUndoHistoryOpen(false);
+    }
+  };
+
   const handleUpdateStock = useCallback((id: string, amount: number) => {
     void runCommandWithSync(
       {
@@ -810,6 +862,14 @@ const App: React.FC = () => {
   };
 
   const dailyTotal = useMemo(() => sales.reduce((acc, sale) => acc + sale.total, 0), [sales]);
+  const recentSalesForUndo = useMemo(() => sales.slice().reverse(), [sales]);
+
+  useEffect(() => {
+    if (!isUndoHistoryOpen) return;
+    if (sales.length === 0 || view !== ViewMode.POS) {
+      setIsUndoHistoryOpen(false);
+    }
+  }, [isUndoHistoryOpen, sales.length, view]);
 
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
@@ -870,6 +930,15 @@ const App: React.FC = () => {
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="group-hover:-rotate-45 transition-transform"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
                   Desfazer Última
+                </button>
+                <button
+                  onClick={handleOpenUndoHistory}
+                  disabled={sales.length === 0}
+                  className="qb-btn-touch bg-white text-slate-800 px-4 py-3 rounded-2xl font-black text-[10px] uppercase tracking-tighter shadow-sm border border-slate-200 hover:border-red-400 hover:text-red-600 active:scale-95 transition-all disabled:opacity-30 disabled:grayscale disabled:scale-100 whitespace-nowrap flex items-center gap-2"
+                  title="Selecionar venda no histórico para desfazer"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
+                  Histórico
                 </button>
 
                 <div className="qb-pos-search relative flex-1 md:w-64">
@@ -962,6 +1031,80 @@ const App: React.FC = () => {
           )
         )}
       </main>
+
+      {isUndoHistoryOpen && (
+        <div className="fixed inset-0 z-[220] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-3xl bg-white rounded-[36px] border-2 border-slate-100 shadow-2xl overflow-hidden">
+            <div className="p-5 bg-slate-900 text-white flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-black uppercase tracking-tight">Histórico para Desfazer</h3>
+                <p className="text-[10px] uppercase tracking-widest text-slate-300">
+                  Selecione uma venda específica para estornar
+                </p>
+              </div>
+              <button
+                onClick={() => setIsUndoHistoryOpen(false)}
+                className="qb-btn-touch bg-slate-800 hover:bg-slate-700 p-2 rounded-full transition-colors"
+                title="Fechar"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </button>
+            </div>
+            <div className="p-4 max-h-[65vh] overflow-y-auto space-y-2 bg-slate-50">
+              {recentSalesForUndo.length === 0 && (
+                <div className="py-12 text-center text-xs uppercase tracking-widest font-black text-slate-400">
+                  Nenhuma venda disponível para desfazer.
+                </div>
+              )}
+              {recentSalesForUndo.map((sale, index) => {
+                const isLatest = index === 0;
+                const isCommandBusy = isStateHydrating || pendingStateOps > 0;
+                return (
+                  <div
+                    key={sale.id}
+                    className="bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-black uppercase text-slate-800 truncate">
+                        {sale.productName}
+                        {isLatest && (
+                          <span className="ml-2 text-[9px] align-middle px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 border border-yellow-300">
+                            Última
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                        {formatSaleDateTime(sale.timestamp)} • ID: {sale.id}
+                      </p>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                        Total: R$ {sale.total.toFixed(2)} • Custo: R$ {(sale.totalCost || 0).toFixed(2)}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        void handleUndoSaleById(sale.id);
+                      }}
+                      disabled={isCommandBusy}
+                      className="qb-btn-touch bg-slate-900 text-yellow-400 px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                      title="Desfazer esta venda"
+                    >
+                      Desfazer Esta
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="p-4 bg-white border-t border-slate-100 flex justify-end">
+              <button
+                onClick={() => setIsUndoHistoryOpen(false)}
+                className="qb-btn-touch bg-slate-100 text-slate-700 px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-colors"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Notification 
         isVisible={notification.isVisible} 
