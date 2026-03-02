@@ -53,12 +53,68 @@ const baseCommandSchema = z.object({
   commandId: idSchema.optional(),
 });
 
+const salePaymentMethodSchema = z.enum(['PIX', 'DEBITO', 'CREDITO', 'DINHEIRO']);
+const saleCustomerTypeSchema = z.enum(['BALCAO', 'ENTREGA']);
+
 const saleRegisterCommandSchema = baseCommandSchema.extend({
   type: z.literal('SALE_REGISTER'),
   productId: idSchema,
   recipeOverride: z.array(recipeItemSchema).min(1).optional(),
   priceOverride: z.coerce.number().finite().min(0).optional(),
   clientSaleId: idSchema.optional(),
+});
+
+const saleDraftCreateCommandSchema = baseCommandSchema.extend({
+  type: z.literal('SALE_DRAFT_CREATE'),
+  draftId: idSchema,
+  customerType: saleCustomerTypeSchema.optional(),
+});
+
+const saleDraftSetCustomerTypeCommandSchema = baseCommandSchema.extend({
+  type: z.literal('SALE_DRAFT_SET_CUSTOMER_TYPE'),
+  draftId: idSchema,
+  customerType: saleCustomerTypeSchema.optional(),
+});
+
+const saleDraftAddItemCommandSchema = baseCommandSchema.extend({
+  type: z.literal('SALE_DRAFT_ADD_ITEM'),
+  draftId: idSchema,
+  productId: idSchema,
+  quantity: z.coerce.number().int().positive().optional(),
+  recipeOverride: z.array(recipeItemSchema).min(1).optional(),
+  priceOverride: z.coerce.number().finite().min(0).optional(),
+  note: z.string().trim().max(2000).optional(),
+});
+
+const saleDraftUpdateItemCommandSchema = baseCommandSchema.extend({
+  type: z.literal('SALE_DRAFT_UPDATE_ITEM'),
+  draftId: idSchema,
+  itemId: idSchema,
+  quantity: z.coerce.number().int().positive().optional(),
+  note: z.string().trim().max(2000).optional(),
+});
+
+const saleDraftRemoveItemCommandSchema = baseCommandSchema.extend({
+  type: z.literal('SALE_DRAFT_REMOVE_ITEM'),
+  draftId: idSchema,
+  itemId: idSchema,
+});
+
+const saleDraftFinalizeCommandSchema = baseCommandSchema.extend({
+  type: z.literal('SALE_DRAFT_FINALIZE'),
+  draftId: idSchema,
+  paymentMethod: salePaymentMethodSchema,
+  cashReceived: z.coerce.number().finite().min(0).optional(),
+});
+
+const saleDraftConfirmPaidCommandSchema = baseCommandSchema.extend({
+  type: z.literal('SALE_DRAFT_CONFIRM_PAID'),
+  draftId: idSchema,
+});
+
+const saleDraftCancelCommandSchema = baseCommandSchema.extend({
+  type: z.literal('SALE_DRAFT_CANCEL'),
+  draftId: idSchema,
 });
 
 const saleUndoCommandSchema = baseCommandSchema.extend({
@@ -150,6 +206,14 @@ const deleteArchiveSalesCommandSchema = baseCommandSchema.extend({
 
 export const stateCommandSchema = z.discriminatedUnion('type', [
   saleRegisterCommandSchema,
+  saleDraftCreateCommandSchema,
+  saleDraftSetCustomerTypeCommandSchema,
+  saleDraftAddItemCommandSchema,
+  saleDraftUpdateItemCommandSchema,
+  saleDraftRemoveItemCommandSchema,
+  saleDraftFinalizeCommandSchema,
+  saleDraftConfirmPaidCommandSchema,
+  saleDraftCancelCommandSchema,
   saleUndoCommandSchema,
   saleUndoByIdCommandSchema,
   ingredientStockMoveCommandSchema,

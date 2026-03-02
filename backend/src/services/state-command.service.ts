@@ -5,6 +5,11 @@ import type {
   FrontIngredient,
   FrontProduct,
   FrontRecipeItem,
+  FrontSaleCustomerType,
+  FrontSaleDraft,
+  FrontSaleDraftItem,
+  FrontSalePayment,
+  FrontSalePaymentMethod,
   FrontSale,
   FrontStockEntry,
 } from '../types/frontend.js';
@@ -132,16 +137,45 @@ const getAppliedStockDelta = (currentStock: number, requestedAmount: number): nu
   return Math.max(0, currentStock + normalizedAmount) - currentStock;
 };
 
+const roundMoney = (value: number): number => Number(value.toFixed(2));
+
 const cloneRecipe = (recipe: FrontRecipeItem[] | undefined): FrontRecipeItem[] | undefined =>
   recipe?.map((item) => ({
     ingredientId: item.ingredientId,
     quantity: item.quantity,
   }));
 
+const cloneSalePayment = (payment: FrontSalePayment | undefined): FrontSalePayment | undefined => {
+  if (!payment) return undefined;
+  return {
+    method: payment.method ?? null,
+    cashReceived: payment.cashReceived ?? null,
+    change: payment.change ?? null,
+    confirmedAt: payment.confirmedAt ?? null,
+  };
+};
+
+const cloneSaleDraftItem = (item: FrontSaleDraftItem): FrontSaleDraftItem => ({
+  ...item,
+  recipe: cloneRecipe(item.recipe) || [],
+});
+
+const cloneSaleDraft = (draft: FrontSaleDraft): FrontSaleDraft => ({
+  ...draft,
+  items: draft.items.map(cloneSaleDraftItem),
+  payment: {
+    method: draft.payment.method ?? null,
+    cashReceived: draft.payment.cashReceived ?? null,
+    change: draft.payment.change ?? null,
+    confirmedAt: draft.payment.confirmedAt ?? null,
+  },
+});
+
 const cloneSale = (sale: FrontSale): FrontSale => ({
   ...sale,
   recipe: cloneRecipe(sale.recipe),
   stockDebited: cloneRecipe(sale.stockDebited),
+  payment: cloneSalePayment(sale.payment),
 });
 
 const cloneState = (state: FrontAppState): FrontAppState => ({
@@ -159,6 +193,7 @@ const cloneState = (state: FrontAppState): FrontAppState => ({
   globalCancelledSales: state.globalCancelledSales.map(cloneSale),
   globalStockEntries: state.globalStockEntries.map((entry) => ({ ...entry })),
   globalCleaningStockEntries: state.globalCleaningStockEntries.map((entry) => ({ ...entry })),
+  saleDrafts: (state.saleDrafts || []).map(cloneSaleDraft),
 });
 
 const emptyAppState = (): FrontAppState => ({
@@ -172,6 +207,7 @@ const emptyAppState = (): FrontAppState => ({
   globalCancelledSales: [],
   globalStockEntries: [],
   globalCleaningStockEntries: [],
+  saleDrafts: [],
 });
 
 const requireIngredient = (state: FrontAppState, ingredientId: string): FrontIngredient => {
@@ -204,6 +240,440 @@ const pushCleaningMovement = (
 ): void => {
   state.cleaningStockEntries.push(entry);
   state.globalCleaningStockEntries.push({ ...entry });
+};
+
+const defaultSalePayment = (): FrontSalePayment => ({
+  method: null,
+  cashReceived: null,
+  change: null,
+  confirmedAt: null,
+});
+
+const ensureSaleDrafts = (state: FrontAppState): FrontSaleDraft[] => {
+  if (!state.saleDrafts) {
+    state.saleDrafts = [];
+  }
+  return state.saleDrafts;
+};
+
+const requireSaleDraft = (state: FrontAppState, draftId: string): FrontSaleDraft => {
+  const drafts = ensureSaleDrafts(state);
+  const draft = drafts.find((entry) => entry.id === draftId);
+  if (!draft) {
+    throw new HttpError(404, 'Carrinho não encontrado.');
+  }
+  return draft;
+};
+
+const ensureDraftStatus = (
+  draft: FrontSaleDraft,
+  allowed: FrontSaleDraft['status'][],
+  message: string
+): void => {
+  if (!allowed.includes(draft.status)) {
+    throw new HttpError(409, message, { draftId: draft.id, status: draft.status });
+  }
+};
+
+const normalizeOptionalNote = (raw: string | undefined): string | undefined => {
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  return trimmed ? trimmed : undefined;
+};
+
+const normalizeDraftTotal = (draft: FrontSaleDraft): number =>
+  roundMoney(
+    draft.items.reduce((sum, item) => {
+      const unitPrice = item.unitPriceSnapshot ?? 0;
+      return sum + unitPrice * item.qty;
+    }, 0)
+  );
+
+const normalizePaymentChange = (
+  method: FrontSalePaymentMethod,
+  total: number,
+  cashReceived: number | null
+): number | null => {
+  if (method !== 'DINHEIRO') return null;
+  if (cashReceived === null) return null;
+  return roundMoney(cashReceived - total);
+};
+
+const sameRecipe = (left: FrontRecipeItem[], right: FrontRecipeItem[]): boolean => {
+  const normalizedLeft = normalizeRecipeItems(left);
+  const normalizedRight = normalizeRecipeItems(right);
+  if (normalizedLeft.length !== normalizedRight.length) return false;
+  return normalizedLeft.every((item, index) => {
+    const target = normalizedRight[index];
+    if (!target) return false;
+    return item.ingredientId === target.ingredientId && item.quantity === target.quantity;
+  });
+};
+
+const scaleRecipe = (recipe: FrontRecipeItem[], quantity: number): FrontRecipeItem[] =>
+  normalizeRecipeItems(
+    recipe.map((item) => ({
+      ingredientId: item.ingredientId,
+      quantity: item.quantity * quantity,
+    }))
+  );
+
+const updateDraftPayment = (
+  draft: FrontSaleDraft,
+  method: FrontSalePaymentMethod,
+  cashReceivedInput: number | undefined
+): void => {
+  const cashReceived =
+    method === 'DINHEIRO'
+      ? cashReceivedInput !== undefined
+        ? cashReceivedInput
+        : draft.payment.method === 'DINHEIRO'
+          ? draft.payment.cashReceived
+          : null
+      : null;
+
+  draft.payment = {
+    method,
+    cashReceived,
+    change: normalizePaymentChange(method, draft.total, cashReceived),
+    confirmedAt: draft.payment.confirmedAt ?? null,
+  };
+};
+
+const applySaleDraftCreate = (
+  state: FrontAppState,
+  command: Extract<StateCommandInput, { type: 'SALE_DRAFT_CREATE' }>
+) => {
+  const drafts = ensureSaleDrafts(state);
+  const existing = drafts.find((entry) => entry.id === command.draftId);
+  if (existing) {
+    if (command.customerType) {
+      existing.customerType = command.customerType;
+      existing.updatedAt = toTimestampIso();
+    }
+    return;
+  }
+
+  const timestamp = toTimestampIso();
+  drafts.push({
+    id: command.draftId,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    items: [],
+    total: 0,
+    customerType: command.customerType,
+    status: 'DRAFT',
+    payment: defaultSalePayment(),
+    stockDebited: false,
+  });
+};
+
+const applySaleDraftSetCustomerType = (
+  state: FrontAppState,
+  command: Extract<StateCommandInput, { type: 'SALE_DRAFT_SET_CUSTOMER_TYPE' }>
+) => {
+  const draft = requireSaleDraft(state, command.draftId);
+  ensureDraftStatus(draft, ['DRAFT', 'PENDING_PAYMENT'], 'Não é possível alterar o tipo desta venda.');
+  draft.customerType = command.customerType;
+  draft.updatedAt = toTimestampIso();
+};
+
+const applySaleDraftAddItem = (
+  state: FrontAppState,
+  command: Extract<StateCommandInput, { type: 'SALE_DRAFT_ADD_ITEM' }>
+) => {
+  const draft = requireSaleDraft(state, command.draftId);
+  ensureDraftStatus(draft, ['DRAFT'], 'Carrinho já foi finalizado para pagamento.');
+
+  const product = state.products.find((entry) => entry.id === command.productId);
+  if (!product) {
+    throw new HttpError(404, 'Produto não encontrado para adicionar ao carrinho.');
+  }
+
+  const quantity = command.quantity ?? 1;
+  const normalizedRecipe = normalizeRecipeItems(command.recipeOverride || product.recipe);
+  if (normalizedRecipe.length === 0) {
+    throw new HttpError(422, 'Receita inválida para item do carrinho.');
+  }
+
+  const recipeCost = calculateRecipeCost(state.ingredients, normalizedRecipe);
+  if (recipeCost.missingIngredientIds.length > 0) {
+    throw new HttpError(422, 'Receita com insumos ausentes para o carrinho.', {
+      missingIngredientIds: recipeCost.missingIngredientIds,
+    });
+  }
+
+  const unitPriceSnapshot = command.priceOverride ?? product.price;
+  const note = normalizeOptionalNote(command.note);
+
+  const mergeableItem = draft.items.find(
+    (item) =>
+      item.productId === product.id &&
+      (item.unitPriceSnapshot ?? product.price) === unitPriceSnapshot &&
+      normalizeOptionalNote(item.note) === note &&
+      sameRecipe(item.recipe, normalizedRecipe)
+  );
+
+  if (mergeableItem) {
+    mergeableItem.qty += quantity;
+  } else {
+    draft.items.push({
+      id: createId('sdi'),
+      productId: product.id,
+      nameSnapshot: product.name,
+      qty: quantity,
+      unitPriceSnapshot,
+      note,
+      recipe: normalizedRecipe,
+    });
+  }
+
+  draft.total = normalizeDraftTotal(draft);
+  draft.updatedAt = toTimestampIso();
+};
+
+const applySaleDraftUpdateItem = (
+  state: FrontAppState,
+  command: Extract<StateCommandInput, { type: 'SALE_DRAFT_UPDATE_ITEM' }>
+) => {
+  const draft = requireSaleDraft(state, command.draftId);
+  ensureDraftStatus(draft, ['DRAFT'], 'Itens só podem ser alterados com o carrinho em DRAFT.');
+  const item = draft.items.find((entry) => entry.id === command.itemId);
+  if (!item) {
+    throw new HttpError(404, 'Item do carrinho não encontrado.');
+  }
+
+  if (command.quantity !== undefined) {
+    item.qty = command.quantity;
+  }
+  if (command.note !== undefined) {
+    item.note = normalizeOptionalNote(command.note);
+  }
+
+  draft.total = normalizeDraftTotal(draft);
+  draft.updatedAt = toTimestampIso();
+};
+
+const applySaleDraftRemoveItem = (
+  state: FrontAppState,
+  command: Extract<StateCommandInput, { type: 'SALE_DRAFT_REMOVE_ITEM' }>
+) => {
+  const draft = requireSaleDraft(state, command.draftId);
+  ensureDraftStatus(draft, ['DRAFT'], 'Itens só podem ser removidos com o carrinho em DRAFT.');
+  const before = draft.items.length;
+  draft.items = draft.items.filter((entry) => entry.id !== command.itemId);
+  if (draft.items.length === before) {
+    throw new HttpError(404, 'Item do carrinho não encontrado para remoção.');
+  }
+
+  draft.total = normalizeDraftTotal(draft);
+  draft.updatedAt = toTimestampIso();
+};
+
+const applySaleDraftFinalize = (
+  state: FrontAppState,
+  command: Extract<StateCommandInput, { type: 'SALE_DRAFT_FINALIZE' }>
+) => {
+  const draft = requireSaleDraft(state, command.draftId);
+  ensureDraftStatus(draft, ['DRAFT', 'PENDING_PAYMENT'], 'Não é possível finalizar esta venda.');
+  if (draft.items.length === 0) {
+    throw new HttpError(422, 'O carrinho está vazio.');
+  }
+
+  draft.total = normalizeDraftTotal(draft);
+  updateDraftPayment(draft, command.paymentMethod, command.cashReceived);
+  draft.status = 'PENDING_PAYMENT';
+  draft.updatedAt = toTimestampIso();
+};
+
+const applySaleDraftConfirmPaid = (
+  state: FrontAppState,
+  command: Extract<StateCommandInput, { type: 'SALE_DRAFT_CONFIRM_PAID' }>
+) => {
+  const draft = requireSaleDraft(state, command.draftId);
+
+  if (draft.status === 'PAID' || draft.stockDebited) {
+    return;
+  }
+
+  if (draft.status === 'CANCELLED') {
+    throw new HttpError(409, 'Venda cancelada não pode ser confirmada como paga.');
+  }
+
+  if (draft.status !== 'PENDING_PAYMENT') {
+    throw new HttpError(409, 'Venda ainda não foi finalizada para pagamento.');
+  }
+
+  if (draft.items.length === 0) {
+    throw new HttpError(422, 'O carrinho está vazio.');
+  }
+
+  draft.total = normalizeDraftTotal(draft);
+
+  const paymentMethod = draft.payment.method;
+  if (!paymentMethod) {
+    throw new HttpError(422, 'Forma de pagamento não selecionada.');
+  }
+
+  if (paymentMethod === 'DINHEIRO') {
+    const cashReceived = draft.payment.cashReceived;
+    if (cashReceived === null || !Number.isFinite(cashReceived)) {
+      throw new HttpError(422, 'Informe o valor recebido em dinheiro antes de confirmar.');
+    }
+    if (cashReceived + Number.EPSILON < draft.total) {
+      throw new HttpError(409, 'Valor em dinheiro insuficiente para confirmar pagamento.', {
+        total: draft.total,
+        cashReceived,
+      });
+    }
+    draft.payment.change = roundMoney(cashReceived - draft.total);
+  } else {
+    draft.payment.cashReceived = null;
+    draft.payment.change = null;
+  }
+
+  type PlannedDraftSale = {
+    saleId: string;
+    productId: string;
+    productName: string;
+    saleRecipe: FrontRecipeItem[];
+    stockTotals: Record<string, number>;
+    total: number;
+    totalCost: number;
+    basePrice: number;
+    priceAdjustment: number;
+    baseCost?: number;
+  };
+
+  const plannedSales: PlannedDraftSale[] = [];
+  const consumptionByIngredient = new Map<string, number>();
+
+  draft.items.forEach((item) => {
+    const quantity = Math.max(1, item.qty);
+    const saleRecipe = scaleRecipe(item.recipe, quantity);
+    const saleCost = calculateRecipeCost(state.ingredients, saleRecipe);
+    if (saleCost.missingIngredientIds.length > 0) {
+      throw new HttpError(422, 'Receita com insumos ausentes ao confirmar pagamento.', {
+        missingIngredientIds: saleCost.missingIngredientIds,
+      });
+    }
+
+    const product = state.products.find((entry) => entry.id === item.productId);
+    const unitBasePrice = product?.price ?? item.unitPriceSnapshot ?? 0;
+    const unitFinalPrice = item.unitPriceSnapshot ?? unitBasePrice;
+    const total = roundMoney(unitFinalPrice * quantity);
+    const basePrice = roundMoney(unitBasePrice * quantity);
+    const baseCostInfo = product ? calculateRecipeCost(state.ingredients, scaleRecipe(product.recipe, quantity)) : null;
+    const baseCost =
+      baseCostInfo && baseCostInfo.missingIngredientIds.length === 0
+        ? roundMoney(baseCostInfo.totalCost)
+        : undefined;
+
+    Object.entries(saleCost.totals).forEach(([ingredientId, recipeQuantity]) => {
+      const ingredient = requireIngredient(state, ingredientId);
+      const stockQuantity = toStockQuantity(ingredient, recipeQuantity);
+      const current = consumptionByIngredient.get(ingredientId) || 0;
+      consumptionByIngredient.set(ingredientId, current + stockQuantity);
+    });
+
+    plannedSales.push({
+      saleId: `${draft.id}-${item.id}`,
+      productId: item.productId,
+      productName: item.nameSnapshot || product?.name || item.productId,
+      saleRecipe,
+      stockTotals: saleCost.totals,
+      total,
+      totalCost: roundMoney(saleCost.totalCost),
+      basePrice,
+      priceAdjustment: roundMoney(total - basePrice),
+      baseCost,
+    });
+  });
+
+  for (const [ingredientId, neededStock] of consumptionByIngredient.entries()) {
+    const ingredient = requireIngredient(state, ingredientId);
+    if (ingredient.currentStock + Number.EPSILON < neededStock) {
+      throw new HttpError(409, `Estoque insuficiente para ${ingredient.name}.`, {
+        ingredientId,
+        required: neededStock,
+        available: ingredient.currentStock,
+      });
+    }
+  }
+
+  const timestamp = toTimestampIso();
+  const paymentSnapshot: FrontSalePayment = {
+    method: draft.payment.method,
+    cashReceived: draft.payment.cashReceived,
+    change: draft.payment.change,
+    confirmedAt: timestamp,
+  };
+
+  plannedSales.forEach((plan) => {
+    Object.entries(plan.stockTotals).forEach(([ingredientId, recipeQuantity]) => {
+      const ingredient = requireIngredient(state, ingredientId);
+      const stockQuantity = toStockQuantity(ingredient, recipeQuantity);
+
+      state.ingredients = state.ingredients.map((entry) =>
+        entry.id === ingredientId
+          ? { ...entry, currentStock: Math.max(0, entry.currentStock - stockQuantity) }
+          : entry
+      );
+
+      const updatedIngredient = requireIngredient(state, ingredientId);
+      const entry: FrontStockEntry = {
+        id: `st-sale-${plan.saleId}-${ingredientId}`,
+        ingredientId,
+        ingredientName: updatedIngredient.name,
+        quantity: -stockQuantity,
+        unitCost: updatedIngredient.cost,
+        timestamp,
+        source: 'SALE',
+        saleId: plan.saleId,
+      };
+      pushIngredientMovement(state, entry);
+    });
+
+    const paidSale: FrontSale = {
+      id: plan.saleId,
+      productId: plan.productId,
+      productName: plan.productName,
+      timestamp,
+      total: plan.total,
+      totalCost: plan.totalCost,
+      recipe: plan.saleRecipe,
+      stockDebited: plan.saleRecipe,
+      basePrice: plan.basePrice,
+      priceAdjustment: plan.priceAdjustment,
+      baseCost: plan.baseCost,
+      status: 'PAID',
+      payment: cloneSalePayment(paymentSnapshot),
+      saleDraftId: draft.id,
+    };
+    state.sales.push(paidSale);
+    state.globalSales.push(cloneSale(paidSale));
+  });
+
+  draft.status = 'PAID';
+  draft.stockDebited = true;
+  draft.payment.confirmedAt = timestamp;
+  draft.updatedAt = timestamp;
+};
+
+const applySaleDraftCancel = (
+  state: FrontAppState,
+  command: Extract<StateCommandInput, { type: 'SALE_DRAFT_CANCEL' }>
+) => {
+  const draft = requireSaleDraft(state, command.draftId);
+  if (draft.status === 'PAID') {
+    throw new HttpError(409, 'Venda já paga não pode ser cancelada.');
+  }
+  if (draft.status === 'CANCELLED') {
+    return;
+  }
+
+  draft.status = 'CANCELLED';
+  draft.updatedAt = toTimestampIso();
 };
 
 const applySaleRegister = (state: FrontAppState, command: Extract<StateCommandInput, { type: 'SALE_REGISTER' }>) => {
@@ -265,6 +735,7 @@ const applySaleRegister = (state: FrontAppState, command: Extract<StateCommandIn
     basePrice: product.price,
     priceAdjustment: finalPrice - product.price,
     baseCost,
+    status: 'PAID',
   };
 
   Object.entries(totals).forEach(([ingredientId, quantity]) => {
@@ -450,6 +921,30 @@ export const applyStateCommand = (
     case 'SALE_REGISTER':
       applySaleRegister(state, command);
       return state;
+    case 'SALE_DRAFT_CREATE':
+      applySaleDraftCreate(state, command);
+      return state;
+    case 'SALE_DRAFT_SET_CUSTOMER_TYPE':
+      applySaleDraftSetCustomerType(state, command);
+      return state;
+    case 'SALE_DRAFT_ADD_ITEM':
+      applySaleDraftAddItem(state, command);
+      return state;
+    case 'SALE_DRAFT_UPDATE_ITEM':
+      applySaleDraftUpdateItem(state, command);
+      return state;
+    case 'SALE_DRAFT_REMOVE_ITEM':
+      applySaleDraftRemoveItem(state, command);
+      return state;
+    case 'SALE_DRAFT_FINALIZE':
+      applySaleDraftFinalize(state, command);
+      return state;
+    case 'SALE_DRAFT_CONFIRM_PAID':
+      applySaleDraftConfirmPaid(state, command);
+      return state;
+    case 'SALE_DRAFT_CANCEL':
+      applySaleDraftCancel(state, command);
+      return state;
     case 'SALE_UNDO_LAST':
       applyUndoLastSale(state);
       return state;
@@ -535,6 +1030,7 @@ export const applyStateCommand = (
     case 'CLEAR_HISTORY':
       state.sales = [];
       state.stockEntries = [];
+      state.saleDrafts = [];
       return state;
     case 'FACTORY_RESET':
       return emptyAppState();
@@ -546,6 +1042,7 @@ export const applyStateCommand = (
       state.globalCancelledSales = [];
       state.globalStockEntries = [];
       state.globalCleaningStockEntries = [];
+      state.saleDrafts = [];
       return state;
     case 'CLEAR_ONLY_STOCK':
       state.ingredients = state.ingredients.map((ingredient) => ({ ...ingredient, currentStock: 0 }));

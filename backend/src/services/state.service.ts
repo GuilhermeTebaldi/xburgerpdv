@@ -30,6 +30,7 @@ const EMPTY_APP_STATE: FrontAppState = {
   globalCancelledSales: [],
   globalStockEntries: [],
   globalCleaningStockEntries: [],
+  saleDrafts: [],
 };
 
 const arrayOrEmpty = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
@@ -51,7 +52,27 @@ const normalizeStatePayload = (value: unknown): FrontAppState => {
     globalCancelledSales: arrayOrEmpty(payload.globalCancelledSales),
     globalStockEntries: arrayOrEmpty(payload.globalStockEntries),
     globalCleaningStockEntries: arrayOrEmpty(payload.globalCleaningStockEntries),
+    saleDrafts: arrayOrEmpty(payload.saleDrafts),
   };
+};
+
+const normalizeStatePayloadSafe = (value: unknown): FrontAppState => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {
+      ingredients: [],
+      products: [],
+      sales: [],
+      stockEntries: [],
+      cleaningMaterials: [],
+      cleaningStockEntries: [],
+      globalSales: [],
+      globalCancelledSales: [],
+      globalStockEntries: [],
+      globalCleaningStockEntries: [],
+      saleDrafts: [],
+    };
+  }
+  return normalizeStatePayload(value);
 };
 
 const toVersionTag = (value: Date): string => value.toISOString();
@@ -76,7 +97,7 @@ export class StateService {
       const snapshot = await prisma.appState.findUnique({ where: { id: 1 } });
       if (snapshot) {
         return {
-          state: normalizeStatePayload(snapshot.stateJson),
+          state: normalizeStatePayloadSafe(snapshot.stateJson),
           version: toVersionTag(snapshot.updatedAt),
         };
       }
@@ -309,7 +330,7 @@ export class StateService {
       const operationNow = new Date();
       this.assertExpectedVersion(expectedVersion, currentVersion);
 
-      const currentState = current ? normalizeStatePayload(current.stateJson) : EMPTY_APP_STATE;
+      const currentState = current ? normalizeStatePayloadSafe(current.stateJson) : EMPTY_APP_STATE;
       await this.ensurePreWriteBackupTx(tx, current);
       const nextState = applyStateCommand(currentState, command);
 
@@ -616,6 +637,7 @@ export class StateService {
       globalCancelledSales: globalCancelledSales.map(toFrontSale),
       globalStockEntries: globalStockMovements.map(toFrontIngredientEntry),
       globalCleaningStockEntries: globalCleaningMovements.map(toFrontCleaningEntry),
+      saleDrafts: [],
     };
   }
 }

@@ -86,6 +86,191 @@ test('sale register is idempotent when clientSaleId is retried', () => {
   assert.equal(retried.ingredients.find((entry) => entry.id === 'i-sauce')?.currentStock, 180);
 });
 
+test('draft flow keeps stock unchanged until payment confirmation', () => {
+  const base = createBaseState();
+  const withDraft = applyStateCommand(base, {
+    type: 'SALE_DRAFT_CREATE',
+    draftId: 'draft-001',
+    customerType: 'BALCAO',
+  });
+  const withItem = applyStateCommand(withDraft, {
+    type: 'SALE_DRAFT_ADD_ITEM',
+    draftId: 'draft-001',
+    productId: 'p-burger',
+    quantity: 2,
+  });
+  const pending = applyStateCommand(withItem, {
+    type: 'SALE_DRAFT_FINALIZE',
+    draftId: 'draft-001',
+    paymentMethod: 'PIX',
+  });
+
+  assert.equal(pending.saleDrafts?.length, 1);
+  assert.equal(pending.saleDrafts?.[0]?.status, 'PENDING_PAYMENT');
+  assert.equal(pending.saleDrafts?.[0]?.total, 40);
+  assert.equal(pending.ingredients.find((entry) => entry.id === 'i-bread')?.currentStock, 50);
+  assert.equal(pending.ingredients.find((entry) => entry.id === 'i-meat')?.currentStock, 40);
+  assert.equal(pending.ingredients.find((entry) => entry.id === 'i-sauce')?.currentStock, 200);
+  assert.equal(pending.sales.length, 0);
+  assert.equal(pending.stockEntries.length, 0);
+
+  const paid = applyStateCommand(pending, {
+    type: 'SALE_DRAFT_CONFIRM_PAID',
+    draftId: 'draft-001',
+  });
+
+  assert.equal(paid.saleDrafts?.[0]?.status, 'PAID');
+  assert.equal(paid.saleDrafts?.[0]?.stockDebited, true);
+  assert.equal(paid.ingredients.find((entry) => entry.id === 'i-bread')?.currentStock, 48);
+  assert.equal(paid.ingredients.find((entry) => entry.id === 'i-meat')?.currentStock, 38);
+  assert.equal(paid.ingredients.find((entry) => entry.id === 'i-sauce')?.currentStock, 160);
+  assert.equal(paid.sales.length, 1);
+  assert.equal(paid.stockEntries.length, 3);
+});
+
+test('draft confirm paid is idempotent and does not double debit stock', () => {
+  const base = createBaseState();
+  const withDraft = applyStateCommand(base, { type: 'SALE_DRAFT_CREATE', draftId: 'draft-idem' });
+  const withItem = applyStateCommand(withDraft, {
+    type: 'SALE_DRAFT_ADD_ITEM',
+    draftId: 'draft-idem',
+    productId: 'p-burger',
+  });
+  const pending = applyStateCommand(withItem, {
+    type: 'SALE_DRAFT_FINALIZE',
+    draftId: 'draft-idem',
+    paymentMethod: 'PIX',
+  });
+  const firstPaid = applyStateCommand(pending, {
+    type: 'SALE_DRAFT_CONFIRM_PAID',
+    draftId: 'draft-idem',
+  });
+  const retriedPaid = applyStateCommand(firstPaid, {
+    type: 'SALE_DRAFT_CONFIRM_PAID',
+    draftId: 'draft-idem',
+  });
+
+  assert.equal(retriedPaid.ingredients.find((entry) => entry.id === 'i-bread')?.currentStock, 49);
+  assert.equal(retriedPaid.ingredients.find((entry) => entry.id === 'i-meat')?.currentStock, 39);
+  assert.equal(retriedPaid.ingredients.find((entry) => entry.id === 'i-sauce')?.currentStock, 180);
+  assert.equal(retriedPaid.sales.length, 1);
+  assert.equal(retriedPaid.stockEntries.length, 3);
+});
+
+test('draft cancel in DRAFT and PENDING_PAYMENT does not touch stock', () => {
+  const base = createBaseState();
+  const draft = applyStateCommand(base, { type: 'SALE_DRAFT_CREATE', draftId: 'draft-cancel-a' });
+  const draftWithItem = applyStateCommand(draft, {
+    type: 'SALE_DRAFT_ADD_ITEM',
+    draftId: 'draft-cancel-a',
+    productId: 'p-burger',
+  });
+  const draftCancelled = applyStateCommand(draftWithItem, {
+    type: 'SALE_DRAFT_CANCEL',
+    draftId: 'draft-cancel-a',
+  });
+
+  assert.equal(draftCancelled.saleDrafts?.[0]?.status, 'CANCELLED');
+  assert.equal(draftCancelled.ingredients.find((entry) => entry.id === 'i-bread')?.currentStock, 50);
+  assert.equal(draftCancelled.sales.length, 0);
+
+  const pending = applyStateCommand(draftWithItem, {
+    type: 'SALE_DRAFT_FINALIZE',
+    draftId: 'draft-cancel-a',
+    paymentMethod: 'DEBITO',
+  });
+  const pendingCancelled = applyStateCommand(pending, {
+    type: 'SALE_DRAFT_CANCEL',
+    draftId: 'draft-cancel-a',
+  });
+
+  assert.equal(pendingCancelled.saleDrafts?.[0]?.status, 'CANCELLED');
+  assert.equal(pendingCancelled.ingredients.find((entry) => entry.id === 'i-bread')?.currentStock, 50);
+  assert.equal(pendingCancelled.stockEntries.length, 0);
+});
+
+test('draft cash payment computes change and blocks insufficient cash on confirm', () => {
+  const base = createBaseState();
+  const withDraft = applyStateCommand(base, { type: 'SALE_DRAFT_CREATE', draftId: 'draft-cash' });
+  const withItem = applyStateCommand(withDraft, {
+    type: 'SALE_DRAFT_ADD_ITEM',
+    draftId: 'draft-cash',
+    productId: 'p-burger',
+  });
+
+  const pendingInsufficient = applyStateCommand(withItem, {
+    type: 'SALE_DRAFT_FINALIZE',
+    draftId: 'draft-cash',
+    paymentMethod: 'DINHEIRO',
+    cashReceived: 10,
+  });
+
+  assert.equal(pendingInsufficient.saleDrafts?.[0]?.payment.change, -10);
+  assert.throws(
+    () =>
+      applyStateCommand(pendingInsufficient, {
+        type: 'SALE_DRAFT_CONFIRM_PAID',
+        draftId: 'draft-cash',
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof HttpError);
+      assert.equal(error.statusCode, 409);
+      return true;
+    }
+  );
+
+  const pendingSufficient = applyStateCommand(withItem, {
+    type: 'SALE_DRAFT_FINALIZE',
+    draftId: 'draft-cash',
+    paymentMethod: 'DINHEIRO',
+    cashReceived: 25,
+  });
+  const paid = applyStateCommand(pendingSufficient, {
+    type: 'SALE_DRAFT_CONFIRM_PAID',
+    draftId: 'draft-cash',
+  });
+
+  assert.equal(paid.saleDrafts?.[0]?.payment.change, 5);
+  assert.equal(paid.saleDrafts?.[0]?.status, 'PAID');
+});
+
+test('multiple open drafts can coexist while one is pending payment', () => {
+  const base = createBaseState();
+  const draftDelivery = applyStateCommand(base, {
+    type: 'SALE_DRAFT_CREATE',
+    draftId: 'draft-entrega',
+    customerType: 'ENTREGA',
+  });
+  const draftDeliveryItem = applyStateCommand(draftDelivery, {
+    type: 'SALE_DRAFT_ADD_ITEM',
+    draftId: 'draft-entrega',
+    productId: 'p-burger',
+  });
+  const pendingDelivery = applyStateCommand(draftDeliveryItem, {
+    type: 'SALE_DRAFT_FINALIZE',
+    draftId: 'draft-entrega',
+    paymentMethod: 'PIX',
+  });
+
+  const withCounterDraft = applyStateCommand(pendingDelivery, {
+    type: 'SALE_DRAFT_CREATE',
+    draftId: 'draft-balcao',
+    customerType: 'BALCAO',
+  });
+  const withCounterItem = applyStateCommand(withCounterDraft, {
+    type: 'SALE_DRAFT_ADD_ITEM',
+    draftId: 'draft-balcao',
+    productId: 'p-burger',
+  });
+
+  assert.equal(withCounterItem.saleDrafts?.length, 2);
+  assert.equal(
+    withCounterItem.saleDrafts?.find((entry) => entry.id === 'draft-entrega')?.status,
+    'PENDING_PAYMENT'
+  );
+  assert.equal(withCounterItem.saleDrafts?.find((entry) => entry.id === 'draft-balcao')?.status, 'DRAFT');
+});
+
 test('sale register treats kg recipe quantity as grams for stock and cost', () => {
   const state: FrontAppState = {
     ingredients: [

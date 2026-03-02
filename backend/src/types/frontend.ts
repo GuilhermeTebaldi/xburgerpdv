@@ -52,6 +52,39 @@ export interface FrontComboItem {
   quantity: number;
 }
 
+export type FrontSaleStatus = 'DRAFT' | 'PENDING_PAYMENT' | 'PAID' | 'CANCELLED';
+export type FrontSalePaymentMethod = 'PIX' | 'DEBITO' | 'CREDITO' | 'DINHEIRO';
+export type FrontSaleCustomerType = 'BALCAO' | 'ENTREGA';
+
+export interface FrontSalePayment {
+  method: FrontSalePaymentMethod | null;
+  cashReceived: number | null;
+  change: number | null;
+  confirmedAt: Date | string | null;
+}
+
+export interface FrontSaleDraftItem {
+  id: string;
+  productId: string;
+  nameSnapshot?: string;
+  qty: number;
+  unitPriceSnapshot?: number;
+  note?: string;
+  recipe: FrontRecipeItem[];
+}
+
+export interface FrontSaleDraft {
+  id: string;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+  items: FrontSaleDraftItem[];
+  total: number;
+  customerType?: FrontSaleCustomerType;
+  status: FrontSaleStatus;
+  payment: FrontSalePayment;
+  stockDebited: boolean;
+}
+
 export interface FrontProduct {
   id: string;
   name: string;
@@ -74,6 +107,9 @@ export interface FrontSale {
   basePrice?: number;
   priceAdjustment?: number;
   baseCost?: number;
+  status?: FrontSaleStatus;
+  payment?: FrontSalePayment;
+  saleDraftId?: string;
 }
 
 export interface FrontAppState {
@@ -87,4 +123,5 @@ export interface FrontAppState {
   globalCancelledSales: FrontSale[];
   globalStockEntries: FrontStockEntry[];
   globalCleaningStockEntries: FrontCleaningStockEntry[];
+  saleDrafts?: FrontSaleDraft[];
 }
