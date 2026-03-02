@@ -825,7 +825,27 @@ const applyUndoLastSale = (state: FrontAppState) => {
   }
 
   const lastSale = state.sales[state.sales.length - 1];
-  applyUndoSaleById(state, lastSale.id);
+  const draftId = lastSale.saleDraftId;
+  if (!draftId) {
+    applyUndoSaleById(state, lastSale.id);
+    return;
+  }
+
+  const draftSaleIds = state.sales
+    .filter((sale) => sale.saleDraftId === draftId)
+    .map((sale) => sale.id);
+
+  if (draftSaleIds.length <= 1) {
+    applyUndoSaleById(state, lastSale.id);
+    return;
+  }
+
+  draftSaleIds
+    .slice()
+    .reverse()
+    .forEach((saleId) => {
+      applyUndoSaleById(state, saleId);
+    });
 };
 
 const applyIngredientStockMove = (

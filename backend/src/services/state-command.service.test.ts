@@ -271,6 +271,66 @@ test('multiple open drafts can coexist while one is pending payment', () => {
   assert.equal(withCounterItem.saleDrafts?.find((entry) => entry.id === 'draft-balcao')?.status, 'DRAFT');
 });
 
+test('undo last sale reverts all paid items from the same cart draft', () => {
+  const base = createBaseState();
+  const withExtraProduct: FrontAppState = {
+    ...base,
+    products: [
+      ...base.products,
+      {
+        id: 'p-sauce-shot',
+        name: 'Molho Extra',
+        price: 6,
+        imageUrl: 'https://example.com/sauce.jpg',
+        category: 'Side',
+        recipe: [{ ingredientId: 'i-sauce', quantity: 10 }],
+      },
+    ],
+  };
+
+  const withDraft = applyStateCommand(withExtraProduct, {
+    type: 'SALE_DRAFT_CREATE',
+    draftId: 'draft-undo-group',
+  });
+  const withBurger = applyStateCommand(withDraft, {
+    type: 'SALE_DRAFT_ADD_ITEM',
+    draftId: 'draft-undo-group',
+    productId: 'p-burger',
+  });
+  const withSauce = applyStateCommand(withBurger, {
+    type: 'SALE_DRAFT_ADD_ITEM',
+    draftId: 'draft-undo-group',
+    productId: 'p-sauce-shot',
+  });
+  const pending = applyStateCommand(withSauce, {
+    type: 'SALE_DRAFT_FINALIZE',
+    draftId: 'draft-undo-group',
+    paymentMethod: 'PIX',
+  });
+  const paid = applyStateCommand(pending, {
+    type: 'SALE_DRAFT_CONFIRM_PAID',
+    draftId: 'draft-undo-group',
+  });
+
+  assert.equal(paid.sales.length, 2);
+  assert.equal(new Set(paid.sales.map((sale) => sale.saleDraftId)).size, 1);
+  assert.equal(paid.ingredients.find((entry) => entry.id === 'i-bread')?.currentStock, 49);
+  assert.equal(paid.ingredients.find((entry) => entry.id === 'i-meat')?.currentStock, 39);
+  assert.equal(paid.ingredients.find((entry) => entry.id === 'i-sauce')?.currentStock, 170);
+
+  const undone = applyStateCommand(paid, {
+    type: 'SALE_UNDO_LAST',
+  });
+
+  assert.equal(undone.sales.length, 0);
+  assert.equal(undone.globalSales.length, 0);
+  assert.equal(undone.stockEntries.length, 0);
+  assert.equal(undone.globalCancelledSales.length, 2);
+  assert.equal(undone.ingredients.find((entry) => entry.id === 'i-bread')?.currentStock, 50);
+  assert.equal(undone.ingredients.find((entry) => entry.id === 'i-meat')?.currentStock, 40);
+  assert.equal(undone.ingredients.find((entry) => entry.id === 'i-sauce')?.currentStock, 200);
+});
+
 test('sale register treats kg recipe quantity as grams for stock and cost', () => {
   const state: FrontAppState = {
     ingredients: [
