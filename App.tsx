@@ -1063,35 +1063,6 @@ const App: React.FC = () => {
     setIsUndoHistoryOpen(true);
   };
 
-  const handleUndoSaleById = async (
-    saleId: string,
-    options: { closeHistoryOnSuccess?: boolean } = {}
-  ) => {
-    if (isUndoProcessing) return;
-    const targetSale = sales.find((sale) => sale.id === saleId);
-    if (!targetSale) {
-      showNotification('Venda selecionada não encontrada.');
-      setIsUndoHistoryOpen(false);
-      return;
-    }
-
-    const saleTime = formatSaleTime(targetSale.timestamp);
-    const confirmed = confirm(
-      `Desfazer venda selecionada?\nProduto: ${targetSale.productName}\nHorário: ${saleTime}\nValor: R$ ${targetSale.total.toFixed(2)}`
-    );
-    if (!confirmed) return;
-
-    const ok = await runCommandWithSync(
-      { type: 'SALE_UNDO_BY_ID', saleId: targetSale.id },
-      'Venda Estornada!'
-    );
-    if (ok) {
-      if (options.closeHistoryOnSuccess ?? true) {
-        setIsUndoHistoryOpen(false);
-      }
-    }
-  };
-
   const handleUndoSaleGroup = async (groupId: string) => {
     if (isUndoProcessing) return;
     const targetGroup = recentUndoGroups.find((group) => group.id === groupId);
@@ -1119,20 +1090,6 @@ const App: React.FC = () => {
       setIsUndoHistoryOpen(false);
     } finally {
       setIsUndoProcessing(false);
-    }
-  };
-
-  const handlePrintReceiptBySaleId = (saleId: string) => {
-    const targetSale = sales.find((sale) => sale.id === saleId);
-    if (!targetSale) {
-      showNotification('Venda não encontrada para impressão.');
-      return;
-    }
-
-    const receiptId = targetSale.saleDraftId || targetSale.id;
-    const opened = openReceiptPrintWindow(receiptId);
-    if (!opened) {
-      showNotification('Não foi possível abrir a tela de impressão. Verifique o bloqueio de pop-up.');
     }
   };
 
@@ -1928,7 +1885,7 @@ const App: React.FC = () => {
                         {group.sales.map((sale) => (
                           <div
                             key={sale.id}
-                            className="bg-white border border-slate-200 rounded-xl p-3 flex items-center justify-between gap-3"
+                            className="bg-white border border-slate-200 rounded-xl p-3"
                           >
                             <div className="min-w-0">
                               <p className="text-xs font-black uppercase text-slate-800 truncate">
@@ -1941,52 +1898,29 @@ const App: React.FC = () => {
                                 Total: R$ {sale.total.toFixed(2)} • Custo: R$ {(sale.totalCost || 0).toFixed(2)}
                               </p>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => {
-                                  handlePrintReceiptBySaleId(sale.id);
-                                }}
-                                className="qb-btn-touch bg-blue-600 text-white px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-700 transition-all active:scale-95 whitespace-nowrap"
-                                title="Imprimir cupom (segunda via)"
-                              >
-                                Imprimir Cupom
-                              </button>
-                              <button
-                                onClick={() => {
-                                  void handleUndoSaleById(sale.id, { closeHistoryOnSuccess: false });
-                                }}
-                                disabled={isCommandBusy}
-                                className="qb-btn-touch bg-slate-900 text-yellow-400 px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                                title="Desfazer este produto"
-                              >
-                                Desfazer Produto
-                              </button>
-                            </div>
                           </div>
                         ))}
 
-                        {group.sales.length > 1 && (
-                          <div className="pt-1 flex justify-end gap-2">
-                            <button
-                              onClick={() => {
-                                handlePrintReceiptByGroup(group.id);
-                              }}
-                              className="qb-btn-touch bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-700 transition-all active:scale-95 whitespace-nowrap"
-                              title="Imprimir cupom do pedido completo"
-                            >
-                              Imprimir Pedido
-                            </button>
-                            <button
-                              onClick={() => {
-                                void handleUndoSaleGroup(group.id);
-                              }}
-                              disabled={isCommandBusy}
-                              className="qb-btn-touch bg-red-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                            >
-                              Desfazer Pedido Completo
-                            </button>
-                          </div>
-                        )}
+                        <div className="pt-1 flex justify-end gap-2">
+                          <button
+                            onClick={() => {
+                              handlePrintReceiptByGroup(group.id);
+                            }}
+                            className="qb-btn-touch bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-700 transition-all active:scale-95 whitespace-nowrap"
+                            title="Imprimir cupom do pedido completo"
+                          >
+                            Imprimir Pedido
+                          </button>
+                          <button
+                            onClick={() => {
+                              void handleUndoSaleGroup(group.id);
+                            }}
+                            disabled={isCommandBusy}
+                            className="qb-btn-touch bg-red-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                          >
+                            Desfazer Pedido Completo
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
