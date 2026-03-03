@@ -53,6 +53,39 @@ export interface ComboItem {
   quantity: number;
 }
 
+export type SaleStatus = 'DRAFT' | 'PENDING_PAYMENT' | 'PAID' | 'CANCELLED';
+export type SalePaymentMethod = 'PIX' | 'DEBITO' | 'CREDITO' | 'DINHEIRO';
+export type SaleCustomerType = 'BALCAO' | 'ENTREGA';
+
+export interface SalePayment {
+  method: SalePaymentMethod | null;
+  cashReceived: number | null;
+  change: number | null;
+  confirmedAt: Date | string | null;
+}
+
+export interface SaleDraftItem {
+  id: string;
+  productId: string;
+  nameSnapshot?: string;
+  qty: number;
+  unitPriceSnapshot?: number;
+  note?: string;
+  recipe: RecipeItem[];
+}
+
+export interface SaleDraft {
+  id: string;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+  items: SaleDraftItem[];
+  total: number;
+  customerType?: SaleCustomerType;
+  status: SaleStatus;
+  payment: SalePayment;
+  stockDebited: boolean;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -75,6 +108,9 @@ export interface Sale {
   basePrice?: number; // Preço base do produto no momento da venda
   priceAdjustment?: number; // Ajuste aplicado no preço (customizações)
   baseCost?: number; // Custo da receita base no momento da venda
+  status?: SaleStatus;
+  payment?: SalePayment;
+  saleDraftId?: string;
 }
 
 export enum ViewMode {

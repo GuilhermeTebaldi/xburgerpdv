@@ -76,7 +76,9 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({ sales, allIngredients, stoc
 
   const selectedSale = sales.find(s => s.id === selectedSaleId);
   const stockOutEntries = stockEntries.filter(entry => entry.quantity < 0);
-  const ingredientsById = new Map(allIngredients.map((ingredient) => [ingredient.id, ingredient]));
+  const ingredientsById = new Map<string, Ingredient>(
+    allIngredients.map((ingredient): [string, Ingredient] => [ingredient.id, ingredient])
+  );
   const formatQuantity = (value: number) =>
     Number.isInteger(value) ? String(value) : value.toFixed(3).replace(/\.?0+$/, '');
   const selectedAdjustment = selectedSale?.priceAdjustment ?? (selectedSale?.basePrice !== undefined ? selectedSale.total - selectedSale.basePrice : 0);
@@ -122,7 +124,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({ sales, allIngredients, stoc
           <h4 className="text-3xl font-black">R$ {totalRevenue.toFixed(2)}</h4>
         </div>
         <div className="bg-slate-800 text-white p-6 rounded-3xl shadow-lg">
-          <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-1">Custos</p>
+          <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-1">Custos (Insumos)</p>
           <h4 className="text-3xl font-black">R$ {totalCost.toFixed(2)}</h4>
         </div>
         <div className="bg-green-600 text-white p-6 rounded-3xl shadow-lg">

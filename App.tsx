@@ -19,6 +19,9 @@ import {
   Ingredient,
   Product,
   Sale,
+  SaleCustomerType,
+  SaleDraft,
+  SalePaymentMethod,
   ViewMode,
   StockEntry,
   RecipeItem,
@@ -47,6 +50,15 @@ interface OfflineQueuedSale {
 interface RunCommandOptions {
   skipOfflineQueue?: boolean;
   silentSuccessNotification?: boolean;
+}
+
+interface UndoSaleGroup {
+  id: string;
+  saleDraftId: string | null;
+  sales: Sale[];
+  timestamp: Date | string;
+  total: number;
+  totalCost: number;
 }
 
 interface AdminSessionBarrier {
@@ -178,6 +190,16 @@ const getSaleDayKey = (timestamp: Date | string): string | null => {
   const saleDate = toSaleDate(timestamp);
   if (!saleDate) return null;
   return saleDate.toLocaleDateString('pt-BR');
+};
+
+const formatMoney = (value: number): string => value.toFixed(2);
+
+const parseMoneyInput = (raw: string): number | null => {
+  const normalized = raw.trim().replace(',', '.');
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
 };
 
 const getStateSyncErrorMessage = (error: unknown): string => {
@@ -312,6 +334,9 @@ const App: React.FC = () => {
   const offlineSalesQueueRef = useRef<OfflineQueuedSale[]>([]);
   const isFlushingOfflineSalesRef = useRef(false);
   const isOfflineQueueHydratedRef = useRef(false);
+  const activeDraftIdRef = useRef<string | null>(null);
+  const saleDraftsRef = useRef<SaleDraft[]>(DEFAULT_APP_STATE.saleDrafts);
+  const pendingDraftCreationRef = useRef<Promise<string | null> | null>(null);
   
   const [ingredients, setIngredients] = useState<Ingredient[]>(DEFAULT_APP_STATE.ingredients);
   const [products, setProducts] = useState<Product[]>(DEFAULT_APP_STATE.products);
@@ -330,6 +355,7 @@ const App: React.FC = () => {
   const [globalCleaningStockEntries, setGlobalCleaningStockEntries] = useState<CleaningStockEntry[]>(
     DEFAULT_APP_STATE.globalCleaningStockEntries
   );
+  const [saleDrafts, setSaleDrafts] = useState<SaleDraft[]>(DEFAULT_APP_STATE.saleDrafts);
   
   const [isAddProductModalOpen, setIsAddProductModalOpen] = useState(false);
   const [isAddIngredientModalOpen, setIsAddIngredientModalOpen] = useState(false);
@@ -340,6 +366,14 @@ const App: React.FC = () => {
     message: '',
   });
   const [isUndoHistoryOpen, setIsUndoHistoryOpen] = useState(false);
+  const [expandedUndoGroupId, setExpandedUndoGroupId] = useState<string | null>(null);
+  const [isUndoProcessing, setIsUndoProcessing] = useState(false);
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isPaymentOpen, setIsPaymentOpen] = useState(false);
+  const [isCancellingDraft, setIsCancellingDraft] = useState(false);
+  const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<SalePaymentMethod>('PIX');
+  const [cashReceivedInput, setCashReceivedInput] = useState('');
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -439,6 +473,8 @@ const App: React.FC = () => {
         setGlobalCancelledSales(state.globalCancelledSales);
         setGlobalStockEntries(state.globalStockEntries);
         setGlobalCleaningStockEntries(state.globalCleaningStockEntries);
+        saleDraftsRef.current = state.saleDrafts;
+        setSaleDrafts(state.saleDrafts);
       })
       .catch(() => undefined)
       .finally(() => {
@@ -509,6 +545,8 @@ const App: React.FC = () => {
     setGlobalCancelledSales(state.globalCancelledSales);
     setGlobalStockEntries(state.globalStockEntries);
     setGlobalCleaningStockEntries(state.globalCleaningStockEntries);
+    saleDraftsRef.current = state.saleDrafts;
+    setSaleDrafts(state.saleDrafts);
   }, []);
 
   const executeSyncedCommand = useCallback(
@@ -671,17 +709,293 @@ const App: React.FC = () => {
     setIsAdminAuthenticated(true);
   }, []);
 
+  const openSaleDrafts = useMemo(
+    () => saleDrafts.filter((draft) => draft.status === 'DRAFT' || draft.status === 'PENDING_PAYMENT'),
+    [saleDrafts]
+  );
+  useEffect(() => {
+    activeDraftIdRef.current = activeDraftId;
+  }, [activeDraftId]);
+  useEffect(() => {
+    saleDraftsRef.current = saleDrafts;
+  }, [saleDrafts]);
+  const activeDraft = useMemo(() => {
+    if (activeDraftId) {
+      const selected = openSaleDrafts.find((draft) => draft.id === activeDraftId);
+      if (selected) return selected;
+    }
+    return openSaleDrafts[0] || null;
+  }, [activeDraftId, openSaleDrafts]);
+  const activeDraftItemCount = useMemo(
+    () => activeDraft?.items.reduce((sum, item) => sum + item.qty, 0) || 0,
+    [activeDraft]
+  );
+
+  useEffect(() => {
+    if (activeDraftId && activeDraft?.id === activeDraftId) return;
+    const nextDraftId = activeDraft?.id || null;
+    if (nextDraftId !== activeDraftId) {
+      setActiveDraftId(nextDraftId);
+    }
+  }, [activeDraft, activeDraftId]);
+
+  const ensureActiveDraft = useCallback(
+    async (customerType: SaleCustomerType = 'BALCAO'): Promise<string | null> => {
+      const currentOpenDrafts = saleDraftsRef.current.filter(
+        (draft) => draft.status === 'DRAFT' || draft.status === 'PENDING_PAYMENT'
+      );
+      const selected = activeDraftIdRef.current
+        ? currentOpenDrafts.find((draft) => draft.id === activeDraftIdRef.current)
+        : null;
+      if (selected) {
+        return selected.id;
+      }
+
+      const fallback = currentOpenDrafts[0];
+      if (fallback) {
+        activeDraftIdRef.current = fallback.id;
+        setActiveDraftId(fallback.id);
+        return fallback.id;
+      }
+
+      if (pendingDraftCreationRef.current) {
+        return pendingDraftCreationRef.current;
+      }
+
+      const draftId = createClientId('draft');
+      const creationPromise = (async () => {
+        const created = await runCommandWithSync(
+          {
+            type: 'SALE_DRAFT_CREATE',
+            draftId,
+            customerType,
+          },
+          undefined,
+          { silentSuccessNotification: true }
+        );
+
+        if (!created) return null;
+        activeDraftIdRef.current = draftId;
+        setActiveDraftId(draftId);
+        return draftId;
+      })().finally(() => {
+        pendingDraftCreationRef.current = null;
+      });
+
+      pendingDraftCreationRef.current = creationPromise;
+      return creationPromise;
+    },
+    [runCommandWithSync]
+  );
+
+  const handleCreateNewDraft = (customerType: SaleCustomerType) => {
+    void (async () => {
+      const draftId = createClientId('draft');
+      const ok = await runCommandWithSync(
+        {
+          type: 'SALE_DRAFT_CREATE',
+          draftId,
+          customerType,
+        },
+        undefined,
+        { silentSuccessNotification: true }
+      );
+      if (!ok) return;
+
+      activeDraftIdRef.current = draftId;
+      setActiveDraftId(draftId);
+      setIsCartOpen(true);
+      setIsPaymentOpen(false);
+      setPaymentMethod('PIX');
+      setCashReceivedInput('');
+      showNotification(`Nova venda ${customerType === 'ENTREGA' ? 'de entrega' : 'de balcão'} aberta.`);
+    })();
+  };
+
+  const handleOpenCart = () => {
+    void (async () => {
+      const draftId = await ensureActiveDraft('BALCAO');
+      if (!draftId) return;
+      activeDraftIdRef.current = draftId;
+      setActiveDraftId(draftId);
+      setIsCartOpen(true);
+    })();
+  };
+
   const handleSale = useCallback((product: Product, recipeOverride?: RecipeItem[], priceOverride?: number) => {
+    void (async () => {
+      const draftId = await ensureActiveDraft('BALCAO');
+      if (!draftId) return;
+
+      const ok = await runCommandWithSync(
+        {
+          type: 'SALE_DRAFT_ADD_ITEM',
+          draftId,
+          productId: product.id,
+          quantity: 1,
+          recipeOverride,
+          priceOverride,
+        },
+        `${product.name} adicionado ao carrinho!`,
+        { silentSuccessNotification: false }
+      );
+      if (!ok) return;
+    })();
+  }, [ensureActiveDraft, runCommandWithSync]);
+
+  const handleUpdateDraftCustomerType = (customerType: SaleCustomerType) => {
+    if (!activeDraft) return;
     void runCommandWithSync(
       {
-        type: 'SALE_REGISTER',
-        productId: product.id,
-        recipeOverride,
-        priceOverride,
+        type: 'SALE_DRAFT_SET_CUSTOMER_TYPE',
+        draftId: activeDraft.id,
+        customerType,
       },
-      `${product.name} Vendido!`
+      undefined,
+      { silentSuccessNotification: true }
     );
-  }, [runCommandWithSync]);
+  };
+
+  const handleUpdateDraftItemQuantity = (itemId: string, nextQty: number) => {
+    if (!activeDraft) return;
+    if (activeDraft.status !== 'DRAFT') {
+      showNotification('Edite os itens apenas com a venda em DRAFT.');
+      return;
+    }
+
+    if (nextQty <= 0) {
+      void runCommandWithSync(
+        {
+          type: 'SALE_DRAFT_REMOVE_ITEM',
+          draftId: activeDraft.id,
+          itemId,
+        },
+        undefined,
+        { silentSuccessNotification: true }
+      );
+      return;
+    }
+
+    void runCommandWithSync(
+      {
+        type: 'SALE_DRAFT_UPDATE_ITEM',
+        draftId: activeDraft.id,
+        itemId,
+        quantity: nextQty,
+      },
+      undefined,
+      { silentSuccessNotification: true }
+    );
+  };
+
+  const handleUpdateDraftItemNote = (itemId: string, note: string) => {
+    if (!activeDraft || activeDraft.status !== 'DRAFT') return;
+    void runCommandWithSync(
+      {
+        type: 'SALE_DRAFT_UPDATE_ITEM',
+        draftId: activeDraft.id,
+        itemId,
+        note,
+      },
+      undefined,
+      { silentSuccessNotification: true }
+    );
+  };
+
+  const handleCancelActiveDraft = () => {
+    if (!activeDraft || isCancellingDraft) return;
+    if (!confirm('Cancelar esta venda antes do pagamento? Nenhum estoque será debitado.')) return;
+    const draftId = activeDraft.id;
+    void (async () => {
+      setIsCancellingDraft(true);
+      try {
+        const ok = await runCommandWithSync(
+          {
+            type: 'SALE_DRAFT_CANCEL',
+            draftId,
+          },
+          'Venda cancelada.'
+        );
+        if (!ok) return;
+
+        if (activeDraftIdRef.current === draftId) {
+          activeDraftIdRef.current = null;
+        }
+        setActiveDraftId(null);
+        setIsPaymentOpen(false);
+        setIsCartOpen(false);
+      } finally {
+        setIsCancellingDraft(false);
+      }
+    })();
+  };
+
+  const handleOpenPayment = () => {
+    if (!activeDraft) {
+      showNotification('Abra um carrinho antes de finalizar.');
+      return;
+    }
+    if (activeDraft.items.length === 0) {
+      showNotification('Carrinho vazio. Adicione itens antes de finalizar.');
+      return;
+    }
+    if (activeDraft.status === 'CANCELLED' || activeDraft.status === 'PAID') {
+      showNotification('Esta venda já está encerrada.');
+      return;
+    }
+
+    setPaymentMethod(activeDraft.payment.method || 'PIX');
+    setCashReceivedInput(
+      activeDraft.payment.cashReceived !== null && activeDraft.payment.cashReceived !== undefined
+        ? String(activeDraft.payment.cashReceived)
+        : ''
+    );
+    setIsPaymentOpen(true);
+  };
+
+  const handleSavePaymentMethod = async (): Promise<boolean> => {
+    if (!activeDraft) return false;
+    if (activeDraft.items.length === 0) {
+      showNotification('Carrinho vazio. Não é possível finalizar.');
+      return false;
+    }
+
+    const cashReceivedParsed = paymentMethod === 'DINHEIRO' ? parseMoneyInput(cashReceivedInput) : null;
+    if (paymentMethod === 'DINHEIRO' && (cashReceivedParsed === null || cashReceivedParsed < 0)) {
+      showNotification('Informe um valor recebido válido em dinheiro.');
+      return false;
+    }
+
+    return runCommandWithSync(
+      {
+        type: 'SALE_DRAFT_FINALIZE',
+        draftId: activeDraft.id,
+        paymentMethod,
+        cashReceived: paymentMethod === 'DINHEIRO' ? (cashReceivedParsed ?? undefined) : undefined,
+      },
+      'Forma de pagamento atualizada.'
+    );
+  };
+
+  const handleConfirmPaid = () => {
+    if (!activeDraft) return;
+    void (async () => {
+      const finalized = await handleSavePaymentMethod();
+      if (!finalized) return;
+
+      const ok = await runCommandWithSync(
+        {
+          type: 'SALE_DRAFT_CONFIRM_PAID',
+          draftId: activeDraft.id,
+        },
+        'Pagamento confirmado. Estoque debitado.'
+      );
+      if (!ok) return;
+
+      setIsPaymentOpen(false);
+      setIsCartOpen(false);
+    })();
+  };
 
   const handleUndoLastSale = () => {
     if (sales.length === 0) {
@@ -690,22 +1004,33 @@ const App: React.FC = () => {
     }
 
     const lastSale = sales[sales.length - 1];
-    if (confirm(`Desfazer a última venda (${lastSale.productName}) e devolver insumos ao estoque?`)) {
+    const salesFromSameDraft = lastSale.saleDraftId
+      ? sales.filter((sale) => sale.saleDraftId === lastSale.saleDraftId)
+      : [lastSale];
+    const confirmLabel =
+      salesFromSameDraft.length > 1
+        ? `Desfazer o último pedido do carrinho (${salesFromSameDraft.length} itens) e devolver insumos ao estoque?`
+        : `Desfazer a última venda (${lastSale.productName}) e devolver insumos ao estoque?`;
+
+    if (confirm(confirmLabel)) {
       void runCommandWithSync({ type: 'SALE_UNDO_LAST' }, 'Venda Estornada!');
     }
   };
 
   const handleOpenUndoHistory = () => {
-    const todayKey = new Date().toLocaleDateString('pt-BR');
-    const hasTodaySale = sales.some((sale) => getSaleDayKey(sale.timestamp) === todayKey);
-    if (!hasTodaySale) {
+    if (recentUndoGroups.length === 0) {
       showNotification('Nenhuma venda para desfazer!');
       return;
     }
+    setExpandedUndoGroupId(null);
     setIsUndoHistoryOpen(true);
   };
 
-  const handleUndoSaleById = async (saleId: string) => {
+  const handleUndoSaleById = async (
+    saleId: string,
+    options: { closeHistoryOnSuccess?: boolean } = {}
+  ) => {
+    if (isUndoProcessing) return;
     const targetSale = sales.find((sale) => sale.id === saleId);
     if (!targetSale) {
       showNotification('Venda selecionada não encontrada.');
@@ -724,7 +1049,39 @@ const App: React.FC = () => {
       'Venda Estornada!'
     );
     if (ok) {
+      if (options.closeHistoryOnSuccess ?? true) {
+        setIsUndoHistoryOpen(false);
+      }
+    }
+  };
+
+  const handleUndoSaleGroup = async (groupId: string) => {
+    if (isUndoProcessing) return;
+    const targetGroup = recentUndoGroups.find((group) => group.id === groupId);
+    if (!targetGroup) {
+      showNotification('Pedido não encontrado para desfazer.');
+      return;
+    }
+
+    const confirmed = confirm(
+      `Desfazer pedido completo?\nItens: ${targetGroup.sales.length}\nTotal: R$ ${targetGroup.total.toFixed(2)}`
+    );
+    if (!confirmed) return;
+
+    setIsUndoProcessing(true);
+    try {
+      for (const sale of targetGroup.sales) {
+        const ok = await runCommandWithSync(
+          { type: 'SALE_UNDO_BY_ID', saleId: sale.id },
+          undefined,
+          { silentSuccessNotification: true }
+        );
+        if (!ok) return;
+      }
+      showNotification('Pedido estornado!');
       setIsUndoHistoryOpen(false);
+    } finally {
+      setIsUndoProcessing(false);
     }
   };
 
@@ -879,13 +1236,65 @@ const App: React.FC = () => {
         .reverse(),
     [sales, todaySaleDayKey]
   );
+  const recentUndoGroups = useMemo<UndoSaleGroup[]>(() => {
+    const groupOrder: UndoSaleGroup[] = [];
+    const groupsById = new Map<string, UndoSaleGroup>();
+
+    recentSalesForUndo.forEach((sale) => {
+      const key = sale.saleDraftId ? `draft-${sale.saleDraftId}` : `sale-${sale.id}`;
+      const existing = groupsById.get(key);
+      if (existing) {
+        existing.sales.push(sale);
+        existing.total += sale.total;
+        existing.totalCost += sale.totalCost || 0;
+        return;
+      }
+
+      const group: UndoSaleGroup = {
+        id: key,
+        saleDraftId: sale.saleDraftId || null,
+        sales: [sale],
+        timestamp: sale.timestamp,
+        total: sale.total,
+        totalCost: sale.totalCost || 0,
+      };
+      groupsById.set(key, group);
+      groupOrder.push(group);
+    });
+
+    return groupOrder;
+  }, [recentSalesForUndo]);
+  const paymentCashReceived = useMemo(() => {
+    if (paymentMethod !== 'DINHEIRO') return null;
+    return parseMoneyInput(cashReceivedInput);
+  }, [cashReceivedInput, paymentMethod]);
+  const paymentCashDelta = useMemo(() => {
+    if (paymentMethod !== 'DINHEIRO' || !activeDraft) return null;
+    if (paymentCashReceived === null) return null;
+    return paymentCashReceived - activeDraft.total;
+  }, [activeDraft, paymentCashReceived, paymentMethod]);
+  const isCashPaymentInsufficient =
+    paymentMethod === 'DINHEIRO' &&
+    (paymentCashReceived === null || (paymentCashDelta !== null && paymentCashDelta < 0));
 
   useEffect(() => {
     if (!isUndoHistoryOpen) return;
-    if (recentSalesForUndo.length === 0 || view !== ViewMode.POS) {
+    if (recentUndoGroups.length === 0 || view !== ViewMode.POS) {
       setIsUndoHistoryOpen(false);
     }
-  }, [isUndoHistoryOpen, recentSalesForUndo.length, view]);
+  }, [isUndoHistoryOpen, recentUndoGroups.length, view]);
+
+  useEffect(() => {
+    if (!isUndoHistoryOpen) {
+      if (expandedUndoGroupId !== null) {
+        setExpandedUndoGroupId(null);
+      }
+      return;
+    }
+    if (expandedUndoGroupId && !recentUndoGroups.some((group) => group.id === expandedUndoGroupId)) {
+      setExpandedUndoGroupId(null);
+    }
+  }, [expandedUndoGroupId, isUndoHistoryOpen, recentUndoGroups]);
 
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
@@ -937,7 +1346,35 @@ const App: React.FC = () => {
                 ))}
               </div>
 
-              <div className="qb-pos-actions flex gap-2 w-full md:w-auto">
+              <div className="qb-pos-actions flex gap-2 w-full md:w-auto items-center">
+                <button
+                  onClick={handleOpenCart}
+                  className="qb-btn-touch relative overflow-hidden bg-gradient-to-r from-red-600 via-rose-600 to-orange-500 text-white px-4 py-3 rounded-2xl font-black text-[10px] uppercase tracking-tighter shadow-xl hover:brightness-110 active:scale-95 transition-all whitespace-nowrap border border-red-500/60"
+                  title="Ver carrinho e finalizar pagamento"
+                >
+                  <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/10 to-white/10" />
+                  <span className="relative flex items-center gap-2">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="15"
+                      height="15"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <circle cx="8" cy="20" r="1.5" />
+                      <circle cx="18" cy="20" r="1.5" />
+                      <path d="M2 3h2l2.4 11.5a2 2 0 0 0 2 1.5h9.8a2 2 0 0 0 2-1.6L22 7H7" />
+                    </svg>
+                    <span>Carrinho</span>
+                    <span className="inline-flex min-w-6 h-6 items-center justify-center rounded-full bg-white text-red-700 px-2 text-[10px] font-black shadow-md">
+                      {activeDraftItemCount}
+                    </span>
+                  </span>
+                </button>
                 <button 
                   onClick={handleUndoLastSale}
                   disabled={sales.length === 0}
@@ -949,7 +1386,7 @@ const App: React.FC = () => {
                 </button>
                 <button
                   onClick={handleOpenUndoHistory}
-                  disabled={recentSalesForUndo.length === 0}
+                  disabled={recentUndoGroups.length === 0}
                   className="qb-btn-touch bg-white text-slate-800 px-4 py-3 rounded-2xl font-black text-[10px] uppercase tracking-tighter shadow-sm border border-slate-200 hover:border-red-400 hover:text-red-600 active:scale-95 transition-all disabled:opacity-30 disabled:grayscale disabled:scale-100 whitespace-nowrap flex items-center gap-2"
                   title="Selecionar venda no histórico para desfazer"
                 >
@@ -1048,6 +1485,298 @@ const App: React.FC = () => {
         )}
       </main>
 
+      {isCartOpen && (
+        <div className="fixed inset-0 z-[215] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-4xl bg-white rounded-[36px] border-2 border-slate-100 shadow-2xl overflow-hidden">
+            <div className="p-5 bg-red-600 text-white flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-xl font-black uppercase tracking-tight">Carrinho</h3>
+                <p className="text-[10px] uppercase tracking-widest text-red-100">
+                  DRAFT não baixa estoque. Baixa só em PAID.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsCartOpen(false)}
+                className="qb-btn-touch bg-red-700 hover:bg-red-800 p-2 rounded-full transition-colors"
+                title="Fechar"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </button>
+            </div>
+
+            <div className="p-4 border-b border-slate-100 bg-slate-50 flex flex-wrap items-center gap-2">
+              <select
+                value={activeDraft?.id || ''}
+                onChange={(e) => setActiveDraftId(e.target.value || null)}
+                className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-black uppercase tracking-widest text-slate-700"
+              >
+                {openSaleDrafts.length === 0 && <option value="">Nenhuma venda aberta</option>}
+                {openSaleDrafts.map((draft) => (
+                  <option key={draft.id} value={draft.id}>
+                    {draft.customerType || 'BALCAO'} • {draft.status} • R$ {formatMoney(draft.total)}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => handleCreateNewDraft('BALCAO')}
+                className="qb-btn-touch bg-green-600 text-white px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition-colors"
+              >
+                Novo Balcão
+              </button>
+              <button
+                onClick={() => handleCreateNewDraft('ENTREGA')}
+                className="qb-btn-touch bg-emerald-700 text-white px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-800 transition-colors"
+              >
+                Nova Entrega
+              </button>
+            </div>
+
+            {!activeDraft && (
+              <div className="p-8 text-center text-slate-500 text-xs font-black uppercase tracking-widest">
+                Sem carrinho aberto.
+              </div>
+            )}
+
+            {activeDraft && (
+              <>
+                <div className="p-4 bg-white border-b border-slate-100 flex flex-wrap items-center gap-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                    Atendimento
+                  </label>
+                  <select
+                    value={activeDraft.customerType || 'BALCAO'}
+                    onChange={(e) => handleUpdateDraftCustomerType(e.target.value as SaleCustomerType)}
+                    disabled={activeDraft.status === 'PAID' || activeDraft.status === 'CANCELLED'}
+                    className="bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-xs font-black uppercase tracking-widest text-slate-700"
+                  >
+                    <option value="BALCAO">Balcão</option>
+                    <option value="ENTREGA">Entrega</option>
+                  </select>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-2 py-1 rounded-lg bg-slate-100 border border-slate-200">
+                    Status: {activeDraft.status}
+                  </span>
+                  {activeDraft.status === 'PENDING_PAYMENT' && (
+                    <span className="text-[10px] font-black uppercase tracking-widest text-yellow-700 px-2 py-1 rounded-lg bg-yellow-100 border border-yellow-300">
+                      Aguardando confirmação de pagamento
+                    </span>
+                  )}
+                </div>
+
+                <div className="p-4 max-h-[50vh] overflow-y-auto space-y-3 bg-slate-50">
+                  {activeDraft.items.length === 0 && (
+                    <div className="py-12 text-center text-xs uppercase tracking-widest font-black text-slate-400">
+                      Carrinho vazio.
+                    </div>
+                  )}
+
+                  {activeDraft.items.map((item) => {
+                    const subtotal = (item.unitPriceSnapshot || 0) * item.qty;
+                    const canEditItems = activeDraft.status === 'DRAFT';
+                    return (
+                      <div
+                        key={item.id}
+                        className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-black uppercase text-slate-800">
+                              {item.nameSnapshot || item.productId}
+                            </p>
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                              R$ {formatMoney(item.unitPriceSnapshot || 0)} un. • Subtotal R$ {formatMoney(subtotal)}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleUpdateDraftItemQuantity(item.id, item.qty - 1)}
+                              disabled={!canEditItems}
+                              className="qb-btn-touch w-9 h-9 rounded-xl bg-slate-100 text-slate-700 font-black disabled:opacity-40"
+                            >
+                              -
+                            </button>
+                            <span className="w-10 text-center font-black text-sm text-slate-800">{item.qty}</span>
+                            <button
+                              onClick={() => handleUpdateDraftItemQuantity(item.id, item.qty + 1)}
+                              disabled={!canEditItems}
+                              className="qb-btn-touch w-9 h-9 rounded-xl bg-yellow-400 text-red-800 font-black disabled:opacity-40"
+                            >
+                              +
+                            </button>
+                            <button
+                              onClick={() => handleUpdateDraftItemQuantity(item.id, 0)}
+                              disabled={!canEditItems}
+                              className="qb-btn-touch px-2 py-2 rounded-xl bg-red-100 text-red-700 font-black text-[10px] uppercase tracking-widest disabled:opacity-40"
+                            >
+                              Remover
+                            </button>
+                          </div>
+                        </div>
+                        <input
+                          type="text"
+                          defaultValue={item.note || ''}
+                          onBlur={(e) => handleUpdateDraftItemNote(item.id, e.target.value)}
+                          disabled={!canEditItems}
+                          placeholder="Observação do item (opcional)"
+                          className="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 disabled:opacity-60"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="p-4 bg-white border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-sm font-black uppercase text-slate-800">
+                    Total: <span className="text-red-600">R$ {formatMoney(activeDraft.total)}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleCancelActiveDraft}
+                      disabled={isCancellingDraft || isStateHydrating || pendingStateOps > 0}
+                      className="qb-btn-touch bg-red-100 text-red-700 px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-red-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Cancelar Venda
+                    </button>
+                    <button
+                      onClick={() => setIsCartOpen(false)}
+                      className="qb-btn-touch bg-slate-100 text-slate-700 px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-colors"
+                    >
+                      Fechar
+                    </button>
+                    <button
+                      onClick={handleOpenPayment}
+                      disabled={activeDraft.items.length === 0}
+                      className="qb-btn-touch bg-green-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition-colors disabled:opacity-40"
+                    >
+                      Finalizar
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {isPaymentOpen && activeDraft && (
+        <div className="fixed inset-0 z-[225] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white rounded-[36px] border-2 border-slate-100 shadow-2xl overflow-hidden">
+            <div className="p-5 bg-slate-900 text-white flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-black uppercase tracking-tight">Pagamento</h3>
+                <p className="text-[10px] uppercase tracking-widest text-slate-300">
+                  Pagamento na maquininha. Confirme no sistema só após pago.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsPaymentOpen(false)}
+                className="qb-btn-touch bg-slate-800 hover:bg-slate-700 p-2 rounded-full transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </button>
+            </div>
+
+            <div className="p-5 bg-slate-50 space-y-4">
+              <div className="bg-white border border-slate-200 rounded-2xl p-4">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Total da venda</p>
+                <p className="text-3xl font-black text-red-600">R$ {formatMoney(activeDraft.total)}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                {(['PIX', 'DEBITO', 'CREDITO', 'DINHEIRO'] as SalePaymentMethod[]).map((method) => (
+                  <button
+                    key={method}
+                    onClick={() => setPaymentMethod(method)}
+                    className={`qb-btn-touch px-3 py-3 rounded-2xl font-black text-xs uppercase tracking-widest border transition-all ${
+                      paymentMethod === method
+                        ? 'bg-red-600 border-red-700 text-white'
+                        : 'bg-white border-slate-200 text-slate-700 hover:border-red-300'
+                    }`}
+                  >
+                    {method === 'DEBITO'
+                      ? 'Débito'
+                      : method === 'CREDITO'
+                        ? 'Crédito'
+                        : method}
+                  </button>
+                ))}
+              </div>
+
+              {paymentMethod === 'DINHEIRO' ? (
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                    Valor recebido
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={cashReceivedInput}
+                    onChange={(e) => setCashReceivedInput(e.target.value)}
+                    className="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 font-black text-slate-800"
+                    placeholder="0,00"
+                  />
+                  {paymentCashDelta !== null ? (
+                    paymentCashDelta >= 0 ? (
+                      <p className="text-xs font-black uppercase tracking-widest text-green-700">
+                        Troco: R$ {formatMoney(paymentCashDelta)}
+                      </p>
+                    ) : (
+                      <p className="text-xs font-black uppercase tracking-widest text-red-700">
+                        Faltam: R$ {formatMoney(Math.abs(paymentCashDelta))}
+                      </p>
+                    )
+                  ) : (
+                    <p className="text-xs font-black uppercase tracking-widest text-slate-500">
+                      Informe o valor recebido para calcular troco.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="bg-white border border-slate-200 rounded-2xl p-4">
+                  <p className="text-xs font-black uppercase tracking-widest text-slate-600">
+                    Receba na maquininha e depois clique em confirmar pago.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 bg-white border-t border-slate-100 flex flex-wrap items-center justify-end gap-2">
+              <button
+                onClick={() => {
+                  setIsPaymentOpen(false);
+                  setIsCartOpen(true);
+                }}
+                className="qb-btn-touch bg-slate-100 text-slate-700 px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-colors"
+              >
+                Voltar
+              </button>
+              <button
+                onClick={handleCancelActiveDraft}
+                disabled={isCancellingDraft || isStateHydrating || pendingStateOps > 0}
+                className="qb-btn-touch bg-red-100 text-red-700 px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-red-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Cancelar Venda
+              </button>
+              <button
+                onClick={() => {
+                  void handleSavePaymentMethod();
+                }}
+                className="qb-btn-touch bg-slate-900 text-white px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-colors"
+              >
+                Alterar Forma
+              </button>
+              <button
+                onClick={handleConfirmPaid}
+                disabled={isCashPaymentInsufficient}
+                className="qb-btn-touch bg-green-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition-colors disabled:opacity-40"
+              >
+                Confirmar Pago
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isUndoHistoryOpen && (
         <div className="fixed inset-0 z-[220] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-3xl bg-white rounded-[36px] border-2 border-slate-100 shadow-2xl overflow-hidden">
@@ -1067,45 +1796,108 @@ const App: React.FC = () => {
               </button>
             </div>
             <div className="p-4 max-h-[65vh] overflow-y-auto space-y-2 bg-slate-50">
-              {recentSalesForUndo.length === 0 && (
+              {recentUndoGroups.length === 0 && (
                 <div className="py-12 text-center text-xs uppercase tracking-widest font-black text-slate-400">
                   Nenhuma venda disponível para desfazer.
                 </div>
               )}
-              {recentSalesForUndo.map((sale, index) => {
+              {recentUndoGroups.map((group, index) => {
                 const isLatest = index === 0;
-                const isCommandBusy = isStateHydrating || pendingStateOps > 0;
+                const isCommandBusy = isUndoProcessing || isStateHydrating || pendingStateOps > 0;
+                const isExpanded = expandedUndoGroupId === group.id;
+                const firstSale = group.sales[0];
+                const title =
+                  group.sales.length > 1
+                    ? `Pedido (${group.sales.length} itens)`
+                    : firstSale?.productName || 'Venda';
                 return (
                   <div
-                    key={sale.id}
-                    className="bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between gap-3"
+                    key={group.id}
+                    className="bg-white border border-slate-200 rounded-2xl overflow-hidden"
                   >
-                    <div className="min-w-0">
-                      <p className="text-sm font-black uppercase text-slate-800 truncate">
-                        {sale.productName}
-                        {isLatest && (
-                          <span className="ml-2 text-[9px] align-middle px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 border border-yellow-300">
-                            Última
-                          </span>
-                        )}
-                      </p>
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                        {formatSaleDateTime(sale.timestamp)} • ID: {sale.id}
-                      </p>
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                        Total: R$ {sale.total.toFixed(2)} • Custo: R$ {(sale.totalCost || 0).toFixed(2)}
-                      </p>
-                    </div>
                     <button
                       onClick={() => {
-                        void handleUndoSaleById(sale.id);
+                        setExpandedUndoGroupId((current) => (current === group.id ? null : group.id));
                       }}
-                      disabled={isCommandBusy}
-                      className="qb-btn-touch bg-slate-900 text-yellow-400 px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                      title="Desfazer esta venda"
+                      className="qb-btn-touch w-full p-4 flex items-center justify-between gap-3"
                     >
-                      Desfazer Esta
+                      <div className="min-w-0 text-left">
+                        <p className="text-sm font-black uppercase text-slate-800 truncate">
+                          {title}
+                          {isLatest && (
+                            <span className="ml-2 text-[9px] align-middle px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 border border-yellow-300">
+                              Última
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                          {formatSaleDateTime(group.timestamp)}
+                          {group.saleDraftId ? ` • Pedido: ${group.saleDraftId}` : ` • ID: ${firstSale?.id || '--'}`}
+                        </p>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                          Total: R$ {group.total.toFixed(2)} • Custo: R$ {group.totalCost.toFixed(2)}
+                        </p>
+                      </div>
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="3"
+                        className={`text-slate-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                      >
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
                     </button>
+
+                    {isExpanded && (
+                      <div className="border-t border-slate-100 bg-slate-50 p-3 space-y-2">
+                        {group.sales.map((sale) => (
+                          <div
+                            key={sale.id}
+                            className="bg-white border border-slate-200 rounded-xl p-3 flex items-center justify-between gap-3"
+                          >
+                            <div className="min-w-0">
+                              <p className="text-xs font-black uppercase text-slate-800 truncate">
+                                {sale.productName}
+                              </p>
+                              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                                {formatSaleTime(sale.timestamp)} • ID: {sale.id}
+                              </p>
+                              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                                Total: R$ {sale.total.toFixed(2)} • Custo: R$ {(sale.totalCost || 0).toFixed(2)}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => {
+                                void handleUndoSaleById(sale.id, { closeHistoryOnSuccess: false });
+                              }}
+                              disabled={isCommandBusy}
+                              className="qb-btn-touch bg-slate-900 text-yellow-400 px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                              title="Desfazer este produto"
+                            >
+                              Desfazer Produto
+                            </button>
+                          </div>
+                        ))}
+
+                        {group.sales.length > 1 && (
+                          <div className="pt-1 flex justify-end">
+                            <button
+                              onClick={() => {
+                                void handleUndoSaleGroup(group.id);
+                              }}
+                              disabled={isCommandBusy}
+                              className="qb-btn-touch bg-red-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                            >
+                              Desfazer Pedido Completo
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

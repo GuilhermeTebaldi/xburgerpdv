@@ -157,6 +157,34 @@ test('draft confirm paid is idempotent and does not double debit stock', () => {
   assert.equal(retriedPaid.stockEntries.length, 3);
 });
 
+test('legacy draft without payment does not crash command pipeline', () => {
+  const base = createBaseState();
+  const legacyState = {
+    ...base,
+    saleDrafts: [
+      {
+        id: 'legacy-draft-001',
+        createdAt: '2026-03-01T10:00:00.000Z',
+        updatedAt: '2026-03-01T10:00:00.000Z',
+        items: [],
+        total: 0,
+        status: 'DRAFT',
+        stockDebited: false,
+      },
+    ],
+  } as unknown as FrontAppState;
+
+  const next = applyStateCommand(legacyState, {
+    type: 'SALE_DRAFT_ADD_ITEM',
+    draftId: 'legacy-draft-001',
+    productId: 'p-burger',
+  });
+
+  assert.equal(next.saleDrafts?.[0]?.items.length, 1);
+  assert.equal(next.saleDrafts?.[0]?.payment.method, null);
+  assert.equal(next.saleDrafts?.[0]?.status, 'DRAFT');
+});
+
 test('draft cancel in DRAFT and PENDING_PAYMENT does not touch stock', () => {
   const base = createBaseState();
   const draft = applyStateCommand(base, { type: 'SALE_DRAFT_CREATE', draftId: 'draft-cancel-a' });

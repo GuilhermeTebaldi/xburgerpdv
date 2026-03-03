@@ -145,30 +145,48 @@ const cloneRecipe = (recipe: FrontRecipeItem[] | undefined): FrontRecipeItem[] |
     quantity: item.quantity,
   }));
 
-const cloneSalePayment = (payment: FrontSalePayment | undefined): FrontSalePayment | undefined => {
-  if (!payment) return undefined;
+const isSalePaymentMethod = (value: unknown): value is FrontSalePaymentMethod =>
+  value === 'PIX' || value === 'DEBITO' || value === 'CREDITO' || value === 'DINHEIRO';
+
+const normalizeSalePayment = (payment: unknown): FrontSalePayment => {
+  const candidate =
+    payment && typeof payment === 'object' && !Array.isArray(payment)
+      ? (payment as Partial<FrontSalePayment>)
+      : undefined;
+  const cashReceived = candidate?.cashReceived;
+  const change = candidate?.change;
+
   return {
-    method: payment.method ?? null,
-    cashReceived: payment.cashReceived ?? null,
-    change: payment.change ?? null,
-    confirmedAt: payment.confirmedAt ?? null,
+    method: isSalePaymentMethod(candidate?.method) ? candidate.method : null,
+    cashReceived: typeof cashReceived === 'number' && Number.isFinite(cashReceived) ? cashReceived : null,
+    change: typeof change === 'number' && Number.isFinite(change) ? change : null,
+    confirmedAt:
+      candidate?.confirmedAt instanceof Date || typeof candidate?.confirmedAt === 'string'
+        ? candidate.confirmedAt
+        : null,
   };
 };
 
-const cloneSaleDraftItem = (item: FrontSaleDraftItem): FrontSaleDraftItem => ({
-  ...item,
-  recipe: cloneRecipe(item.recipe) || [],
-});
+const cloneSalePayment = (payment: FrontSalePayment | undefined): FrontSalePayment | undefined => {
+  if (!payment) return undefined;
+  return normalizeSalePayment(payment);
+};
+
+const cloneSaleDraftItem = (item: FrontSaleDraftItem): FrontSaleDraftItem => {
+  const safeRecipe = Array.isArray(item?.recipe) ? item.recipe : [];
+  const qty = Number(item?.qty);
+  return {
+    ...item,
+    qty: Number.isFinite(qty) && qty > 0 ? qty : 1,
+    recipe: cloneRecipe(safeRecipe) || [],
+  };
+};
 
 const cloneSaleDraft = (draft: FrontSaleDraft): FrontSaleDraft => ({
   ...draft,
-  items: draft.items.map(cloneSaleDraftItem),
-  payment: {
-    method: draft.payment.method ?? null,
-    cashReceived: draft.payment.cashReceived ?? null,
-    change: draft.payment.change ?? null,
-    confirmedAt: draft.payment.confirmedAt ?? null,
-  },
+  items: Array.isArray(draft?.items) ? draft.items.map(cloneSaleDraftItem) : [],
+  payment: normalizeSalePayment(draft?.payment),
+  stockDebited: Boolean(draft?.stockDebited),
 });
 
 const cloneSale = (sale: FrontSale): FrontSale => ({
@@ -193,7 +211,9 @@ const cloneState = (state: FrontAppState): FrontAppState => ({
   globalCancelledSales: state.globalCancelledSales.map(cloneSale),
   globalStockEntries: state.globalStockEntries.map((entry) => ({ ...entry })),
   globalCleaningStockEntries: state.globalCleaningStockEntries.map((entry) => ({ ...entry })),
-  saleDrafts: (state.saleDrafts || []).map(cloneSaleDraft),
+  saleDrafts: (state.saleDrafts || [])
+    .filter((draft): draft is FrontSaleDraft => Boolean(draft && typeof draft === 'object'))
+    .map(cloneSaleDraft),
 });
 
 const emptyAppState = (): FrontAppState => ({

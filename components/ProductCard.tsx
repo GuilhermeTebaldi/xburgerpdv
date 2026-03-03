@@ -31,6 +31,11 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
   const timerRef = useRef<number | null>(null);
   const formatQuantity = (value: number) =>
     Number.isInteger(value) ? String(value) : value.toFixed(3).replace(/\.?0+$/, '');
+  const formatIngredientCost = (value: number) =>
+    new Intl.NumberFormat('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 5,
+    }).format(value);
 
   // Calcula disponibilidade baseada no ingrediente mais limitante
   const canMakeCount = React.useMemo(() => {
@@ -365,6 +370,9 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
                           <p className="text-[10px] font-bold text-slate-400 uppercase">
                             Estoque: {formatIngredientStockQuantity(ing, ing.currentStock)} {ing.unit}
                           </p>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase">
+                            Custo: R$ {formatIngredientCost(ing.cost)} / {ing.unit}
+                          </p>
                         </div>
                         <div className="qb-sale-customizer-controls flex items-center gap-4">
                           <button 
@@ -403,7 +411,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
                 disabled={!canConfirmCustomSale}
                 className="qb-btn-touch w-full bg-green-600 hover:bg-green-700 disabled:bg-slate-300 disabled:text-slate-500 text-white py-5 rounded-3xl font-black uppercase text-lg shadow-lg active:scale-95 flex items-center justify-center gap-3"
               >
-                {canConfirmCustomSale ? 'CONFIRMAR VENDA' : 'ESTOQUE INSUFICIENTE'}
+                {canConfirmCustomSale ? 'ADICIONAR AO CARRINHO' : 'ESTOQUE INSUFICIENTE'}
               </button>
             </div>
           </div>

@@ -3,6 +3,9 @@ import type {
   Ingredient,
   Product,
   RecipeItem,
+  SaleCustomerType,
+  SaleDraft,
+  SalePaymentMethod,
 } from '../types';
 import { DEFAULT_APP_STATE, type AppState } from './appStorage';
 
@@ -38,6 +41,51 @@ export type StateCommand =
       recipeOverride?: RecipeItem[];
       priceOverride?: number;
       clientSaleId?: string;
+    })
+  | (BaseCommand & {
+      type: 'SALE_DRAFT_CREATE';
+      draftId: string;
+      customerType?: SaleCustomerType;
+    })
+  | (BaseCommand & {
+      type: 'SALE_DRAFT_SET_CUSTOMER_TYPE';
+      draftId: string;
+      customerType?: SaleCustomerType;
+    })
+  | (BaseCommand & {
+      type: 'SALE_DRAFT_ADD_ITEM';
+      draftId: string;
+      productId: string;
+      quantity?: number;
+      recipeOverride?: RecipeItem[];
+      priceOverride?: number;
+      note?: string;
+    })
+  | (BaseCommand & {
+      type: 'SALE_DRAFT_UPDATE_ITEM';
+      draftId: string;
+      itemId: string;
+      quantity?: number;
+      note?: string;
+    })
+  | (BaseCommand & {
+      type: 'SALE_DRAFT_REMOVE_ITEM';
+      draftId: string;
+      itemId: string;
+    })
+  | (BaseCommand & {
+      type: 'SALE_DRAFT_FINALIZE';
+      draftId: string;
+      paymentMethod: SalePaymentMethod;
+      cashReceived?: number;
+    })
+  | (BaseCommand & {
+      type: 'SALE_DRAFT_CONFIRM_PAID';
+      draftId: string;
+    })
+  | (BaseCommand & {
+      type: 'SALE_DRAFT_CANCEL';
+      draftId: string;
     })
   | (BaseCommand & { type: 'SALE_UNDO_LAST' })
   | (BaseCommand & { type: 'SALE_UNDO_BY_ID'; saleId: string })
@@ -188,6 +236,7 @@ const normalizeAppState = (payload: unknown): AppState => {
     globalCleaningStockEntries: reviveTimestampList(
       toArray(source.globalCleaningStockEntries, DEFAULT_APP_STATE.globalCleaningStockEntries)
     ),
+    saleDrafts: toArray<SaleDraft>(source.saleDrafts, DEFAULT_APP_STATE.saleDrafts),
   };
 };
 

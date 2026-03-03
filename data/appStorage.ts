@@ -4,6 +4,7 @@ import {
   Ingredient,
   Product,
   Sale,
+  SaleDraft,
   StockEntry,
 } from '../types';
 import { clearStore } from './localDb';
@@ -19,6 +20,7 @@ export interface AppState {
   globalCancelledSales: Sale[];
   globalStockEntries: StockEntry[];
   globalCleaningStockEntries: CleaningStockEntry[];
+  saleDrafts: SaleDraft[];
 }
 
 interface LocalMirrorSnapshot {
@@ -45,6 +47,7 @@ const STORAGE_KEYS = {
   globalCancelledSales: 'qb_global_cancelled',
   globalStockEntries: 'qb_global_stock_entries',
   globalCleaningStockEntries: 'qb_global_cleaning_stock_entries',
+  saleDrafts: 'qb_sale_drafts',
   remoteStateMirror: 'qb_remote_state_mirror_v1',
   metaVersion: 'qb_meta_version',
 };
@@ -76,6 +79,7 @@ export const DEFAULT_APP_STATE: AppState = {
   globalCancelledSales: [],
   globalStockEntries: [],
   globalCleaningStockEntries: [],
+  saleDrafts: [],
 };
 
 const DATA_KEYS = [
@@ -89,6 +93,7 @@ const DATA_KEYS = [
   STORAGE_KEYS.globalCancelledSales,
   STORAGE_KEYS.globalStockEntries,
   STORAGE_KEYS.globalCleaningStockEntries,
+  STORAGE_KEYS.saleDrafts,
 ];
 
 const getApiBaseUrl = (): string | null => {
@@ -168,6 +173,7 @@ const normalizeStateRecord = (
       defaults.globalCleaningStockEntries
     )
   ),
+  saleDrafts: toArray<SaleDraft>(source.saleDrafts, defaults.saleDrafts),
 });
 
 const normalizeVersionHeader = (value: string | null): string | null => {

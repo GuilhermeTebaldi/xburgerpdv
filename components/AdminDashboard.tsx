@@ -6,6 +6,7 @@ import {
   Ingredient,
   Product,
   Sale,
+  SalePaymentMethod,
   StockEntry,
 } from '../types';
 import { formatIngredientStockQuantity, formatStockQuantityByUnit } from '../utils/recipe';
@@ -25,6 +26,39 @@ interface AdminDashboardProps {
   onDeleteArchiveDate: (date: string) => void;
   onDeleteArchiveMonth: (month: string) => void;
 }
+
+const paymentMethodLabels: Record<SalePaymentMethod, string> = {
+  PIX: 'PIX',
+  DEBITO: 'Débito',
+  CREDITO: 'Crédito',
+  DINHEIRO: 'Dinheiro',
+};
+
+const paymentMethodBadgeClasses: Record<SalePaymentMethod, string> = {
+  PIX: 'bg-cyan-100 text-cyan-700 border-cyan-200',
+  DEBITO: 'bg-blue-100 text-blue-700 border-blue-200',
+  CREDITO: 'bg-violet-100 text-violet-700 border-violet-200',
+  DINHEIRO: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+};
+
+const renderPaymentMethodBadge = (sale: Sale) => {
+  const method = sale.payment?.method;
+  if (!method) {
+    return (
+      <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-slate-500">
+        Não informado
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${paymentMethodBadgeClasses[method]}`}
+    >
+      {paymentMethodLabels[method]}
+    </span>
+  );
+};
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ 
   sales, 
@@ -737,6 +771,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                     <tr className="border-b border-slate-100">
                                       <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-400">Horário</th>
                                       <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-400">Produto</th>
+                                      <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-400">Pagamento</th>
                                       <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-right">Ajuste</th>
                                       <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-right">Valor</th>
                                     </tr>
@@ -746,6 +781,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                       <tr key={sale.id}>
                                         <td className="px-4 py-3 text-xs font-bold text-slate-500">{sale.timestamp.toLocaleTimeString()}</td>
                                         <td className="px-4 py-3 font-black text-slate-800 uppercase text-xs">{sale.productName}</td>
+                                        <td className="px-4 py-3 text-xs font-black text-slate-800">{renderPaymentMethodBadge(sale)}</td>
                                         <td className="px-4 py-3 text-xs font-black text-right">
                                           {sale.priceAdjustment !== undefined ? (
                                             <span className={`${sale.priceAdjustment >= 0 ? 'text-green-600' : 'text-red-600'}`}>

@@ -1,13 +1,21 @@
-import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig, loadEnv} from 'vite';
 
-export default defineConfig(({mode}) => {
+export default defineConfig(async ({mode}) => {
   const env = loadEnv(mode, '.', '');
   const adminProxyTarget = env.VITE_ADMIN_PROXY_TARGET || 'http://localhost:3001';
+  const plugins = [react()];
+
+  try {
+    const tailwindcss = (await import('@tailwindcss/vite')).default;
+    plugins.push(tailwindcss());
+  } catch {
+    // fallback local: allow dev server even if optional tailwind vite plugin is unavailable
+  }
+
   return {
-    plugins: [react(), tailwindcss()],
+    plugins,
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
     },

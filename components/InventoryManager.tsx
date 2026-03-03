@@ -5,8 +5,6 @@ import {
   allowsFractionalStockInput,
   formatIngredientStockQuantity,
   formatStockQuantityByUnit,
-  getStockInputUnitLabel,
-  getStockQuantityFromInputQuantity,
   getStockInputStep,
 } from '../utils/recipe';
 
@@ -35,9 +33,8 @@ const parseStockMoveAmount = (
   const normalizedInputAmount = allowsFractional ? Number(parsed.toFixed(6)) : Math.trunc(parsed);
   if (!Number.isFinite(normalizedInputAmount) || normalizedInputAmount <= 0) return null;
 
-  const stockAmount = getStockQuantityFromInputQuantity(ingredient, normalizedInputAmount);
-  if (!Number.isFinite(stockAmount) || stockAmount <= 0) return null;
-  return Number(stockAmount.toFixed(6));
+  // Inventory input now follows the ingredient stock unit directly (kg -> kg, g -> g, etc.).
+  return Number(normalizedInputAmount.toFixed(6));
 };
 
 const InventoryManager: React.FC<InventoryManagerProps> = ({
@@ -105,8 +102,18 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
     if (timerRef.current) clearTimeout(timerRef.current);
   };
 
+  const formatCardStockValue = (ingredient: Ingredient): string => {
+    const value = ingredient.currentStock;
+    if (!Number.isFinite(value)) return '0';
+    const isInteger = Math.abs(value - Math.trunc(value)) < Number.EPSILON;
+    return new Intl.NumberFormat('pt-BR', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: isInteger ? 0 : 3,
+    }).format(value);
+  };
+
   return (
-    <div className="qb-inventory p-4 sm:p-6 max-w-5xl mx-auto">
+    <div className="qqb-inventory p-4 sm:p-6 max-w-[1600px] mx-auto">
       <div className="qb-inventory-header flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
         <div>
           <h2 className="text-3xl font-black text-slate-800 tracking-tight">CONTROLE DE ESTOQUE</h2>
@@ -128,8 +135,8 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
         </div>
       </div>
 
-      <div className="qb-inventory-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <div className="md:col-span-2 lg:col-span-3">
+      <div className="qb-inventory-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+        <div className="md:col-span-2 lg:col-span-3 2xl:col-span-4">
           <div className="bg-white border-2 border-slate-100 rounded-3xl p-4 sm:p-5 shadow-sm">
             <div className="flex flex-col sm:flex-row sm:items-center gap-3">
               <div className="relative flex-1">
@@ -177,7 +184,7 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
           const canReplenish = parsedValue !== null;
           const canConsume =
             parsedValue !== null && ing.currentStock + Number.EPSILON >= parsedValue;
-          const inputUnitLabel = getStockInputUnitLabel(ing);
+          const inputUnitLabel = ing.unit;
 
           return (
             <div 
@@ -205,7 +212,7 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
               )}
 
               <div className="flex justify-between items-start mb-2 gap-3">
-                <div className="flex items-start gap-3">
+                <div className="flex items-start gap-3 min-w-0 flex-1">
                   {ing.imageUrl ? (
                     <div className="w-12 h-12 rounded-2xl overflow-hidden border border-slate-100 shadow-sm bg-slate-50">
                       <img
@@ -220,9 +227,9 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
                       IMG
                     </div>
                   )}
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{ing.id}</p>
-                    <h3 className="text-lg font-extrabold text-slate-800 uppercase">{ing.name}</h3>
+                    <h3 className="text-lg font-extrabold text-slate-800 uppercase break-words leading-tight">{ing.name}</h3>
                   </div>
                 </div>
                 <div className="flex items-start gap-2">
@@ -236,11 +243,13 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
                   </button>
-                  <div className="text-right">
-                    <span className={`text-2xl font-black ${isCritical ? 'text-red-600' : isLow ? 'text-yellow-600' : 'text-slate-900'}`}>
-                      {formatIngredientStockQuantity(ing, ing.currentStock)}
+                  <div className="text-right min-w-0">
+                    <span
+                      className={`block text-xl xl:text-2xl font-black leading-none tracking-tight max-w-[11ch] break-all ${isCritical ? 'text-red-600' : isLow ? 'text-yellow-600' : 'text-slate-900'}`}
+                    >
+                      {formatCardStockValue(ing)}
                     </span>
-                    <span className="text-xs font-bold text-slate-400 ml-1 uppercase">{ing.unit}</span>
+                    <span className="block text-[11px] font-bold text-slate-400 uppercase">{ing.unit}</span>
                   </div>
                 </div>
               </div>
@@ -292,7 +301,7 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
           );
         })}
         {filteredIngredients.length === 0 && (
-          <div className="md:col-span-2 lg:col-span-3">
+          <div className="md:col-span-2 lg:col-span-3 2xl:col-span-4">
             <div className="rounded-3xl border-2 border-dashed border-slate-200 bg-white p-10 text-center">
               <p className="text-xs font-black uppercase tracking-widest text-slate-500">
                 Nenhum ingrediente encontrado para "{searchValue}"
