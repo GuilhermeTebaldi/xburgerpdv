@@ -381,9 +381,12 @@ const App: React.FC = () => {
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [isCancellingDraft, setIsCancellingDraft] = useState(false);
   const [isConfirmingPaid, setIsConfirmingPaid] = useState(false);
+  const [cartBumpTick, setCartBumpTick] = useState(-1);
+  const [cartEntryFx, setCartEntryFx] = useState<{ id: number; label: string } | null>(null);
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<SalePaymentMethod>('PIX');
   const [cashReceivedInput, setCashReceivedInput] = useState('');
+  const cartEntryFxTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -500,6 +503,14 @@ const App: React.FC = () => {
   const showNotification = (message: string) => {
     setNotification({ isVisible: true, message });
   };
+
+  useEffect(() => {
+    return () => {
+      if (cartEntryFxTimeoutRef.current !== null) {
+        window.clearTimeout(cartEntryFxTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const replaceOfflineSalesQueue = useCallback((nextQueue: OfflineQueuedSale[]) => {
     offlineSalesQueueRef.current = nextQueue;
@@ -822,6 +833,23 @@ const App: React.FC = () => {
     })();
   };
 
+  const triggerCartEntryEffect = useCallback((productName: string) => {
+    const cleanName = productName.trim();
+    const label = cleanName.length > 22 ? `${cleanName.slice(0, 22)}...` : cleanName || 'Item';
+    const fxId = Date.now();
+
+    setCartBumpTick((current) => current + 1);
+    setCartEntryFx({ id: fxId, label });
+
+    if (cartEntryFxTimeoutRef.current !== null) {
+      window.clearTimeout(cartEntryFxTimeoutRef.current);
+    }
+
+    cartEntryFxTimeoutRef.current = window.setTimeout(() => {
+      setCartEntryFx((current) => (current?.id === fxId ? null : current));
+    }, 900);
+  }, []);
+
   const handleOpenCart = () => {
     void (async () => {
       const draftId = await ensureActiveDraft('BALCAO');
@@ -850,8 +878,10 @@ const App: React.FC = () => {
         { silentSuccessNotification: false }
       );
       if (!ok) return;
+
+      triggerCartEntryEffect(product.name);
     })();
-  }, [ensureActiveDraft, runCommandWithSync]);
+  }, [ensureActiveDraft, runCommandWithSync, triggerCartEntryEffect]);
 
   const handleUpdateDraftCustomerType = (customerType: SaleCustomerType) => {
     if (!activeDraft) return;
@@ -1375,34 +1405,58 @@ const App: React.FC = () => {
               </div>
 
               <div className="qb-pos-actions flex gap-2 w-full md:w-auto items-center">
-                <button
-                  onClick={handleOpenCart}
-                  className="qb-btn-touch relative overflow-hidden bg-gradient-to-r from-red-600 via-rose-600 to-orange-500 text-white px-4 py-3 rounded-2xl font-black text-[10px] uppercase tracking-tighter shadow-xl hover:brightness-110 active:scale-95 transition-all whitespace-nowrap border border-red-500/60"
-                  title="Ver carrinho e finalizar pagamento"
-                >
-                  <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/10 to-white/10" />
-                  <span className="relative flex items-center gap-2">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="15"
-                      height="15"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
+                <div className="relative">
+                  {cartEntryFx && (
+                    <span
+                      key={cartEntryFx.id}
+                      className="qb-cart-entry-chip pointer-events-none absolute -top-3 right-1 z-20 inline-flex items-center rounded-full bg-yellow-300 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-red-800 shadow-lg border border-yellow-400"
                     >
-                      <circle cx="8" cy="20" r="1.5" />
-                      <circle cx="18" cy="20" r="1.5" />
-                      <path d="M2 3h2l2.4 11.5a2 2 0 0 0 2 1.5h9.8a2 2 0 0 0 2-1.6L22 7H7" />
-                    </svg>
-                    <span>Carrinho</span>
-                    <span className="inline-flex min-w-6 h-6 items-center justify-center rounded-full bg-white text-red-700 px-2 text-[10px] font-black shadow-md">
-                      {activeDraftItemCount}
+                      +1 {cartEntryFx.label}
                     </span>
-                  </span>
-                </button>
+                  )}
+                  <button
+                    onClick={handleOpenCart}
+                    className={`qb-btn-touch relative w-full overflow-hidden bg-gradient-to-r from-red-600 via-rose-600 to-orange-500 text-white px-4 py-3 rounded-2xl font-black text-[10px] uppercase tracking-tighter shadow-xl hover:brightness-110 active:scale-95 transition-all whitespace-nowrap border border-red-500/60 ${
+                      cartBumpTick >= 0
+                        ? cartBumpTick % 2 === 0
+                          ? 'qb-cart-button-bump-a'
+                          : 'qb-cart-button-bump-b'
+                        : ''
+                    }`}
+                    title="Ver carrinho e finalizar pagamento"
+                  >
+                    <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/10 to-white/10" />
+                    <span className="relative flex items-center gap-2">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="15"
+                        height="15"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <circle cx="8" cy="20" r="1.5" />
+                        <circle cx="18" cy="20" r="1.5" />
+                        <path d="M2 3h2l2.4 11.5a2 2 0 0 0 2 1.5h9.8a2 2 0 0 0 2-1.6L22 7H7" />
+                      </svg>
+                      <span>Carrinho</span>
+                      <span
+                        className={`inline-flex min-w-6 h-6 items-center justify-center rounded-full bg-white text-red-700 px-2 text-[10px] font-black shadow-md ${
+                          cartBumpTick >= 0
+                            ? cartBumpTick % 2 === 0
+                              ? 'qb-cart-count-pop-a'
+                              : 'qb-cart-count-pop-b'
+                            : ''
+                        }`}
+                      >
+                        {activeDraftItemCount}
+                      </span>
+                    </span>
+                  </button>
+                </div>
                 <button 
                   onClick={handleUndoLastSale}
                   disabled={sales.length === 0}
