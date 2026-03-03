@@ -150,6 +150,15 @@ const resolveSiteRootUrl = () => {
   return `${origin}/`;
 };
 
+const resolveSystemBasePath = (): string => {
+  if (typeof window === 'undefined') return '';
+  const [firstSegment] = window.location.pathname.split('/').filter(Boolean);
+  return firstSegment === 'sistema' ? '/sistema' : '';
+};
+
+const buildPrintRoutePath = (receiptId: string): string =>
+  `${resolveSystemBasePath()}/print/${encodeURIComponent(receiptId)}`;
+
 const createClientId = (prefix: string): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `${prefix}-${crypto.randomUUID()}`;
@@ -371,6 +380,7 @@ const App: React.FC = () => {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [isCancellingDraft, setIsCancellingDraft] = useState(false);
+  const [isConfirmingPaid, setIsConfirmingPaid] = useState(false);
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<SalePaymentMethod>('PIX');
   const [cashReceivedInput, setCashReceivedInput] = useState('');
@@ -977,8 +987,26 @@ const App: React.FC = () => {
     );
   };
 
+  const openReceiptPrintWindow = useCallback(
+    (receiptId: string): boolean => {
+      if (typeof window === 'undefined') return false;
+      const normalizedId = receiptId.trim();
+      if (!normalizedId) return false;
+      const printWindow = window.open(
+        buildPrintRoutePath(normalizedId),
+        '_blank',
+        'noopener,noreferrer'
+      );
+      return Boolean(printWindow);
+    },
+    []
+  );
+
   const handleConfirmPaid = () => {
     if (!activeDraft) return;
+    if (isConfirmingPaid) return;
+    const draftId = activeDraft.id;
+    setIsConfirmingPaid(true);
     void (async () => {
       const finalized = await handleSavePaymentMethod();
       if (!finalized) return;
@@ -986,15 +1014,24 @@ const App: React.FC = () => {
       const ok = await runCommandWithSync(
         {
           type: 'SALE_DRAFT_CONFIRM_PAID',
-          draftId: activeDraft.id,
+          draftId,
         },
         'Pagamento confirmado. Estoque debitado.'
       );
       if (!ok) return;
 
+      const opened = openReceiptPrintWindow(draftId);
+      if (!opened) {
+        showNotification(
+          'Pagamento confirmado, mas o navegador bloqueou o cupom. Use o Histórico para segunda via.'
+        );
+      }
+
       setIsPaymentOpen(false);
       setIsCartOpen(false);
-    })();
+    })().finally(() => {
+      setIsConfirmingPaid(false);
+    });
   };
 
   const handleUndoLastSale = () => {
@@ -1082,6 +1119,40 @@ const App: React.FC = () => {
       setIsUndoHistoryOpen(false);
     } finally {
       setIsUndoProcessing(false);
+    }
+  };
+
+  const handlePrintReceiptBySaleId = (saleId: string) => {
+    const targetSale = sales.find((sale) => sale.id === saleId);
+    if (!targetSale) {
+      showNotification('Venda não encontrada para impressão.');
+      return;
+    }
+
+    const receiptId = targetSale.saleDraftId || targetSale.id;
+    const opened = openReceiptPrintWindow(receiptId);
+    if (!opened) {
+      showNotification('Não foi possível abrir a tela de impressão. Verifique o bloqueio de pop-up.');
+    }
+  };
+
+  const handlePrintReceiptByGroup = (groupId: string) => {
+    const targetGroup = recentUndoGroups.find((group) => group.id === groupId);
+    if (!targetGroup) {
+      showNotification('Pedido não encontrado para impressão.');
+      return;
+    }
+
+    const fallbackSaleId = targetGroup.sales[0]?.id;
+    const receiptId = targetGroup.saleDraftId || fallbackSaleId;
+    if (!receiptId) {
+      showNotification('Pedido sem referência de impressão.');
+      return;
+    }
+
+    const opened = openReceiptPrintWindow(receiptId);
+    if (!opened) {
+      showNotification('Não foi possível abrir a tela de impressão. Verifique o bloqueio de pop-up.');
     }
   };
 
@@ -1767,10 +1838,10 @@ const App: React.FC = () => {
               </button>
               <button
                 onClick={handleConfirmPaid}
-                disabled={isCashPaymentInsufficient}
+                disabled={isCashPaymentInsufficient || isConfirmingPaid || isStateHydrating || pendingStateOps > 0}
                 className="qb-btn-touch bg-green-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition-colors disabled:opacity-40"
               >
-                Confirmar Pago
+                {isConfirmingPaid ? 'Confirmando...' : 'Confirmar Pago'}
               </button>
             </div>
           </div>
@@ -1870,21 +1941,41 @@ const App: React.FC = () => {
                                 Total: R$ {sale.total.toFixed(2)} • Custo: R$ {(sale.totalCost || 0).toFixed(2)}
                               </p>
                             </div>
-                            <button
-                              onClick={() => {
-                                void handleUndoSaleById(sale.id, { closeHistoryOnSuccess: false });
-                              }}
-                              disabled={isCommandBusy}
-                              className="qb-btn-touch bg-slate-900 text-yellow-400 px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                              title="Desfazer este produto"
-                            >
-                              Desfazer Produto
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => {
+                                  handlePrintReceiptBySaleId(sale.id);
+                                }}
+                                className="qb-btn-touch bg-blue-600 text-white px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-700 transition-all active:scale-95 whitespace-nowrap"
+                                title="Imprimir cupom (segunda via)"
+                              >
+                                Imprimir Cupom
+                              </button>
+                              <button
+                                onClick={() => {
+                                  void handleUndoSaleById(sale.id, { closeHistoryOnSuccess: false });
+                                }}
+                                disabled={isCommandBusy}
+                                className="qb-btn-touch bg-slate-900 text-yellow-400 px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                                title="Desfazer este produto"
+                              >
+                                Desfazer Produto
+                              </button>
+                            </div>
                           </div>
                         ))}
 
                         {group.sales.length > 1 && (
-                          <div className="pt-1 flex justify-end">
+                          <div className="pt-1 flex justify-end gap-2">
+                            <button
+                              onClick={() => {
+                                handlePrintReceiptByGroup(group.id);
+                              }}
+                              className="qb-btn-touch bg-blue-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-700 transition-all active:scale-95 whitespace-nowrap"
+                              title="Imprimir cupom do pedido completo"
+                            >
+                              Imprimir Pedido
+                            </button>
                             <button
                               onClick={() => {
                                 void handleUndoSaleGroup(group.id);
