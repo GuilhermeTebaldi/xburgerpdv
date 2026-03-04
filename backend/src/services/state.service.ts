@@ -31,9 +31,16 @@ const EMPTY_APP_STATE: FrontAppState = {
   globalStockEntries: [],
   globalCleaningStockEntries: [],
   saleDrafts: [],
+  cashRegisterAmount: 0,
+  dailySalesHistory: [],
 };
 
 const arrayOrEmpty = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+const toNonNegativeNumber = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return parsed;
+};
 
 const normalizeStatePayload = (value: unknown): FrontAppState => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -53,6 +60,8 @@ const normalizeStatePayload = (value: unknown): FrontAppState => {
     globalStockEntries: arrayOrEmpty(payload.globalStockEntries),
     globalCleaningStockEntries: arrayOrEmpty(payload.globalCleaningStockEntries),
     saleDrafts: arrayOrEmpty(payload.saleDrafts),
+    cashRegisterAmount: toNonNegativeNumber(payload.cashRegisterAmount),
+    dailySalesHistory: arrayOrEmpty(payload.dailySalesHistory),
   };
 };
 
@@ -70,6 +79,8 @@ const normalizeStatePayloadSafe = (value: unknown): FrontAppState => {
       globalStockEntries: [],
       globalCleaningStockEntries: [],
       saleDrafts: [],
+      cashRegisterAmount: 0,
+      dailySalesHistory: [],
     };
   }
   return normalizeStatePayload(value);
@@ -638,6 +649,8 @@ export class StateService {
       globalStockEntries: globalStockMovements.map(toFrontIngredientEntry),
       globalCleaningStockEntries: globalCleaningMovements.map(toFrontCleaningEntry),
       saleDrafts: [],
+      cashRegisterAmount: 0,
+      dailySalesHistory: [],
     };
   }
 }

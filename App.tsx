@@ -16,6 +16,7 @@ import AdminLogin from './components/AdminLogin';
 import {
   CleaningMaterial,
   CleaningStockEntry,
+  DailySalesHistoryEntry,
   Ingredient,
   Product,
   Sale,
@@ -37,6 +38,9 @@ const ADMIN_GATE_KEY = 'lanchesdoben_admin_gate';
 const ADMIN_SESSION_KEY = 'lanchesdoben_admin_session';
 const ADMIN_SESSION_BACKUP_KEY = 'lanchesdoben_admin_session_backup';
 const OFFLINE_SALE_QUEUE_KEY = 'qb_offline_sale_queue_v1';
+const CASH_HISTORY_LEGACY_MODE_KEY = 'qb_cash_history_legacy_mode_v1';
+const LOCAL_CASH_REGISTER_KEY = 'qb_cash_register_local_v1';
+const LOCAL_DAILY_HISTORY_KEY = 'qb_daily_sales_history_local_v1';
 
 type SaleRegisterCommand = Extract<StateCommand, { type: 'SALE_REGISTER' }>;
 
@@ -66,6 +70,109 @@ interface AdminSessionBarrier {
   issuedAt: number;
   lastHeartbeatAt: number;
 }
+
+const roundMoney = (value: number): number => Number(value.toFixed(2));
+
+const readCashHistoryLegacyMode = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(CASH_HISTORY_LEGACY_MODE_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+const writeCashHistoryLegacyMode = (enabled: boolean): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    if (enabled) {
+      window.localStorage.setItem(CASH_HISTORY_LEGACY_MODE_KEY, '1');
+    } else {
+      window.localStorage.removeItem(CASH_HISTORY_LEGACY_MODE_KEY);
+    }
+  } catch {
+    // ignore storage write failures
+  }
+};
+
+const readLocalCashRegisterAmount = (): number => {
+  if (typeof window === 'undefined') return 0;
+  try {
+    const raw = window.localStorage.getItem(LOCAL_CASH_REGISTER_KEY);
+    if (!raw) return 0;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) return 0;
+    return roundMoney(parsed);
+  } catch {
+    return 0;
+  }
+};
+
+const writeLocalCashRegisterAmount = (amount: number): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(LOCAL_CASH_REGISTER_KEY, String(roundMoney(Math.max(0, amount))));
+  } catch {
+    // ignore storage write failures
+  }
+};
+
+const normalizeDailyHistoryEntry = (value: unknown): DailySalesHistoryEntry | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const closedAtRaw = source.closedAt;
+  const closedAt =
+    closedAtRaw instanceof Date || typeof closedAtRaw === 'string'
+      ? closedAtRaw
+      : new Date().toISOString();
+
+  const saleCountRaw = Number(source.saleCount);
+  const saleCount = Number.isFinite(saleCountRaw) && saleCountRaw >= 0 ? Math.floor(saleCountRaw) : 0;
+
+  return {
+    id:
+      typeof source.id === 'string' && source.id.trim()
+        ? source.id
+        : `day-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    closedAt,
+    openingCash: roundMoney(Math.max(0, Number(source.openingCash) || 0)),
+    totalRevenue: roundMoney(Math.max(0, Number(source.totalRevenue) || 0)),
+    totalPurchases: roundMoney(Math.max(0, Number(source.totalPurchases) || 0)),
+    totalProfit: roundMoney(Number(source.totalProfit) || 0),
+    saleCount,
+  };
+};
+
+const readLocalDailySalesHistory = (): DailySalesHistoryEntry[] => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(LOCAL_DAILY_HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => normalizeDailyHistoryEntry(item))
+      .filter((item): item is DailySalesHistoryEntry => item !== null);
+  } catch {
+    return [];
+  }
+};
+
+const normalizeDailyHistoryList = (
+  history: DailySalesHistoryEntry[]
+): DailySalesHistoryEntry[] =>
+  history
+    .map((entry) => normalizeDailyHistoryEntry(entry))
+    .filter((entry): entry is DailySalesHistoryEntry => entry !== null);
+
+const writeLocalDailySalesHistory = (history: DailySalesHistoryEntry[]): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(LOCAL_DAILY_HISTORY_KEY, JSON.stringify(history));
+  } catch {
+    // ignore storage write failures
+  }
+};
 
 const generateAdminToken = () => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -234,6 +341,36 @@ const isRetryableSyncError = (error: unknown): boolean => {
   return false;
 };
 
+const LEGACY_COMMAND_ERROR_HINTS = [
+  'payload inválido',
+  'payload invalido',
+  'invalid discriminator',
+  'comando',
+  'unsupported',
+  'not supported',
+  'não suport',
+  'nao suport',
+];
+
+const isUnsupportedCashHistoryCommandError = (error: unknown): boolean => {
+  if (error instanceof StateCommandSyncError && error.retryable) {
+    return false;
+  }
+
+  const statusCode =
+    error instanceof StateCommandSyncError ? error.statusCode : undefined;
+  const message =
+    error instanceof Error ? error.message.toLowerCase() : '';
+
+  const hasLegacyHint = LEGACY_COMMAND_ERROR_HINTS.some((hint) =>
+    message.includes(hint)
+  );
+
+  if (hasLegacyHint) return true;
+  if (statusCode === undefined) return false;
+  return statusCode === 400 || statusCode === 404 || statusCode === 422;
+};
+
 const normalizeRecipeOverride = (value: unknown): RecipeItem[] | undefined => {
   if (!Array.isArray(value)) return undefined;
 
@@ -365,6 +502,14 @@ const App: React.FC = () => {
     DEFAULT_APP_STATE.globalCleaningStockEntries
   );
   const [saleDrafts, setSaleDrafts] = useState<SaleDraft[]>(DEFAULT_APP_STATE.saleDrafts);
+  const [isCashHistoryLegacyMode, setIsCashHistoryLegacyMode] = useState<boolean>(() =>
+    readCashHistoryLegacyMode()
+  );
+  const isCashHistoryLegacyModeRef = useRef<boolean>(readCashHistoryLegacyMode());
+  const [cashRegisterAmount, setCashRegisterAmount] = useState<number>(DEFAULT_APP_STATE.cashRegisterAmount);
+  const [dailySalesHistory, setDailySalesHistory] = useState<DailySalesHistoryEntry[]>(
+    DEFAULT_APP_STATE.dailySalesHistory
+  );
   
   const [isAddProductModalOpen, setIsAddProductModalOpen] = useState(false);
   const [isAddIngredientModalOpen, setIsAddIngredientModalOpen] = useState(false);
@@ -387,6 +532,10 @@ const App: React.FC = () => {
   const [paymentMethod, setPaymentMethod] = useState<SalePaymentMethod>('PIX');
   const [cashReceivedInput, setCashReceivedInput] = useState('');
   const cartEntryFxTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    isCashHistoryLegacyModeRef.current = isCashHistoryLegacyMode;
+  }, [isCashHistoryLegacyMode]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -468,6 +617,28 @@ const App: React.FC = () => {
     };
   }, [isAccessVerified, isAdminAuthenticated]);
 
+  const applyCashHistorySnapshot = useCallback(
+    (state: AppState) => {
+      if (isCashHistoryLegacyModeRef.current) {
+        setCashRegisterAmount(readLocalCashRegisterAmount());
+        setDailySalesHistory(readLocalDailySalesHistory());
+        return;
+      }
+
+      const normalizedCashRegisterAmount = roundMoney(
+        Math.max(0, state.cashRegisterAmount)
+      );
+      const normalizedHistory = normalizeDailyHistoryList(state.dailySalesHistory);
+
+      setCashRegisterAmount(normalizedCashRegisterAmount);
+      setDailySalesHistory(normalizedHistory);
+      writeLocalCashRegisterAmount(normalizedCashRegisterAmount);
+      writeLocalDailySalesHistory(normalizedHistory);
+      writeCashHistoryLegacyMode(false);
+    },
+    []
+  );
+
   useEffect(() => {
     if (!isAccessVerified) return;
 
@@ -488,6 +659,7 @@ const App: React.FC = () => {
         setGlobalCleaningStockEntries(state.globalCleaningStockEntries);
         saleDraftsRef.current = state.saleDrafts;
         setSaleDrafts(state.saleDrafts);
+        applyCashHistorySnapshot(state);
       })
       .catch(() => undefined)
       .finally(() => {
@@ -498,11 +670,18 @@ const App: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [isAccessVerified]);
+  }, [applyCashHistorySnapshot, isAccessVerified]);
 
-  const showNotification = (message: string) => {
+  const showNotification = useCallback((message: string) => {
     setNotification({ isVisible: true, message });
-  };
+  }, []);
+
+  const enableCashHistoryLegacyMode = useCallback(() => {
+    writeCashHistoryLegacyMode(true);
+    setIsCashHistoryLegacyMode(true);
+    setCashRegisterAmount(readLocalCashRegisterAmount());
+    setDailySalesHistory(readLocalDailySalesHistory());
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -568,7 +747,8 @@ const App: React.FC = () => {
     setGlobalCleaningStockEntries(state.globalCleaningStockEntries);
     saleDraftsRef.current = state.saleDrafts;
     setSaleDrafts(state.saleDrafts);
-  }, []);
+    applyCashHistorySnapshot(state);
+  }, [applyCashHistorySnapshot]);
 
   const executeSyncedCommand = useCallback(
     async (command: StateCommand): Promise<{ ok: true } | { ok: false; error: unknown }> => {
@@ -1222,11 +1402,131 @@ const App: React.FC = () => {
     );
   }, [runCommandWithSync]);
 
-  const handleClearHistory = () => {
-    if (confirm("Deseja realmente encerrar o dia? O caixa será zerado para uma nova sessão.")) {
-      void runCommandWithSync({ type: 'CLEAR_HISTORY' }, 'Sessão Reiniciada!');
+  const buildCurrentCloseDayReport = useCallback((): DailySalesHistoryEntry => {
+    const totalRevenue = roundMoney(
+      sales.reduce(
+        (sum, sale) => sum + (Number.isFinite(sale.total) ? sale.total : 0),
+        0
+      )
+    );
+    const totalPurchases = roundMoney(
+      sales.reduce(
+        (sum, sale) => sum + (Number.isFinite(sale.totalCost) ? sale.totalCost : 0),
+        0
+      )
+    );
+    const openingCash = roundMoney(Math.max(0, cashRegisterAmount));
+
+    return {
+      id: createClientId('day'),
+      closedAt: new Date().toISOString(),
+      openingCash,
+      totalRevenue,
+      totalPurchases,
+      totalProfit: roundMoney(totalRevenue - totalPurchases),
+      saleCount: sales.length,
+    };
+  }, [cashRegisterAmount, sales]);
+
+  const persistLocalCloseDayReport = useCallback((report: DailySalesHistoryEntry) => {
+    const normalizedReport = normalizeDailyHistoryEntry(report);
+    if (!normalizedReport) return;
+
+    const nextHistory = [...readLocalDailySalesHistory(), normalizedReport];
+    writeLocalDailySalesHistory(nextHistory);
+    writeLocalCashRegisterAmount(0);
+    setDailySalesHistory(nextHistory);
+    setCashRegisterAmount(0);
+  }, []);
+
+  const closeDayWithLegacyFallback = useCallback(
+    async (successMessage = 'Sessão Reiniciada!'): Promise<boolean> => {
+      const report = buildCurrentCloseDayReport();
+      const clearResult = await executeSyncedCommand({ type: 'CLEAR_HISTORY' });
+
+      if (!clearResult.ok) {
+        showNotification(getStateSyncErrorMessage(clearResult.error));
+        return false;
+      }
+
+      persistLocalCloseDayReport(report);
+      showNotification(successMessage);
+      return true;
+    },
+    [
+      buildCurrentCloseDayReport,
+      executeSyncedCommand,
+      persistLocalCloseDayReport,
+      showNotification,
+    ]
+  );
+
+  const handleSetCashRegister = useCallback(
+    async (amount: number): Promise<boolean> => {
+      const normalizedAmount = roundMoney(Math.max(0, amount));
+
+      if (isCashHistoryLegacyMode) {
+        writeLocalCashRegisterAmount(normalizedAmount);
+        setCashRegisterAmount(normalizedAmount);
+        return true;
+      }
+
+      const result = await executeSyncedCommand({
+        type: 'SET_CASH_REGISTER',
+        amount: normalizedAmount,
+      });
+
+      if (result.ok) {
+        return true;
+      }
+
+      if (!isUnsupportedCashHistoryCommandError(result.error)) {
+        showNotification(getStateSyncErrorMessage(result.error));
+        return false;
+      }
+
+      enableCashHistoryLegacyMode();
+      writeLocalCashRegisterAmount(normalizedAmount);
+      setCashRegisterAmount(normalizedAmount);
+      showNotification('Servidor antigo detectado. Caixa salvo localmente.');
+      return true;
+    },
+    [
+      enableCashHistoryLegacyMode,
+      executeSyncedCommand,
+      isCashHistoryLegacyMode,
+      showNotification,
+    ]
+  );
+
+  const handleCloseDay = useCallback(async (): Promise<boolean> => {
+    if (isCashHistoryLegacyMode) {
+      return closeDayWithLegacyFallback();
     }
-  };
+
+    const closeResult = await executeSyncedCommand({ type: 'CLOSE_DAY' });
+
+    if (closeResult.ok) {
+      showNotification('Sessão Reiniciada!');
+      return true;
+    }
+
+    if (!isUnsupportedCashHistoryCommandError(closeResult.error)) {
+      showNotification(getStateSyncErrorMessage(closeResult.error));
+      return false;
+    }
+
+    enableCashHistoryLegacyMode();
+    return closeDayWithLegacyFallback(
+      'Servidor antigo detectado. Fechamento salvo localmente.'
+    );
+  }, [
+    closeDayWithLegacyFallback,
+    enableCashHistoryLegacyMode,
+    executeSyncedCommand,
+    isCashHistoryLegacyMode,
+    showNotification,
+  ]);
 
   const handleFactoryReset = async () => {
     const ok = await runCommandWithSync({ type: 'FACTORY_RESET' }, 'Sistema Resetado com Sucesso!');
@@ -1530,7 +1830,10 @@ const App: React.FC = () => {
             sales={sales} 
             allIngredients={ingredients} 
             stockEntries={stockEntries}
-            onClearHistory={handleClearHistory}
+            cashRegisterAmount={cashRegisterAmount}
+            dailySalesHistory={dailySalesHistory}
+            onSetCashRegister={handleSetCashRegister}
+            onCloseDay={handleCloseDay}
           />
         )}
 
@@ -1562,6 +1865,8 @@ const App: React.FC = () => {
               onClearOnlyStock={handleClearOnlyStock}
               onDeleteArchiveDate={handleDeleteArchiveByDate}
               onDeleteArchiveMonth={handleDeleteArchiveByMonth}
+              cashRegisterAmount={cashRegisterAmount}
+              dailySalesHistory={dailySalesHistory}
             />
           )
         )}

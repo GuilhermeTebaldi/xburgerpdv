@@ -3,6 +3,7 @@ import React, { useState, useMemo } from 'react';
 import {
   CleaningMaterial,
   CleaningStockEntry,
+  DailySalesHistoryEntry,
   Ingredient,
   Product,
   Sale,
@@ -25,6 +26,8 @@ interface AdminDashboardProps {
   onClearOnlyStock: () => void;
   onDeleteArchiveDate: (date: string) => void;
   onDeleteArchiveMonth: (month: string) => void;
+  cashRegisterAmount: number;
+  dailySalesHistory: DailySalesHistoryEntry[];
 }
 
 const paymentMethodLabels: Record<SalePaymentMethod, string> = {
@@ -60,6 +63,12 @@ const renderPaymentMethodBadge = (sale: Sale) => {
   );
 };
 
+const toDate = (value: Date | string): Date => {
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) return new Date();
+  return parsed;
+};
+
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ 
   sales, 
   cancelledSales, 
@@ -72,7 +81,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onClearOperationalData,
   onClearOnlyStock,
   onDeleteArchiveDate,
-  onDeleteArchiveMonth
+  onDeleteArchiveMonth,
+  cashRegisterAmount,
+  dailySalesHistory,
 }) => {
   const [activeTab, setActiveTab] = useState<
     'geral' | 'analytics' | 'vendas' | 'estornos' | 'estoque' | 'materiais' | 'arquivos' | 'configuracao'
@@ -135,6 +146,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     });
     return groups;
   }, [sales]);
+  const orderedDailySalesHistory = useMemo(
+    () =>
+      [...dailySalesHistory].sort(
+        (a, b) => toDate(b.closedAt).getTime() - toDate(a.closedAt).getTime()
+      ),
+    [dailySalesHistory]
+  );
+  const latestDailyClose = orderedDailySalesHistory[0];
 
   const handleUnlockConfig = (e: React.FormEvent) => {
     e.preventDefault();
@@ -256,6 +275,87 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <StatCard title="Lucro Líquido" value={`R$ ${totalProfit.toFixed(2)}`} color="bg-green-600" icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m5 12 7-7 7 7"/></svg>} />
             <StatCard title="Vendas Estornadas" value={cancelledSales.length} color="bg-orange-500" icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>} />
             <StatCard title="Materiais de Limpeza" value={`${cleaningMaterials.length} itens`} color="bg-indigo-600" icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M3 7h18"/><path d="M7 7v13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V7"/><path d="M10 11h4"/><path d="M10 15h4"/><path d="M9 3h6l1 4H8l1-4Z"/></svg>} />
+          </div>
+
+          <div className="qb-admin-cash bg-white p-6 rounded-[32px] border-2 border-slate-100 shadow-sm">
+            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-5">
+              <div>
+                <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">Controle de Caixa</h3>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+                  Dados da aba Caixa e histórico de fechamento diário
+                </p>
+              </div>
+              <div className="bg-slate-100 px-4 py-3 rounded-2xl">
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Caixa Atual</p>
+                <p className="text-2xl font-black text-slate-900">R$ {cashRegisterAmount.toFixed(2)}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="bg-emerald-50 rounded-2xl border border-emerald-100 p-4">
+                <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">Caixa Informado</p>
+                <p className="text-2xl font-black text-emerald-700">R$ {cashRegisterAmount.toFixed(2)}</p>
+                <p className="text-[10px] font-bold text-emerald-600 uppercase mt-2">Valor da sessão em aberto</p>
+              </div>
+
+              <div className="bg-blue-50 rounded-2xl border border-blue-100 p-4">
+                <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1">Último Fechamento</p>
+                {latestDailyClose ? (
+                  <>
+                    <p className="text-lg font-black text-blue-700">
+                      {toDate(latestDailyClose.closedAt).toLocaleDateString('pt-BR')}
+                    </p>
+                    <p className="text-[11px] font-black text-slate-700">
+                      Lucro: R$ {latestDailyClose.totalProfit.toFixed(2)}
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm font-black text-slate-400">Sem fechamento registrado</p>
+                )}
+              </div>
+
+              <div className="bg-slate-50 rounded-2xl border border-slate-200 p-4">
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Fechamentos</p>
+                <p className="text-2xl font-black text-slate-900">{orderedDailySalesHistory.length}</p>
+                <p className="text-[10px] font-bold text-slate-500 uppercase mt-2">Registros permanentes</p>
+              </div>
+            </div>
+
+            <div className="mt-5">
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Histórico Diário</p>
+              {orderedDailySalesHistory.length === 0 ? (
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 text-xs font-black uppercase tracking-widest text-slate-400">
+                  Nenhum fechamento de caixa registrado.
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1 scrollbar-hide">
+                  {orderedDailySalesHistory.map((entry) => {
+                    const closedAt = toDate(entry.closedAt);
+                    const closingEstimate = entry.openingCash + entry.totalRevenue - entry.totalPurchases;
+                    return (
+                      <div key={entry.id} className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                          <div>
+                            <p className="text-xs font-black uppercase text-slate-800">
+                              {closedAt.toLocaleDateString('pt-BR')}
+                            </p>
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                              Fechado em {closedAt.toLocaleString('pt-BR')}
+                            </p>
+                          </div>
+                          <p className="text-xs font-black text-slate-700">
+                            Pedidos: {entry.saleCount}
+                          </p>
+                        </div>
+                        <div className="mt-2 text-[11px] font-bold text-slate-700">
+                          Caixa: R$ {entry.openingCash.toFixed(2)} | Faturamento: R$ {entry.totalRevenue.toFixed(2)} | Compras: R$ {entry.totalPurchases.toFixed(2)} | Lucro: R$ {entry.totalProfit.toFixed(2)} | Caixa estimado: R$ {closingEstimate.toFixed(2)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="qb-admin-summary bg-white p-6 rounded-[32px] border-2 border-slate-100 shadow-sm">

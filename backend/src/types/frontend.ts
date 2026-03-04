@@ -112,6 +112,16 @@ export interface FrontSale {
   saleDraftId?: string;
 }
 
+export interface FrontDailySalesHistoryEntry {
+  id: string;
+  closedAt: Date | string;
+  openingCash: number;
+  totalRevenue: number;
+  totalPurchases: number;
+  totalProfit: number;
+  saleCount: number;
+}
+
 export interface FrontAppState {
   ingredients: FrontIngredient[];
   products: FrontProduct[];
@@ -124,4 +134,6 @@ export interface FrontAppState {
   globalStockEntries: FrontStockEntry[];
   globalCleaningStockEntries: FrontCleaningStockEntry[];
   saleDrafts?: FrontSaleDraft[];
+  cashRegisterAmount?: number;
+  dailySalesHistory?: FrontDailySalesHistoryEntry[];
 }

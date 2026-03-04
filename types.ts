@@ -113,6 +113,16 @@ export interface Sale {
   saleDraftId?: string;
 }
 
+export interface DailySalesHistoryEntry {
+  id: string;
+  closedAt: Date | string;
+  openingCash: number;
+  totalRevenue: number;
+  totalPurchases: number;
+  totalProfit: number;
+  saleCount: number;
+}
+
 export enum ViewMode {
   POS = 'POS',
   INVENTORY = 'INVENTORY',

@@ -1,6 +1,7 @@
 import {
   CleaningMaterial,
   CleaningStockEntry,
+  DailySalesHistoryEntry,
   Ingredient,
   Product,
   Sale,
@@ -21,6 +22,8 @@ export interface AppState {
   globalStockEntries: StockEntry[];
   globalCleaningStockEntries: CleaningStockEntry[];
   saleDrafts: SaleDraft[];
+  cashRegisterAmount: number;
+  dailySalesHistory: DailySalesHistoryEntry[];
 }
 
 interface LocalMirrorSnapshot {
@@ -80,6 +83,8 @@ export const DEFAULT_APP_STATE: AppState = {
   globalStockEntries: [],
   globalCleaningStockEntries: [],
   saleDrafts: [],
+  cashRegisterAmount: 0,
+  dailySalesHistory: [],
 };
 
 const DATA_KEYS = [
@@ -148,6 +153,23 @@ const reviveTimestamp = <T extends { timestamp?: unknown }>(item: T): T => {
 const reviveListWithDates = <T extends { timestamp?: unknown }>(items: T[]): T[] =>
   items.map(reviveTimestamp);
 
+const reviveDailySalesHistory = (items: DailySalesHistoryEntry[]): DailySalesHistoryEntry[] =>
+  items.map((item) => {
+    if (item.closedAt && !(item.closedAt instanceof Date)) {
+      return {
+        ...item,
+        closedAt: new Date(item.closedAt as string),
+      };
+    }
+    return item;
+  });
+
+const toNonNegativeNumber = (value: unknown, fallback = 0): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return parsed;
+};
+
 const normalizeStateRecord = (
   source: Record<string, unknown>,
   defaults: AppState
@@ -174,6 +196,10 @@ const normalizeStateRecord = (
     )
   ),
   saleDrafts: toArray<SaleDraft>(source.saleDrafts, defaults.saleDrafts),
+  cashRegisterAmount: toNonNegativeNumber(source.cashRegisterAmount, defaults.cashRegisterAmount),
+  dailySalesHistory: reviveDailySalesHistory(
+    toArray<DailySalesHistoryEntry>(source.dailySalesHistory, defaults.dailySalesHistory)
+  ),
 });
 
 const normalizeVersionHeader = (value: string | null): string | null => {

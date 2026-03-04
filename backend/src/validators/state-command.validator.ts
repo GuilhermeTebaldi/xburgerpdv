@@ -183,6 +183,15 @@ const cleaningStockMoveCommandSchema = baseCommandSchema.extend({
   amount: quantitySchema.refine((value) => value !== 0, 'amount não pode ser zero'),
 });
 
+const setCashRegisterCommandSchema = baseCommandSchema.extend({
+  type: z.literal('SET_CASH_REGISTER'),
+  amount: z.coerce.number().finite().min(0),
+});
+
+const closeDayCommandSchema = baseCommandSchema.extend({
+  type: z.literal('CLOSE_DAY'),
+});
+
 const clearHistoryCommandSchema = baseCommandSchema.extend({
   type: z.literal('CLEAR_HISTORY'),
 });
@@ -227,6 +236,8 @@ export const stateCommandSchema = z.discriminatedUnion('type', [
   cleaningMaterialUpdateCommandSchema,
   cleaningMaterialDeleteCommandSchema,
   cleaningStockMoveCommandSchema,
+  setCashRegisterCommandSchema,
+  closeDayCommandSchema,
   clearHistoryCommandSchema,
   factoryResetCommandSchema,
   clearOperationalDataCommandSchema,

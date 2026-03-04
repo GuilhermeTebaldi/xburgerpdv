@@ -1028,6 +1028,45 @@ test('product create normalizes duplicated recipe items by ingredient', () => {
   assert.equal(created.recipe.find((item) => item.ingredientId === 'i-bread')?.quantity, 1);
 });
 
+test('set cash register stores sanitized amount in state', () => {
+  const base = createBaseState();
+  const next = applyStateCommand(base, {
+    type: 'SET_CASH_REGISTER',
+    amount: 157.9,
+  });
+
+  assert.equal(next.cashRegisterAmount, 157.9);
+  assert.equal(base.cashRegisterAmount, undefined);
+});
+
+test('close day snapshots report in history and resets session sales state', () => {
+  let state = createBaseState();
+  state = applyStateCommand(state, {
+    type: 'SET_CASH_REGISTER',
+    amount: 100,
+  });
+  state = applyStateCommand(state, {
+    type: 'SALE_REGISTER',
+    productId: 'p-burger',
+  });
+
+  const closed = applyStateCommand(state, {
+    type: 'CLOSE_DAY',
+  });
+
+  assert.equal(closed.sales.length, 0);
+  assert.equal(closed.stockEntries.length, 0);
+  assert.equal(closed.saleDrafts?.length || 0, 0);
+  assert.equal(closed.cashRegisterAmount, 0);
+  assert.equal(closed.globalSales.length, 1);
+  assert.equal(closed.dailySalesHistory?.length, 1);
+  assert.equal(closed.dailySalesHistory?.[0]?.openingCash, 100);
+  assert.equal(closed.dailySalesHistory?.[0]?.saleCount, 1);
+  assert.equal(closed.dailySalesHistory?.[0]?.totalRevenue, 20);
+  assert.equal(closed.dailySalesHistory?.[0]?.totalPurchases, 6.1);
+  assert.equal(closed.dailySalesHistory?.[0]?.totalProfit, 13.9);
+});
+
 test('stress: repeated mixed operations never produce negative stocks', () => {
   let state = createBaseState();
 

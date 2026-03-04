@@ -2,6 +2,7 @@ import type {
   FrontAppState,
   FrontCleaningMaterial,
   FrontCleaningStockEntry,
+  FrontDailySalesHistoryEntry,
   FrontIngredient,
   FrontProduct,
   FrontRecipeItem,
@@ -139,6 +140,12 @@ const getAppliedStockDelta = (currentStock: number, requestedAmount: number): nu
 
 const roundMoney = (value: number): number => Number(value.toFixed(2));
 
+const toNonNegativeMoney = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return roundMoney(parsed);
+};
+
 const cloneRecipe = (recipe: FrontRecipeItem[] | undefined): FrontRecipeItem[] | undefined =>
   recipe?.map((item) => ({
     ingredientId: item.ingredientId,
@@ -196,6 +203,28 @@ const cloneSale = (sale: FrontSale): FrontSale => ({
   payment: cloneSalePayment(sale.payment),
 });
 
+const cloneDailySalesHistoryEntry = (
+  entry: FrontDailySalesHistoryEntry
+): FrontDailySalesHistoryEntry => ({
+  ...entry,
+  closedAt:
+    entry.closedAt instanceof Date || typeof entry.closedAt === 'string'
+      ? entry.closedAt
+      : toTimestampIso(),
+  openingCash: toNonNegativeMoney(entry.openingCash),
+  totalRevenue: toNonNegativeMoney(entry.totalRevenue),
+  totalPurchases: toNonNegativeMoney(entry.totalPurchases),
+  totalProfit: roundMoney(Number(entry.totalProfit) || 0),
+  saleCount: Number.isFinite(Number(entry.saleCount)) ? Math.max(0, Math.floor(Number(entry.saleCount))) : 0,
+});
+
+const ensureDailySalesHistory = (state: FrontAppState): FrontDailySalesHistoryEntry[] => {
+  if (!state.dailySalesHistory) {
+    state.dailySalesHistory = [];
+  }
+  return state.dailySalesHistory;
+};
+
 const cloneState = (state: FrontAppState): FrontAppState => ({
   ingredients: state.ingredients.map((ingredient) => ({ ...ingredient })),
   products: state.products.map((product) => ({
@@ -214,6 +243,13 @@ const cloneState = (state: FrontAppState): FrontAppState => ({
   saleDrafts: (state.saleDrafts || [])
     .filter((draft): draft is FrontSaleDraft => Boolean(draft && typeof draft === 'object'))
     .map(cloneSaleDraft),
+  cashRegisterAmount: toNonNegativeMoney(state.cashRegisterAmount),
+  dailySalesHistory: (state.dailySalesHistory || [])
+    .filter(
+      (entry): entry is FrontDailySalesHistoryEntry =>
+        Boolean(entry && typeof entry === 'object' && !Array.isArray(entry))
+    )
+    .map(cloneDailySalesHistoryEntry),
 });
 
 const emptyAppState = (): FrontAppState => ({
@@ -228,6 +264,8 @@ const emptyAppState = (): FrontAppState => ({
   globalStockEntries: [],
   globalCleaningStockEntries: [],
   saleDrafts: [],
+  cashRegisterAmount: 0,
+  dailySalesHistory: [],
 });
 
 const requireIngredient = (state: FrontAppState, ingredientId: string): FrontIngredient => {
@@ -935,6 +973,40 @@ const applyCleaningStockMove = (
   pushCleaningMovement(state, entry);
 };
 
+const applySetCashRegister = (
+  state: FrontAppState,
+  command: Extract<StateCommandInput, { type: 'SET_CASH_REGISTER' }>
+) => {
+  state.cashRegisterAmount = toNonNegativeMoney(command.amount);
+};
+
+const applyCloseDay = (state: FrontAppState) => {
+  const totalRevenue = roundMoney(
+    state.sales.reduce((sum, sale) => sum + (Number.isFinite(sale.total) ? sale.total : 0), 0)
+  );
+  const totalPurchases = roundMoney(
+    state.sales.reduce((sum, sale) => sum + (Number.isFinite(sale.totalCost) ? sale.totalCost : 0), 0)
+  );
+  const openingCash = toNonNegativeMoney(state.cashRegisterAmount);
+  const report: FrontDailySalesHistoryEntry = {
+    id: createId('day'),
+    closedAt: toTimestampIso(),
+    openingCash,
+    totalRevenue,
+    totalPurchases,
+    totalProfit: roundMoney(totalRevenue - totalPurchases),
+    saleCount: state.sales.length,
+  };
+
+  const history = ensureDailySalesHistory(state);
+  history.push(report);
+  state.dailySalesHistory = history;
+  state.sales = [];
+  state.stockEntries = [];
+  state.saleDrafts = [];
+  state.cashRegisterAmount = 0;
+};
+
 const ensureUniqueId = (
   state: FrontAppState,
   field: 'ingredient' | 'product' | 'material',
@@ -1067,10 +1139,17 @@ export const applyStateCommand = (
     case 'CLEANING_STOCK_MOVE':
       applyCleaningStockMove(state, command);
       return state;
+    case 'SET_CASH_REGISTER':
+      applySetCashRegister(state, command);
+      return state;
+    case 'CLOSE_DAY':
+      applyCloseDay(state);
+      return state;
     case 'CLEAR_HISTORY':
       state.sales = [];
       state.stockEntries = [];
       state.saleDrafts = [];
+      state.cashRegisterAmount = 0;
       return state;
     case 'FACTORY_RESET':
       return emptyAppState();
@@ -1083,6 +1162,8 @@ export const applyStateCommand = (
       state.globalStockEntries = [];
       state.globalCleaningStockEntries = [];
       state.saleDrafts = [];
+      state.cashRegisterAmount = 0;
+      state.dailySalesHistory = [];
       return state;
     case 'CLEAR_ONLY_STOCK':
       state.ingredients = state.ingredients.map((ingredient) => ({ ...ingredient, currentStock: 0 }));

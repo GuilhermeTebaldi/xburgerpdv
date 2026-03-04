@@ -1,37 +1,253 @@
 
-import React, { useState, useEffect, useRef } from 'react';
-import { Sale, Ingredient, StockEntry } from '../types';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { DailySalesHistoryEntry, Ingredient, Sale, StockEntry } from '../types';
 import { formatStockQuantityByUnit, getRecipeQuantityUnitLabel } from '../utils/recipe';
 
 interface SalesSummaryProps {
   sales: Sale[];
   allIngredients: Ingredient[];
   stockEntries: StockEntry[];
-  onClearHistory?: () => void;
+  cashRegisterAmount: number;
+  dailySalesHistory: DailySalesHistoryEntry[];
+  onSetCashRegister?: (amount: number) => Promise<boolean> | boolean;
+  onCloseDay?: () => Promise<boolean> | boolean;
 }
 
-const SalesSummary: React.FC<SalesSummaryProps> = ({ sales, allIngredients, stockEntries, onClearHistory }) => {
+type SummaryTab = 'REPORT' | 'CASH';
+
+const COLORS = ['#ef4444', '#f59e0b', '#3b82f6', '#10b981', '#6366f1', '#ec4899'];
+
+const formatCurrency = (value: number): string => `R$ ${value.toFixed(2)}`;
+
+const parseMoneyInput = (raw: string): number | null => {
+  const normalized = raw.trim().replace(',', '.');
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
+};
+
+const toDate = (value: Date | string): Date => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return new Date();
+  return date;
+};
+
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const SalesSummary: React.FC<SalesSummaryProps> = ({
+  sales,
+  allIngredients,
+  stockEntries,
+  cashRegisterAmount,
+  dailySalesHistory,
+  onSetCashRegister,
+  onCloseDay,
+}) => {
   const [selectedSaleId, setSelectedSaleId] = useState<string | null>(null);
   const [popoverStyle, setPopoverStyle] = useState<React.CSSProperties>({});
   const [isClosing, setIsClosing] = useState(false);
+  const [historyVisible, setHistoryVisible] = useState(false);
+  const [activeTab, setActiveTab] = useState<SummaryTab>('REPORT');
+  const [cashInput, setCashInput] = useState(cashRegisterAmount.toFixed(2));
   const listRef = useRef<HTMLDivElement>(null);
 
-  const productSalesMap = sales.reduce((acc: Record<string, number>, sale: Sale) => {
-    acc[sale.productName] = (acc[sale.productName] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
+  useEffect(() => {
+    setCashInput(cashRegisterAmount.toFixed(2));
+  }, [cashRegisterAmount]);
 
-  const chartData = Object.entries(productSalesMap).map(([name, value]): { name: string; vendas: number } => ({
-    name,
-    vendas: value as number
-  })).sort((a, b) => b.vendas - a.vendas);
+  const productSalesMap = useMemo(
+    () =>
+      sales.reduce((acc: Record<string, number>, sale: Sale) => {
+        acc[sale.productName] = (acc[sale.productName] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>),
+    [sales]
+  );
 
-  const totalRevenue = sales.reduce((sum, s) => sum + s.total, 0);
-  const totalCost = sales.reduce((sum, s) => sum + (s.totalCost || 0), 0);
-  const totalProfit = totalRevenue - totalCost;
+  const chartData = useMemo(
+    () =>
+      Object.entries(productSalesMap)
+        .map(([name, value]): { name: string; vendas: number } => ({
+          name,
+          vendas: value as number,
+        }))
+        .sort((a, b) => b.vendas - a.vendas),
+    [productSalesMap]
+  );
 
-  const COLORS = ['#ef4444', '#f59e0b', '#3b82f6', '#10b981', '#6366f1', '#ec4899'];
+  const totalRevenue = useMemo(() => sales.reduce((sum, s) => sum + s.total, 0), [sales]);
+  const totalCost = useMemo(() => sales.reduce((sum, s) => sum + (s.totalCost || 0), 0), [sales]);
+  const totalProfit = useMemo(() => totalRevenue - totalCost, [totalRevenue, totalCost]);
+  const estimatedClosingCash = useMemo(
+    () => cashRegisterAmount + totalRevenue - totalCost,
+    [cashRegisterAmount, totalRevenue, totalCost]
+  );
+
+  const currentDayReport = useMemo<DailySalesHistoryEntry>(
+    () => ({
+      id: 'current-day',
+      closedAt: new Date(),
+      openingCash: cashRegisterAmount,
+      totalRevenue,
+      totalPurchases: totalCost,
+      totalProfit,
+      saleCount: sales.length,
+    }),
+    [cashRegisterAmount, totalCost, totalProfit, totalRevenue, sales.length]
+  );
+
+  const orderedHistory = useMemo(
+    () =>
+      [...dailySalesHistory].sort(
+        (a, b) => toDate(b.closedAt).getTime() - toDate(a.closedAt).getTime()
+      ),
+    [dailySalesHistory]
+  );
+
+  const printReport = useCallback(
+    (report: DailySalesHistoryEntry, reportSales: Sale[] = []) => {
+    const printWindow = window.open('', '_blank', 'width=900,height=980');
+    if (!printWindow) return false;
+
+    const closedAt = toDate(report.closedAt);
+    const estimatedCash = report.openingCash + report.totalRevenue - report.totalPurchases;
+    const orderedSales = [...reportSales].sort(
+      (a, b) => toDate(a.timestamp).getTime() - toDate(b.timestamp).getTime()
+    );
+    const productSummary = orderedSales.reduce<
+      Record<string, { qty: number; revenue: number; cost: number }>
+    >((acc, sale) => {
+      const key = sale.productName || 'Sem nome';
+      if (!acc[key]) {
+        acc[key] = { qty: 0, revenue: 0, cost: 0 };
+      }
+      acc[key].qty += 1;
+      acc[key].revenue += sale.total || 0;
+      acc[key].cost += sale.totalCost || 0;
+      return acc;
+    }, {});
+    const summaryRows = Object.entries(productSummary)
+      .sort((a, b) => b[1].qty - a[1].qty)
+      .map(([productName, row]) => {
+        const profit = row.revenue - row.cost;
+        return `<tr>
+          <td>${escapeHtml(productName)}</td>
+          <td>${row.qty}</td>
+          <td>R$ ${row.revenue.toFixed(2)}</td>
+          <td>R$ ${row.cost.toFixed(2)}</td>
+          <td>R$ ${profit.toFixed(2)}</td>
+        </tr>`;
+      })
+      .join('');
+    const salesRows = orderedSales
+      .map((sale, index) => {
+        const saleProfit = (sale.total || 0) - (sale.totalCost || 0);
+        const paymentMethod = sale.payment?.method || '--';
+        return `<tr>
+          <td>${index + 1}</td>
+          <td>${toDate(sale.timestamp).toLocaleString('pt-BR')}</td>
+          <td>${escapeHtml(sale.productName || 'Sem nome')}</td>
+          <td>${escapeHtml(paymentMethod)}</td>
+          <td>R$ ${(sale.total || 0).toFixed(2)}</td>
+          <td>R$ ${(sale.totalCost || 0).toFixed(2)}</td>
+          <td>R$ ${saleProfit.toFixed(2)}</td>
+        </tr>`;
+      })
+      .join('');
+    const detailsSection =
+      orderedSales.length > 0
+        ? `<section class="section">
+    <h2>Resumo por Produto</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Produto</th>
+          <th>Qtd</th>
+          <th>Faturamento</th>
+          <th>Compras</th>
+          <th>Lucro</th>
+        </tr>
+      </thead>
+      <tbody>${summaryRows}</tbody>
+    </table>
+  </section>
+  <section class="section">
+    <h2>Vendas Registradas</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Horário</th>
+          <th>Produto</th>
+          <th>Pagamento</th>
+          <th>Faturamento</th>
+          <th>Compras</th>
+          <th>Lucro</th>
+        </tr>
+      </thead>
+      <tbody>${salesRows}</tbody>
+    </table>
+  </section>`
+        : `<section class="section">
+    <h2>Detalhamento de Vendas</h2>
+    <p class="muted">Este relatório não possui a lista de vendas detalhada.</p>
+  </section>`;
+
+    const html = `<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Relatório Diário</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 24px; color: #0f172a; }
+    h1 { margin: 0 0 6px; font-size: 24px; }
+    h2 { margin: 0 0 10px; font-size: 17px; }
+    p { margin: 0 0 10px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
+    .card { border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; background: #f8fafc; }
+    .label { font-size: 11px; text-transform: uppercase; color: #475569; font-weight: 700; letter-spacing: .08em; }
+    .value { font-size: 24px; font-weight: 800; margin-top: 6px; }
+    .section { margin-top: 22px; }
+    .muted { color: #64748b; font-size: 12px; }
+    .table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .table th, .table td { border: 1px solid #cbd5e1; padding: 7px; text-align: left; }
+    .table th { background: #f1f5f9; text-transform: uppercase; letter-spacing: .04em; font-size: 10px; }
+    @media print {
+      body { padding: 12px; }
+      .grid { gap: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Relatório Diário de Vendas</h1>
+  <p>Fechado em: ${closedAt.toLocaleString('pt-BR')}</p>
+  <div class="grid">
+    <div class="card"><div class="label">Caixa Informado</div><div class="value">R$ ${report.openingCash.toFixed(2)}</div></div>
+    <div class="card"><div class="label">Faturamento</div><div class="value">R$ ${report.totalRevenue.toFixed(2)}</div></div>
+    <div class="card"><div class="label">Compras (Custos)</div><div class="value">R$ ${report.totalPurchases.toFixed(2)}</div></div>
+    <div class="card"><div class="label">Lucro</div><div class="value">R$ ${report.totalProfit.toFixed(2)}</div></div>
+    <div class="card"><div class="label">Pedidos</div><div class="value">${report.saleCount}</div></div>
+    <div class="card"><div class="label">Caixa Estimado</div><div class="value">R$ ${estimatedCash.toFixed(2)}</div></div>
+  </div>
+  ${detailsSection}
+</body>
+</html>`;
+
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+    return true;
+  }, []);
 
   const handleSaleClick = (e: React.MouseEvent<HTMLButtonElement>, saleId: string) => {
     if (selectedSaleId === saleId) {
@@ -41,25 +257,53 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({ sales, allIngredients, stoc
     const rect = e.currentTarget.getBoundingClientRect();
     const isMobile = window.innerWidth < 1024;
     if (isMobile) {
-      setPopoverStyle({ position: 'fixed', top: `${rect.bottom + 8}px`, left: '50%', transform: 'translateX(-50%)', width: 'calc(100% - 2rem)', maxWidth: '400px' });
+      setPopoverStyle({
+        position: 'fixed',
+        top: `${rect.bottom + 8}px`,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        width: 'calc(100% - 2rem)',
+        maxWidth: '400px',
+      });
     } else {
       setPopoverStyle({ position: 'fixed', top: `${rect.top}px`, left: `${rect.left - 300}px`, width: '280px' });
     }
     setSelectedSaleId(saleId);
   };
 
-  const handleRestart = () => {
+  const commitCashRegister = useCallback(async () => {
+    const parsed = parseMoneyInput(cashInput);
+    if (parsed === null) {
+      setCashInput(cashRegisterAmount.toFixed(2));
+      return;
+    }
+
+    const normalized = Math.max(0, Number(parsed.toFixed(2)));
+    setCashInput(normalized.toFixed(2));
+
+    if (Math.abs(normalized - cashRegisterAmount) < 0.009) return;
+    await onSetCashRegister?.(normalized);
+  }, [cashInput, cashRegisterAmount, onSetCashRegister]);
+
+  const handleRestart = async () => {
     if (isClosing) return;
-    
-    // Pequena verificação antes da animação
-    if (confirm("Deseja realmente encerrar o dia? O caixa será zerado para uma nova sessão.")) {
-      setIsClosing(true);
-      
-      // Timer para a animação visual antes de limpar os dados
-      setTimeout(() => {
-        onClearHistory?.();
-        setIsClosing(false);
-      }, 1000);
+    if (!confirm('Deseja realmente encerrar o dia? O caixa será zerado para uma nova sessão.')) return;
+
+    const shouldPrint = confirm(
+      'Deseja imprimir o relatório do dia antes de fechar?'
+    );
+
+    if (shouldPrint) {
+      printReport(currentDayReport, sales);
+    }
+
+    setIsClosing(true);
+    try {
+      const closed = await onCloseDay?.();
+      if (closed === false) return;
+      setSelectedSaleId(null);
+    } finally {
+      setIsClosing(false);
     }
   };
 
@@ -74,209 +318,425 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({ sales, allIngredients, stoc
     };
   }, [selectedSaleId]);
 
-  const selectedSale = sales.find(s => s.id === selectedSaleId);
-  const stockOutEntries = stockEntries.filter(entry => entry.quantity < 0);
+  const selectedSale = sales.find((s) => s.id === selectedSaleId);
+  const stockOutEntries = stockEntries.filter((entry) => entry.quantity < 0);
   const ingredientsById = new Map<string, Ingredient>(
     allIngredients.map((ingredient): [string, Ingredient] => [ingredient.id, ingredient])
   );
   const formatQuantity = (value: number) =>
     Number.isInteger(value) ? String(value) : value.toFixed(3).replace(/\.?0+$/, '');
-  const selectedAdjustment = selectedSale?.priceAdjustment ?? (selectedSale?.basePrice !== undefined ? selectedSale.total - selectedSale.basePrice : 0);
+  const selectedAdjustment =
+    selectedSale?.priceAdjustment ??
+    (selectedSale?.basePrice !== undefined ? selectedSale.total - selectedSale.basePrice : 0);
   const hasPriceAdjustment = selectedSale !== undefined && Math.abs(selectedAdjustment) > 0.009;
   const basePrice = selectedSale?.basePrice;
   const baseCost = selectedSale?.baseCost;
-  const costAdjustment = selectedSale && baseCost !== undefined ? selectedSale.totalCost - baseCost : undefined;
+  const costAdjustment =
+    selectedSale && baseCost !== undefined ? selectedSale.totalCost - baseCost : undefined;
 
   return (
-    <div className={`qb-sales p-4 sm:p-6 max-w-5xl mx-auto space-y-6 relative transition-all duration-700 ease-in-out ${isClosing ? 'scale-95 opacity-0 blur-xl grayscale pointer-events-none' : 'opacity-100 scale-100'}`}>
-      <div className="qb-sales-header flex justify-between items-center mb-4">
-         <div>
-            <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">RELATÓRIO DO DIA</h2>
-            <p className="text-xs font-bold text-slate-400">Resumo operacional da sessão atual.</p>
-         </div>
-         <button 
-           onClick={handleRestart}
-           disabled={isClosing}
-           className={`qb-btn-touch qb-sales-restart bg-slate-900 text-yellow-400 px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl transition-all active:scale-95 flex items-center gap-2 group ${isClosing ? 'opacity-50' : 'hover:bg-black'}`}
-         >
-           <svg 
-            xmlns="http://www.w3.org/2000/svg" 
-            width="16" 
-            height="16" 
-            viewBox="0 0 24 24" 
-            fill="none" 
-            stroke="currentColor" 
-            strokeWidth="3" 
-            strokeLinecap="round" 
-            strokeLinejoin="round"
-            className={`${isClosing ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`}
-           >
-            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
-            <path d="M3 3v5h5"/>
-           </svg>
-           {isClosing ? 'ENCERRANDO...' : 'Fechar Dia / Reiniciar'}
-         </button>
-      </div>
-
-      <div className="qb-sales-stats grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-red-600 text-white p-6 rounded-3xl shadow-lg">
-          <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-1">Receita</p>
-          <h4 className="text-3xl font-black">R$ {totalRevenue.toFixed(2)}</h4>
+    <div
+      className={`qb-sales p-4 sm:p-6 max-w-5xl mx-auto space-y-6 relative transition-all duration-700 ease-in-out ${
+        isClosing ? 'scale-95 opacity-0 blur-xl grayscale pointer-events-none' : 'opacity-100 scale-100'
+      }`}
+    >
+      <div className="qb-sales-header flex flex-col gap-4 lg:flex-row lg:justify-between lg:items-center">
+        <div>
+          <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">RELATÓRIO DO DIA</h2>
+          <p className="text-xs font-bold text-slate-400">Resumo operacional da sessão atual.</p>
         </div>
-        <div className="bg-slate-800 text-white p-6 rounded-3xl shadow-lg">
-          <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-1">Custos (Insumos)</p>
-          <h4 className="text-3xl font-black">R$ {totalCost.toFixed(2)}</h4>
-        </div>
-        <div className="bg-green-600 text-white p-6 rounded-3xl shadow-lg">
-          <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-1">Lucro</p>
-          <h4 className="text-3xl font-black">R$ {totalProfit.toFixed(2)}</h4>
-        </div>
-        <div className="bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Pedidos</p>
-          <h4 className="text-3xl font-black text-slate-800">{sales.length}</h4>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setHistoryVisible((current) => !current)}
+            className="qb-btn-touch bg-white text-slate-800 px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-sm border border-slate-200 hover:border-red-400 hover:text-red-600 transition-all active:scale-95"
+          >
+            {historyVisible ? 'Fechar Histórico' : 'Histórico'}
+          </button>
+          <button
+            onClick={handleRestart}
+            disabled={isClosing}
+            className={`qb-btn-touch qb-sales-restart bg-slate-900 text-yellow-400 px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl transition-all active:scale-95 flex items-center gap-2 group ${
+              isClosing ? 'opacity-50' : 'hover:bg-black'
+            }`}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={`${isClosing ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`}
+            >
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+              <path d="M3 3v5h5" />
+            </svg>
+            {isClosing ? 'ENCERRANDO...' : 'Fechar Dia / Reiniciar'}
+          </button>
         </div>
       </div>
 
-      <div className="qb-sales-main grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-        <div className="qb-sales-chart-card bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">
-          <h3 className="text-lg font-black text-slate-800 mb-6 uppercase tracking-tight">Vendas por Produto</h3>
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} layout="vertical" margin={{ left: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
-                <XAxis type="number" hide />
-                <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 12, fontWeight: 700, fill: '#475569' }} width={100} />
-                <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
-                <Bar dataKey="vendas" radius={[0, 4, 4, 0]}>
-                  {chartData.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+      <div className="bg-white border border-slate-200 rounded-2xl p-2 inline-flex gap-2 w-full sm:w-auto">
+        <button
+          onClick={() => setActiveTab('REPORT')}
+          className={`qb-btn-touch px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all ${
+            activeTab === 'REPORT'
+              ? 'bg-red-600 text-white shadow-lg shadow-red-200'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          Relatório
+        </button>
+        <button
+          onClick={() => setActiveTab('CASH')}
+          className={`qb-btn-touch px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all ${
+            activeTab === 'CASH'
+              ? 'bg-red-600 text-white shadow-lg shadow-red-200'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          Caixa
+        </button>
+      </div>
 
-        <div className="qb-sales-side space-y-6">
-          <div className="qb-sales-list-card bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm flex flex-col h-[450px]">
-            <h3 className="text-lg font-black text-slate-800 mb-6 uppercase tracking-tight">Últimos Lançamentos</h3>
-            <div ref={listRef} className="qb-sales-list-content flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-hide">
-              {sales.slice().reverse().map((sale) => (
-                <button key={sale.id} onClick={(e) => handleSaleClick(e, sale.id)} className={`qb-btn-touch qb-sales-list-item w-full text-left flex items-center justify-between p-4 rounded-2xl border transition-all active:scale-[0.98] ${selectedSaleId === sale.id ? 'bg-red-600 border-red-700 shadow-lg text-white ring-4 ring-red-100' : 'bg-slate-50 border-slate-100 hover:border-red-400 hover:bg-white'}`}>
-                  <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black ${selectedSaleId === sale.id ? 'bg-white text-red-600' : 'bg-white text-red-600 shadow-sm border border-slate-100'}`}>
-                      {sale.productName.charAt(0)}
-                    </div>
-                    <div>
-                      <p className={`font-black text-sm truncate max-w-[120px] uppercase tracking-tighter ${selectedSaleId === sale.id ? 'text-white' : 'text-slate-800'}`}>{sale.productName}</p>
-                      <p className={`text-[10px] font-bold uppercase tracking-widest ${selectedSaleId === sale.id ? 'text-red-200' : 'text-slate-400'}`}>{sale.timestamp.toLocaleTimeString()}</p>
-                      {sale.priceAdjustment !== undefined && Math.abs(sale.priceAdjustment) > 0.009 && (
-                        <p className={`text-[9px] font-black uppercase tracking-widest ${selectedSaleId === sale.id ? 'text-yellow-200' : 'text-yellow-500'}`}>
-                          Ajuste {sale.priceAdjustment > 0 ? '+' : '-'}R$ {Math.abs(sale.priceAdjustment).toFixed(2)}
+      {historyVisible && (
+        <>
+          <button
+            type="button"
+            aria-label="Fechar histórico"
+            onClick={() => setHistoryVisible(false)}
+            className="fixed inset-0 z-[240] bg-transparent"
+          />
+          <aside className="fixed inset-y-0 right-0 z-[250] w-full sm:max-w-[500px] h-screen max-h-screen overflow-hidden bg-white border-l-2 border-slate-200 shadow-2xl p-5 sm:p-6 flex flex-col min-h-0">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-black uppercase tracking-tight text-slate-800">Histórico de Fechamentos</h3>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                  {orderedHistory.length} registro(s)
+                </p>
+              </div>
+              <button
+                onClick={() => setHistoryVisible(false)}
+                className="qb-btn-touch bg-slate-100 text-slate-700 p-2 rounded-xl hover:bg-slate-200 transition-colors"
+                title="Fechar histórico"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+              </button>
+            </div>
+            <div className="mt-5 flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1 scrollbar-hide space-y-3">
+              {orderedHistory.length === 0 ? (
+                <p className="text-xs font-bold uppercase tracking-widest text-slate-400">
+                  Nenhum fechamento registrado ainda.
+                </p>
+              ) : (
+                orderedHistory.map((entry) => {
+                  const entryDate = toDate(entry.closedAt);
+                  const entryEstimatedCash =
+                    entry.openingCash + entry.totalRevenue - entry.totalPurchases;
+                  return (
+                    <div
+                      key={entry.id}
+                      className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col gap-3"
+                    >
+                      <div className="space-y-1">
+                        <p className="text-sm font-black uppercase text-slate-800">
+                          {entryDate.toLocaleDateString('pt-BR')}
                         </p>
-                      )}
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                          Fechado em {entryDate.toLocaleString('pt-BR')}
+                        </p>
+                        <p className="text-[11px] font-bold text-slate-700">
+                          Faturamento: {formatCurrency(entry.totalRevenue)} | Compras: {formatCurrency(entry.totalPurchases)} | Caixa: {formatCurrency(entryEstimatedCash)}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          printReport(entry);
+                        }}
+                        className="qb-btn-touch bg-slate-900 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-colors w-full sm:w-auto sm:self-end"
+                      >
+                        Imprimir
+                      </button>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    <p className={`font-black text-sm ${selectedSaleId === sale.id ? 'text-white' : 'text-slate-900'}`}>R$ {sale.total.toFixed(2)}</p>
-                  </div>
-                </button>
-              ))}
-              {sales.length === 0 && (
-                <div className="flex flex-col items-center justify-center h-full py-24 text-slate-300">
-                  <p className="font-black uppercase tracking-widest text-xs">Caixa Aberto / Sem Vendas</p>
-                </div>
+                  );
+                })
               )}
             </div>
+          </aside>
+        </>
+      )}
+
+      {activeTab === 'CASH' && (
+        <div className="bg-white border-2 border-slate-100 rounded-3xl shadow-sm p-6 space-y-5">
+          <div className="space-y-1">
+            <h3 className="text-lg font-black uppercase tracking-tight text-slate-800">Aba Caixa</h3>
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">
+              Informe o valor atual de caixa para o fechamento diário.
+            </p>
           </div>
-
-          <div className="qb-sales-stock-card bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm flex flex-col h-[320px]">
-            <h3 className="text-lg font-black text-slate-800 mb-6 uppercase tracking-tight">Saídas de Estoque</h3>
-            <div className="qb-sales-stock-content flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-hide">
-              {stockOutEntries.slice().reverse().map((entry) => {
-                const ingredient = ingredientsById.get(entry.ingredientId);
-                const unit = ingredient?.unit || '';
-                const quantityLabel = formatStockQuantityByUnit(unit, Math.abs(entry.quantity));
-
-                return (
-                  <div key={entry.id} className="w-full flex items-center justify-between p-4 rounded-2xl border border-slate-100 bg-slate-50">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center font-black bg-red-100 text-red-600">
-                        -
-                      </div>
-                      <div>
-                        <p className="font-black text-sm uppercase tracking-tighter text-slate-800">{entry.ingredientName}</p>
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{entry.timestamp.toLocaleTimeString()}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-black text-sm text-red-600">
-                        -{quantityLabel}{unit ? ` ${unit}` : ''}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-              {stockOutEntries.length === 0 && (
-                <div className="flex flex-col items-center justify-center h-full py-16 text-slate-300">
-                  <p className="font-black uppercase tracking-widest text-xs">Sem Baixas no Estoque</p>
-                </div>
-              )}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Valor do Caixa</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={cashInput}
+                onChange={(e) => setCashInput(e.target.value)}
+                onBlur={() => {
+                  void commitCashRegister();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return;
+                  e.preventDefault();
+                  void commitCashRegister();
+                }}
+                className="w-full bg-white border border-slate-300 rounded-xl px-3 py-3 font-black text-slate-800"
+              />
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                Esse valor será usado no relatório ao fechar o dia.
+              </p>
+            </div>
+            <div className="bg-slate-900 text-white rounded-2xl p-4 space-y-2">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-300">Prévia do dia</p>
+              <p className="text-sm font-black">Faturamento: {formatCurrency(totalRevenue)}</p>
+              <p className="text-sm font-black">Compras: {formatCurrency(totalCost)}</p>
+              <p className="text-sm font-black">Lucro: {formatCurrency(totalProfit)}</p>
+              <p className="text-sm font-black text-yellow-300">
+                Caixa estimado: {formatCurrency(estimatedClosingCash)}
+              </p>
+              <button
+                onClick={() => {
+                  printReport(currentDayReport, sales);
+                }}
+                className="qb-btn-touch mt-3 bg-white text-slate-900 px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest"
+              >
+                Imprimir Relatório do Dia
+              </button>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {selectedSale && (
-        <div style={popoverStyle} className="qb-sales-popover bg-slate-900 text-white p-5 rounded-[32px] shadow-[0_30px_60px_rgba(0,0,0,0.6)] z-[9999] animate-in fade-in zoom-in-95 slide-in-from-right-4 duration-200 border border-slate-700 border-t-red-600 border-t-4 pointer-events-auto">
-          <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-3">
-             <div className="flex items-center gap-2">
-                <div className="bg-red-600 p-1 rounded-lg">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v10"/><path d="M18.4 6.9 12 12"/><path d="m5.6 6.9 6.4 5.1"/></svg>
-                </div>
-                <h4 className="text-[10px] font-black uppercase text-red-400 tracking-widest">Insumos</h4>
-             </div>
-             <button onClick={() => setSelectedSaleId(null)} className="text-slate-500 hover:text-white transition-colors">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-             </button>
+      {activeTab === 'REPORT' && (
+        <>
+          <div className="qb-sales-stats grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-red-600 text-white p-6 rounded-3xl shadow-lg">
+              <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-1">Faturamento</p>
+              <h4 className="text-3xl font-black">{formatCurrency(totalRevenue)}</h4>
+            </div>
+            <div className="bg-slate-800 text-white p-6 rounded-3xl shadow-lg">
+              <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-1">Compras (Insumos)</p>
+              <h4 className="text-3xl font-black">{formatCurrency(totalCost)}</h4>
+            </div>
+            <div className="bg-green-600 text-white p-6 rounded-3xl shadow-lg">
+              <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-1">Lucro</p>
+              <h4 className="text-3xl font-black">{formatCurrency(totalProfit)}</h4>
+            </div>
+            <div className="bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Pedidos</p>
+              <h4 className="text-3xl font-black text-slate-800">{sales.length}</h4>
+            </div>
           </div>
-          <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1 scrollbar-hide">
-            {selectedSale.recipe?.map(item => {
-              const ing = allIngredients.find(i => i.id === item.ingredientId);
-              const recipeUnitLabel = ing ? getRecipeQuantityUnitLabel(ing, item.quantity) : '';
-              return (
-                <div key={item.ingredientId} className="flex justify-between items-center p-2.5 bg-slate-800/80 rounded-xl border border-slate-700/30 text-[10px]">
-                  <span className="font-bold text-slate-100 uppercase truncate max-w-[140px]">{ing ? ing.name : 'Insumo'}</span>
-                  <span className="font-black text-yellow-400">{formatQuantity(item.quantity)} {recipeUnitLabel}</span>
+
+          <div className="qb-sales-main grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <div className="qb-sales-chart-card bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">
+              <h3 className="text-lg font-black text-slate-800 mb-6 uppercase tracking-tight">Vendas por Produto</h3>
+              <div className="h-[300px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} layout="vertical" margin={{ left: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                    <XAxis type="number" hide />
+                    <YAxis
+                      dataKey="name"
+                      type="category"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 12, fontWeight: 700, fill: '#475569' }}
+                      width={100}
+                    />
+                    <Tooltip
+                      cursor={{ fill: '#f8fafc' }}
+                      contentStyle={{
+                        borderRadius: '12px',
+                        border: 'none',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                      }}
+                    />
+                    <Bar dataKey="vendas" radius={[0, 4, 4, 0]}>
+                      {chartData.map((_, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="qb-sales-side space-y-6">
+              <div className="qb-sales-list-card bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm flex flex-col h-[450px]">
+                <h3 className="text-lg font-black text-slate-800 mb-6 uppercase tracking-tight">Últimos Lançamentos</h3>
+                <div ref={listRef} className="qb-sales-list-content flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-hide">
+                  {sales.slice().reverse().map((sale) => (
+                    <button
+                      key={sale.id}
+                      onClick={(e) => handleSaleClick(e, sale.id)}
+                      className={`qb-btn-touch qb-sales-list-item w-full text-left flex items-center justify-between p-4 rounded-2xl border transition-all active:scale-[0.98] ${
+                        selectedSaleId === sale.id
+                          ? 'bg-red-600 border-red-700 shadow-lg text-white ring-4 ring-red-100'
+                          : 'bg-slate-50 border-slate-100 hover:border-red-400 hover:bg-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`w-10 h-10 rounded-xl flex items-center justify-center font-black ${
+                            selectedSaleId === sale.id
+                              ? 'bg-white text-red-600'
+                              : 'bg-white text-red-600 shadow-sm border border-slate-100'
+                          }`}
+                        >
+                          {sale.productName.charAt(0)}
+                        </div>
+                        <div>
+                          <p
+                            className={`font-black text-sm truncate max-w-[120px] uppercase tracking-tighter ${
+                              selectedSaleId === sale.id ? 'text-white' : 'text-slate-800'
+                            }`}
+                          >
+                            {sale.productName}
+                          </p>
+                          <p
+                            className={`text-[10px] font-bold uppercase tracking-widest ${
+                              selectedSaleId === sale.id ? 'text-red-200' : 'text-slate-400'
+                            }`}
+                          >
+                            {toDate(sale.timestamp).toLocaleTimeString()}
+                          </p>
+                          {sale.priceAdjustment !== undefined && Math.abs(sale.priceAdjustment) > 0.009 && (
+                            <p
+                              className={`text-[9px] font-black uppercase tracking-widest ${
+                                selectedSaleId === sale.id ? 'text-yellow-200' : 'text-yellow-500'
+                              }`}
+                            >
+                              Ajuste {sale.priceAdjustment > 0 ? '+' : '-'}R$ {Math.abs(sale.priceAdjustment).toFixed(2)}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className={`font-black text-sm ${selectedSaleId === sale.id ? 'text-white' : 'text-slate-900'}`}>
+                          {formatCurrency(sale.total)}
+                        </p>
+                      </div>
+                    </button>
+                  ))}
+                  {sales.length === 0 && (
+                    <div className="flex flex-col items-center justify-center h-full py-24 text-slate-300">
+                      <p className="font-black uppercase tracking-widest text-xs">Caixa Aberto / Sem Vendas</p>
+                    </div>
+                  )}
                 </div>
-              );
-            })}
+              </div>
+
+              <div className="qb-sales-stock-card bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm flex flex-col h-[320px]">
+                <h3 className="text-lg font-black text-slate-800 mb-6 uppercase tracking-tight">Saídas de Estoque</h3>
+                <div className="qb-sales-stock-content flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-hide">
+                  {stockOutEntries.slice().reverse().map((entry) => {
+                    const ingredient = ingredientsById.get(entry.ingredientId);
+                    const unit = ingredient?.unit || '';
+                    const quantityLabel = formatStockQuantityByUnit(unit, Math.abs(entry.quantity));
+
+                    return (
+                      <div key={entry.id} className="w-full flex items-center justify-between p-4 rounded-2xl border border-slate-100 bg-slate-50">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl flex items-center justify-center font-black bg-red-100 text-red-600">
+                            -
+                          </div>
+                          <div>
+                            <p className="font-black text-sm uppercase tracking-tighter text-slate-800">
+                              {entry.ingredientName}
+                            </p>
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                              {toDate(entry.timestamp).toLocaleTimeString()}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-black text-sm text-red-600">
+                            -{quantityLabel}
+                            {unit ? ` ${unit}` : ''}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {stockOutEntries.length === 0 && (
+                    <div className="flex flex-col items-center justify-center h-full py-16 text-slate-300">
+                      <p className="font-black uppercase tracking-widest text-xs">Sem Baixas no Estoque</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
-          <div className="mt-5 pt-3 border-t border-slate-800 flex justify-between items-center">
-            <div><p className="text-[8px] font-bold text-slate-500 uppercase">Custo</p><p className="text-sm font-black text-slate-100">R$ {selectedSale.totalCost.toFixed(2)}</p></div>
-            <div className="text-right"><p className="text-[8px] font-bold text-green-500 uppercase">Lucro</p><p className="text-sm font-black text-green-500">R$ {(selectedSale.total - selectedSale.totalCost).toFixed(2)}</p></div>
-          </div>
-          {(basePrice !== undefined || baseCost !== undefined || hasPriceAdjustment) && (
-            <div className="mt-3 pt-3 border-t border-slate-800 space-y-1.5 text-[10px] uppercase font-bold">
-              {basePrice !== undefined && (
-                <div className="flex justify-between text-slate-300">
-                  <span>Preço Base</span>
-                  <span>R$ {basePrice.toFixed(2)}</span>
+
+          {selectedSale && (
+            <div style={popoverStyle} className="qb-sales-popover bg-slate-900 text-white p-5 rounded-[32px] shadow-[0_30px_60px_rgba(0,0,0,0.6)] z-[9999] animate-in fade-in zoom-in-95 slide-in-from-right-4 duration-200 border border-slate-700 border-t-red-600 border-t-4 pointer-events-auto">
+              <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="bg-red-600 p-1 rounded-lg">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v10" /><path d="M18.4 6.9 12 12" /><path d="m5.6 6.9 6.4 5.1" /></svg>
+                  </div>
+                  <h4 className="text-[10px] font-black uppercase text-red-400 tracking-widest">Insumos</h4>
                 </div>
-              )}
-              {hasPriceAdjustment && (
-                <div className="flex justify-between text-yellow-400">
-                  <span>Ajuste no Preço</span>
-                  <span>{selectedAdjustment > 0 ? '+' : '-'}R$ {Math.abs(selectedAdjustment).toFixed(2)}</span>
-                </div>
-              )}
-              {costAdjustment !== undefined && Math.abs(costAdjustment) > 0.009 && (
-                <div className="flex justify-between text-slate-400">
-                  <span>Ajuste de Custo</span>
-                  <span>{costAdjustment > 0 ? '+' : '-'}R$ {Math.abs(costAdjustment).toFixed(2)}</span>
+                <button onClick={() => setSelectedSaleId(null)} className="text-slate-500 hover:text-white transition-colors">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+                </button>
+              </div>
+              <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1 scrollbar-hide">
+                {selectedSale.recipe?.map((item) => {
+                  const ing = allIngredients.find((i) => i.id === item.ingredientId);
+                  const recipeUnitLabel = ing ? getRecipeQuantityUnitLabel(ing, item.quantity) : '';
+                  return (
+                    <div key={item.ingredientId} className="flex justify-between items-center p-2.5 bg-slate-800/80 rounded-xl border border-slate-700/30 text-[10px]">
+                      <span className="font-bold text-slate-100 uppercase truncate max-w-[140px]">{ing ? ing.name : 'Insumo'}</span>
+                      <span className="font-black text-yellow-400">{formatQuantity(item.quantity)} {recipeUnitLabel}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-5 pt-3 border-t border-slate-800 flex justify-between items-center">
+                <div><p className="text-[8px] font-bold text-slate-500 uppercase">Custo</p><p className="text-sm font-black text-slate-100">{formatCurrency(selectedSale.totalCost)}</p></div>
+                <div className="text-right"><p className="text-[8px] font-bold text-green-500 uppercase">Lucro</p><p className="text-sm font-black text-green-500">{formatCurrency(selectedSale.total - selectedSale.totalCost)}</p></div>
+              </div>
+              {(basePrice !== undefined || baseCost !== undefined || hasPriceAdjustment) && (
+                <div className="mt-3 pt-3 border-t border-slate-800 space-y-1.5 text-[10px] uppercase font-bold">
+                  {basePrice !== undefined && (
+                    <div className="flex justify-between text-slate-300">
+                      <span>Preço Base</span>
+                      <span>{formatCurrency(basePrice)}</span>
+                    </div>
+                  )}
+                  {hasPriceAdjustment && (
+                    <div className="flex justify-between text-yellow-400">
+                      <span>Ajuste no Preço</span>
+                      <span>{selectedAdjustment > 0 ? '+' : '-'}R$ {Math.abs(selectedAdjustment).toFixed(2)}</span>
+                    </div>
+                  )}
+                  {costAdjustment !== undefined && Math.abs(costAdjustment) > 0.009 && (
+                    <div className="flex justify-between text-slate-400">
+                      <span>Ajuste de Custo</span>
+                      <span>{costAdjustment > 0 ? '+' : '-'}R$ {Math.abs(costAdjustment).toFixed(2)}</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );

@@ -1,5 +1,6 @@
 import type {
   CleaningMaterial,
+  DailySalesHistoryEntry,
   Ingredient,
   Product,
   RecipeItem,
@@ -100,6 +101,8 @@ export type StateCommand =
   | (BaseCommand & { type: 'CLEANING_MATERIAL_UPDATE'; material: CleaningMaterial })
   | (BaseCommand & { type: 'CLEANING_MATERIAL_DELETE'; materialId: string })
   | (BaseCommand & { type: 'CLEANING_STOCK_MOVE'; materialId: string; amount: number })
+  | (BaseCommand & { type: 'SET_CASH_REGISTER'; amount: number })
+  | (BaseCommand & { type: 'CLOSE_DAY' })
   | (BaseCommand & { type: 'CLEAR_HISTORY' })
   | (BaseCommand & { type: 'FACTORY_RESET' })
   | (BaseCommand & { type: 'CLEAR_OPERATIONAL_DATA' })
@@ -211,6 +214,23 @@ const reviveTimestamp = <T extends { timestamp?: unknown }>(item: T): T => {
 const reviveTimestampList = <T extends { timestamp?: unknown }>(items: T[]): T[] =>
   items.map(reviveTimestamp);
 
+const reviveDailySalesHistory = (items: DailySalesHistoryEntry[]): DailySalesHistoryEntry[] =>
+  items.map((item) => {
+    if (item.closedAt && !(item.closedAt instanceof Date)) {
+      return {
+        ...item,
+        closedAt: new Date(item.closedAt as string),
+      };
+    }
+    return item;
+  });
+
+const toNonNegativeNumber = (value: unknown, fallback = 0): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return parsed;
+};
+
 const normalizeAppState = (payload: unknown): AppState => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Resposta inválida de estado da API.');
@@ -237,6 +257,13 @@ const normalizeAppState = (payload: unknown): AppState => {
       toArray(source.globalCleaningStockEntries, DEFAULT_APP_STATE.globalCleaningStockEntries)
     ),
     saleDrafts: toArray<SaleDraft>(source.saleDrafts, DEFAULT_APP_STATE.saleDrafts),
+    cashRegisterAmount: toNonNegativeNumber(
+      source.cashRegisterAmount,
+      DEFAULT_APP_STATE.cashRegisterAmount
+    ),
+    dailySalesHistory: reviveDailySalesHistory(
+      toArray<DailySalesHistoryEntry>(source.dailySalesHistory, DEFAULT_APP_STATE.dailySalesHistory)
+    ),
   };
 };
 
