@@ -21,6 +21,9 @@ export interface FrontStockEntry {
   unitCost?: number;
   source?: 'MANUAL' | 'SALE' | 'AUTO_REPLENISH';
   saleId?: string;
+  paidWithCashRegister?: boolean;
+  cashRegisterImpact?: number;
+  purchaseDescription?: string;
 }
 
 export interface FrontCleaningMaterial {
@@ -120,6 +123,7 @@ export interface FrontDailySalesHistoryEntry {
   totalPurchases: number;
   totalProfit: number;
   saleCount: number;
+  cashExpenses?: number;
 }
 
 export interface FrontAppState {

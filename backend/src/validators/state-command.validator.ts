@@ -130,6 +130,14 @@ const ingredientStockMoveCommandSchema = baseCommandSchema.extend({
   type: z.literal('INGREDIENT_STOCK_MOVE'),
   ingredientId: idSchema,
   amount: quantitySchema.refine((value) => value !== 0, 'amount não pode ser zero'),
+  useCashRegister: z.boolean().optional(),
+  purchaseDescription: z.string().trim().max(200).optional(),
+});
+
+const cashExpenseCommandSchema = baseCommandSchema.extend({
+  type: z.literal('CASH_EXPENSE'),
+  amount: z.coerce.number().finite().positive(),
+  purchaseDescription: z.string().trim().min(1).max(200),
 });
 
 const ingredientCreateCommandSchema = baseCommandSchema.extend({
@@ -226,6 +234,7 @@ export const stateCommandSchema = z.discriminatedUnion('type', [
   saleUndoCommandSchema,
   saleUndoByIdCommandSchema,
   ingredientStockMoveCommandSchema,
+  cashExpenseCommandSchema,
   ingredientCreateCommandSchema,
   ingredientUpdateCommandSchema,
   ingredientDeleteCommandSchema,

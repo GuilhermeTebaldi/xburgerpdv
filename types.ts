@@ -22,6 +22,9 @@ export interface StockEntry {
   unitCost?: number; // custo do insumo no momento da movimentação
   source?: 'MANUAL' | 'SALE' | 'AUTO_REPLENISH';
   saleId?: string;
+  paidWithCashRegister?: boolean;
+  cashRegisterImpact?: number;
+  purchaseDescription?: string;
 }
 
 export interface CleaningMaterial {
@@ -121,6 +124,7 @@ export interface DailySalesHistoryEntry {
   totalPurchases: number;
   totalProfit: number;
   saleCount: number;
+  cashExpenses?: number;
 }
 
 export enum ViewMode {

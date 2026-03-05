@@ -13,9 +13,19 @@ interface SalesSummaryProps {
   dailySalesHistory: DailySalesHistoryEntry[];
   onSetCashRegister?: (amount: number) => Promise<boolean> | boolean;
   onCloseDay?: () => Promise<boolean> | boolean;
+  onRegisterCashPurchase?: (
+    ingredientId: string,
+    purchaseAmount: number,
+    purchaseDescription?: string
+  ) => Promise<boolean> | boolean;
+  onRegisterCashExpense?: (
+    purchaseAmount: number,
+    purchaseDescription: string
+  ) => Promise<boolean> | boolean;
 }
 
 type SummaryTab = 'REPORT' | 'CASH';
+type CashPurchaseType = 'INGREDIENT' | 'OTHER';
 
 interface HistoryDrawerEntry {
   entry: DailySalesHistoryEntry;
@@ -63,6 +73,8 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
   dailySalesHistory,
   onSetCashRegister,
   onCloseDay,
+  onRegisterCashPurchase,
+  onRegisterCashExpense,
 }) => {
   const [selectedSaleId, setSelectedSaleId] = useState<string | null>(null);
   const [popoverStyle, setPopoverStyle] = useState<React.CSSProperties>({});
@@ -70,11 +82,24 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
   const [historyVisible, setHistoryVisible] = useState(false);
   const [activeTab, setActiveTab] = useState<SummaryTab>('REPORT');
   const [cashInput, setCashInput] = useState(cashRegisterAmount.toFixed(2));
+  const [cashPurchaseType, setCashPurchaseType] = useState<CashPurchaseType>('INGREDIENT');
+  const [cashPurchaseIngredientId, setCashPurchaseIngredientId] = useState('');
+  const [cashPurchaseAmountInput, setCashPurchaseAmountInput] = useState('');
+  const [cashPurchaseDescription, setCashPurchaseDescription] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setCashInput(cashRegisterAmount.toFixed(2));
   }, [cashRegisterAmount]);
+
+  useEffect(() => {
+    if (cashPurchaseType !== 'INGREDIENT') return;
+    if (cashPurchaseIngredientId) return;
+    const firstIngredientId = allIngredients[0]?.id;
+    if (firstIngredientId) {
+      setCashPurchaseIngredientId(firstIngredientId);
+    }
+  }, [allIngredients, cashPurchaseIngredientId, cashPurchaseType]);
 
   const productSalesMap = useMemo(
     () =>
@@ -98,10 +123,49 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
 
   const totalRevenue = useMemo(() => sales.reduce((sum, s) => sum + s.total, 0), [sales]);
   const totalCost = useMemo(() => sales.reduce((sum, s) => sum + (s.totalCost || 0), 0), [sales]);
+  const cashRegisterExpenses = useMemo(
+    () =>
+      roundMoney(
+        stockEntries.reduce((sum, entry) => {
+          const impact = Number(entry.cashRegisterImpact);
+          if (!Number.isFinite(impact) || impact >= 0) return sum;
+          return sum + Math.abs(impact);
+        }, 0)
+      ),
+    [stockEntries]
+  );
+  const cashRegisterExpenseEntries = useMemo(
+    () =>
+      stockEntries
+        .filter((entry) => {
+          const impact = Number(entry.cashRegisterImpact);
+          return Number.isFinite(impact) && impact < 0;
+        })
+        .slice()
+        .sort((a, b) => toDate(b.timestamp).getTime() - toDate(a.timestamp).getTime()),
+    [stockEntries]
+  );
   const totalProfit = useMemo(() => totalRevenue - totalCost, [totalRevenue, totalCost]);
+  const selectedCashPurchaseIngredient = useMemo(
+    () =>
+      cashPurchaseType !== 'INGREDIENT'
+        ? null
+        : allIngredients.find((ingredient) => ingredient.id === cashPurchaseIngredientId) || null,
+    [allIngredients, cashPurchaseIngredientId, cashPurchaseType]
+  );
+  const estimatedCashPurchaseStockIncrease = useMemo(() => {
+    if (cashPurchaseType !== 'INGREDIENT') return null;
+    if (!selectedCashPurchaseIngredient) return null;
+    const parsedAmount = parseMoneyInput(cashPurchaseAmountInput);
+    if (parsedAmount === null || parsedAmount <= 0) return null;
+    if (!Number.isFinite(selectedCashPurchaseIngredient.cost) || selectedCashPurchaseIngredient.cost <= 0) {
+      return null;
+    }
+    return Number((parsedAmount / selectedCashPurchaseIngredient.cost).toFixed(6));
+  }, [cashPurchaseAmountInput, cashPurchaseType, selectedCashPurchaseIngredient]);
   const estimatedClosingCash = useMemo(
-    () => cashRegisterAmount + totalRevenue - totalCost,
-    [cashRegisterAmount, totalRevenue, totalCost]
+    () => cashRegisterAmount + totalRevenue - totalCost - cashRegisterExpenses,
+    [cashRegisterAmount, totalRevenue, totalCost, cashRegisterExpenses]
   );
 
   const currentDayReport = useMemo<DailySalesHistoryEntry>(
@@ -113,8 +177,9 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
       totalPurchases: totalCost,
       totalProfit,
       saleCount: sales.length,
+      cashExpenses: cashRegisterExpenses,
     }),
-    [cashRegisterAmount, totalCost, totalProfit, totalRevenue, sales.length]
+    [cashRegisterAmount, cashRegisterExpenses, totalCost, totalProfit, totalRevenue, sales.length]
   );
 
   const archiveSalesByDay = useMemo(() => {
@@ -179,6 +244,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
           totalPurchases,
           totalProfit: roundMoney(totalRevenue - totalPurchases),
           saleCount: daySales.length,
+          cashExpenses: 0,
         },
       });
     });
@@ -194,7 +260,9 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
     if (!printWindow) return false;
 
     const closedAt = toDate(report.closedAt);
-    const estimatedCash = report.openingCash + report.totalRevenue - report.totalPurchases;
+    const cashExpenses = roundMoney(Math.max(0, Number(report.cashExpenses) || 0));
+    const estimatedCash =
+      report.openingCash + report.totalRevenue - report.totalPurchases - cashExpenses;
     const orderedSales = [...reportSales].sort(
       (a, b) => toDate(a.timestamp).getTime() - toDate(b.timestamp).getTime()
     );
@@ -311,6 +379,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
     <div class="card"><div class="label">Compras (Custos)</div><div class="value">R$ ${report.totalPurchases.toFixed(2)}</div></div>
     <div class="card"><div class="label">Lucro</div><div class="value">R$ ${report.totalProfit.toFixed(2)}</div></div>
     <div class="card"><div class="label">Pedidos</div><div class="value">${report.saleCount}</div></div>
+    <div class="card"><div class="label">Saída de Caixa</div><div class="value">R$ ${cashExpenses.toFixed(2)}</div></div>
     <div class="card"><div class="label">Caixa Estimado</div><div class="value">R$ ${estimatedCash.toFixed(2)}</div></div>
   </div>
   ${detailsSection}
@@ -360,6 +429,44 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
     if (Math.abs(normalized - cashRegisterAmount) < 0.009) return;
     await onSetCashRegister?.(normalized);
   }, [cashInput, cashRegisterAmount, onSetCashRegister]);
+
+  const registerCashPurchase = useCallback(async () => {
+    const parsedAmount = parseMoneyInput(cashPurchaseAmountInput);
+    if (parsedAmount === null || parsedAmount <= 0) {
+      alert('Informe o valor retirado do caixa.');
+      return;
+    }
+
+    const normalizedAmount = Number(parsedAmount.toFixed(2));
+    let ok: boolean | undefined = false;
+    if (cashPurchaseType === 'OTHER') {
+      if (!onRegisterCashExpense) return;
+      const purchaseDescription = cashPurchaseDescription.trim();
+      if (!purchaseDescription) {
+        alert('Escreva o que foi comprado.');
+        return;
+      }
+      ok = await onRegisterCashExpense(normalizedAmount, purchaseDescription);
+    } else {
+      if (!onRegisterCashPurchase) return;
+      if (!cashPurchaseIngredientId) {
+        alert('Selecione o insumo comprado.');
+        return;
+      }
+      ok = await onRegisterCashPurchase(cashPurchaseIngredientId, normalizedAmount);
+    }
+
+    if (ok === false) return;
+    setCashPurchaseAmountInput('');
+    setCashPurchaseDescription('');
+  }, [
+    cashPurchaseAmountInput,
+    cashPurchaseDescription,
+    cashPurchaseIngredientId,
+    cashPurchaseType,
+    onRegisterCashExpense,
+    onRegisterCashPurchase,
+  ]);
 
   const handleRestart = async () => {
     if (isClosing) return;
@@ -510,8 +617,9 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
               ) : (
                 orderedHistory.map(({ entry, sales: historySales, inferred }) => {
                   const entryDate = toDate(entry.closedAt);
+                  const entryCashExpenses = roundMoney(Math.max(0, Number(entry.cashExpenses) || 0));
                   const entryEstimatedCash =
-                    entry.openingCash + entry.totalRevenue - entry.totalPurchases;
+                    entry.openingCash + entry.totalRevenue - entry.totalPurchases - entryCashExpenses;
                   return (
                     <div
                       key={entry.id}
@@ -532,6 +640,11 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
                         <p className="text-[11px] font-bold text-slate-700">
                           Faturamento: {formatCurrency(entry.totalRevenue)} | Compras: {formatCurrency(entry.totalPurchases)} | Caixa: {formatCurrency(entryEstimatedCash)}
                         </p>
+                        {entryCashExpenses > 0 && (
+                          <p className="text-[11px] font-black text-amber-700 uppercase tracking-widest">
+                            Saída no caixa do dia: {formatCurrency(entryCashExpenses)}
+                          </p>
+                        )}
                       </div>
                       <button
                         onClick={() => {
@@ -586,6 +699,9 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
               <p className="text-sm font-black">Faturamento: {formatCurrency(totalRevenue)}</p>
               <p className="text-sm font-black">Compras: {formatCurrency(totalCost)}</p>
               <p className="text-sm font-black">Lucro: {formatCurrency(totalProfit)}</p>
+              <p className="text-sm font-black text-amber-300">
+                Retiradas do caixa: -{formatCurrency(cashRegisterExpenses)}
+              </p>
               <p className="text-sm font-black text-yellow-300">
                 Caixa estimado: {formatCurrency(estimatedClosingCash)}
               </p>
@@ -599,6 +715,104 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
               </button>
             </div>
           </div>
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-3">
+            <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+              Registrar retirada do caixa
+            </p>
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-2">
+              <select
+                value={cashPurchaseType}
+                onChange={(e) => setCashPurchaseType(e.target.value as CashPurchaseType)}
+                className="bg-white border border-amber-200 rounded-xl px-3 py-2 text-xs font-black text-slate-800"
+              >
+                <option value="INGREDIENT">Insumo</option>
+                <option value="OTHER">Outros</option>
+              </select>
+              {cashPurchaseType === 'INGREDIENT' ? (
+                <select
+                  value={cashPurchaseIngredientId}
+                  onChange={(e) => setCashPurchaseIngredientId(e.target.value)}
+                  className="bg-white border border-amber-200 rounded-xl px-3 py-2 text-xs font-black text-slate-800"
+                >
+                  <option value="">Selecione o insumo</option>
+                  {allIngredients.map((ingredient) => (
+                    <option key={ingredient.id} value={ingredient.id}>
+                      {ingredient.name} ({ingredient.unit})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="bg-white border border-amber-200 rounded-xl px-3 py-2 text-xs font-black text-slate-500 uppercase tracking-widest flex items-center">
+                  Tipo: Outros
+                </div>
+              )}
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={cashPurchaseAmountInput}
+                onChange={(e) => setCashPurchaseAmountInput(e.target.value)}
+                placeholder="Valor retirado (R$)"
+                className="bg-white border border-amber-200 rounded-xl px-3 py-2 text-xs font-black text-slate-800"
+              />
+              <button
+                onClick={() => {
+                  void registerCashPurchase();
+                }}
+                className="qb-btn-touch bg-amber-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-amber-700"
+              >
+                Registrar Compra
+              </button>
+            </div>
+            {cashPurchaseType === 'OTHER' && (
+              <input
+                type="text"
+                value={cashPurchaseDescription}
+                onChange={(e) => setCashPurchaseDescription(e.target.value)}
+                placeholder="O que foi comprado"
+                className="w-full bg-white border border-amber-200 rounded-xl px-3 py-2 text-xs font-black text-slate-800"
+              />
+            )}
+            {cashPurchaseType === 'INGREDIENT' &&
+              selectedCashPurchaseIngredient &&
+              estimatedCashPurchaseStockIncrease !== null && (
+              <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+                Estoque estimado de entrada: {estimatedCashPurchaseStockIncrease.toFixed(3)} {selectedCashPurchaseIngredient.unit}
+              </p>
+            )}
+          </div>
+          {cashRegisterExpenseEntries.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-3">
+              <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+                Retiradas pagas com caixa (sessão)
+              </p>
+              <div className="max-h-48 overflow-y-auto pr-1 space-y-2">
+                {cashRegisterExpenseEntries.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="bg-white border border-amber-100 rounded-xl px-3 py-2 flex items-center justify-between gap-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-black uppercase text-slate-800 truncate">
+                        {entry.purchaseDescription || entry.ingredientName}
+                      </p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 truncate">
+                        {entry.ingredientId === 'cash-expense' || entry.quantity === 0
+                          ? 'Tipo: Outros'
+                          : `Insumo: ${entry.ingredientName}`}
+                      </p>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                        {toDate(entry.timestamp).toLocaleString('pt-BR')}
+                      </p>
+                    </div>
+                    <p className="text-xs font-black text-amber-700">
+                      -{formatCurrency(Math.abs(Number(entry.cashRegisterImpact) || 0))}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

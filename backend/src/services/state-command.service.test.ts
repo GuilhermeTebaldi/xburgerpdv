@@ -1039,6 +1039,95 @@ test('set cash register stores sanitized amount in state', () => {
   assert.equal(base.cashRegisterAmount, undefined);
 });
 
+test('ingredient stock move can debit purchase from cash register', () => {
+  let state = createBaseState();
+  state = applyStateCommand(state, {
+    type: 'SET_CASH_REGISTER',
+    amount: 50,
+  });
+
+  const next = applyStateCommand(state, {
+    type: 'INGREDIENT_STOCK_MOVE',
+    ingredientId: 'i-bread',
+    amount: 2,
+    useCashRegister: true,
+    purchaseDescription: 'Compra de pão da manhã',
+  });
+
+  assert.equal(next.cashRegisterAmount, 47);
+  assert.equal(next.ingredients.find((entry) => entry.id === 'i-bread')?.currentStock, 52);
+  assert.equal(next.stockEntries.length, 1);
+  assert.equal(next.stockEntries[0]?.paidWithCashRegister, true);
+  assert.equal(next.stockEntries[0]?.cashRegisterImpact, -3);
+  assert.equal(next.stockEntries[0]?.purchaseDescription, 'Compra de pão da manhã');
+});
+
+test('ingredient stock move with cash register blocks when cash is insufficient', () => {
+  let state = createBaseState();
+  state = applyStateCommand(state, {
+    type: 'SET_CASH_REGISTER',
+    amount: 1,
+  });
+
+  assert.throws(
+    () =>
+      applyStateCommand(state, {
+        type: 'INGREDIENT_STOCK_MOVE',
+        ingredientId: 'i-bread',
+        amount: 2,
+        useCashRegister: true,
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof HttpError);
+      assert.equal(error.statusCode, 409);
+      return true;
+    }
+  );
+});
+
+test('cash expense can debit cash register without stock move', () => {
+  let state = createBaseState();
+  state = applyStateCommand(state, {
+    type: 'SET_CASH_REGISTER',
+    amount: 30,
+  });
+
+  const next = applyStateCommand(state, {
+    type: 'CASH_EXPENSE',
+    amount: 7.5,
+    purchaseDescription: 'Compra de gás',
+  });
+
+  assert.equal(next.cashRegisterAmount, 22.5);
+  assert.equal(next.stockEntries.length, 1);
+  assert.equal(next.stockEntries[0]?.ingredientName, 'OUTROS');
+  assert.equal(next.stockEntries[0]?.quantity, 0);
+  assert.equal(next.stockEntries[0]?.cashRegisterImpact, -7.5);
+  assert.equal(next.stockEntries[0]?.purchaseDescription, 'Compra de gás');
+});
+
+test('cash expense blocks when cash register is insufficient', () => {
+  let state = createBaseState();
+  state = applyStateCommand(state, {
+    type: 'SET_CASH_REGISTER',
+    amount: 2,
+  });
+
+  assert.throws(
+    () =>
+      applyStateCommand(state, {
+        type: 'CASH_EXPENSE',
+        amount: 3,
+        purchaseDescription: 'Compra extra',
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof HttpError);
+      assert.equal(error.statusCode, 409);
+      return true;
+    }
+  );
+});
+
 test('close day snapshots report in history and resets session sales state', () => {
   let state = createBaseState();
   state = applyStateCommand(state, {
@@ -1048,6 +1137,12 @@ test('close day snapshots report in history and resets session sales state', () 
   state = applyStateCommand(state, {
     type: 'SALE_REGISTER',
     productId: 'p-burger',
+  });
+  state = applyStateCommand(state, {
+    type: 'INGREDIENT_STOCK_MOVE',
+    ingredientId: 'i-sauce',
+    amount: 10,
+    useCashRegister: true,
   });
 
   const closed = applyStateCommand(state, {
@@ -1060,11 +1155,12 @@ test('close day snapshots report in history and resets session sales state', () 
   assert.equal(closed.cashRegisterAmount, 0);
   assert.equal(closed.globalSales.length, 1);
   assert.equal(closed.dailySalesHistory?.length, 1);
-  assert.equal(closed.dailySalesHistory?.[0]?.openingCash, 100);
+  assert.equal(closed.dailySalesHistory?.[0]?.openingCash, 99.8);
   assert.equal(closed.dailySalesHistory?.[0]?.saleCount, 1);
   assert.equal(closed.dailySalesHistory?.[0]?.totalRevenue, 20);
   assert.equal(closed.dailySalesHistory?.[0]?.totalPurchases, 6.1);
   assert.equal(closed.dailySalesHistory?.[0]?.totalProfit, 13.9);
+  assert.equal(closed.dailySalesHistory?.[0]?.cashExpenses, 0.2);
 });
 
 test('stress: repeated mixed operations never produce negative stocks', () => {

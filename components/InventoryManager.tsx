@@ -11,7 +11,7 @@ import {
 interface InventoryManagerProps {
   ingredients: Ingredient[];
   entries: StockEntry[];
-  onUpdateStock: (id: string, amount: number) => void;
+  onUpdateStock: (id: string, amount: number, options?: { useCashRegister?: boolean }) => void;
   onOpenAddIngredient: () => void;
   onEditIngredient: (ingredient: Ingredient) => void;
   onDeleteIngredient?: (id: string) => void;
@@ -63,6 +63,10 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
       return fields.some((field) => field.toLowerCase().includes(normalizedSearch));
     });
   }, [ingredients, normalizedSearch]);
+  const visibleHistoryEntries = useMemo(
+    () => entries.filter((entry) => Math.abs(Number(entry.quantity) || 0) > 0),
+    [entries]
+  );
 
   const handleInputChange = (id: string, value: string) => {
     setReplenishValues(prev => ({ ...prev, [id]: value }));
@@ -325,10 +329,10 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
             </div>
             
             <div className="qb-stock-history-content flex-1 overflow-y-auto p-6 space-y-3">
-              {entries.length === 0 ? (
+              {visibleHistoryEntries.length === 0 ? (
                 <div className="text-center py-20 opacity-30 uppercase font-bold">Nenhuma movimentação registrada</div>
               ) : (
-                entries.slice().reverse().map(entry => {
+                visibleHistoryEntries.slice().reverse().map(entry => {
                   const isOut = entry.quantity < 0;
                   const ingredient = ingredientsById.get(entry.ingredientId);
                   const unitLabel = ingredient?.unit || '';

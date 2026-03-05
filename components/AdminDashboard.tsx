@@ -17,6 +17,7 @@ interface AdminDashboardProps {
   sales: Sale[];
   cancelledSales: Sale[];
   stockEntries: StockEntry[];
+  sessionStockEntries: StockEntry[];
   allProducts: Product[];
   allIngredients: Ingredient[];
   cleaningMaterials: CleaningMaterial[];
@@ -73,6 +74,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   sales, 
   cancelledSales, 
   stockEntries, 
+  sessionStockEntries,
   allProducts,
   allIngredients,
   cleaningMaterials,
@@ -154,6 +156,26 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     [dailySalesHistory]
   );
   const latestDailyClose = orderedDailySalesHistory[0];
+  const currentSessionCashExpenses = useMemo(
+    () =>
+      sessionStockEntries.reduce((sum, entry) => {
+        const impact = Number(entry.cashRegisterImpact);
+        if (!Number.isFinite(impact) || impact >= 0) return sum;
+        return sum + Math.abs(impact);
+      }, 0),
+    [sessionStockEntries]
+  );
+  const currentSessionCashExpenseEntries = useMemo(
+    () =>
+      sessionStockEntries
+        .filter((entry) => {
+          const impact = Number(entry.cashRegisterImpact);
+          return Number.isFinite(impact) && impact < 0;
+        })
+        .slice()
+        .sort((a, b) => toDate(b.timestamp).getTime() - toDate(a.timestamp).getTime()),
+    [sessionStockEntries]
+  );
 
   const handleUnlockConfig = (e: React.FormEvent) => {
     e.preventDefault();
@@ -296,6 +318,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">Caixa Informado</p>
                 <p className="text-2xl font-black text-emerald-700">R$ {cashRegisterAmount.toFixed(2)}</p>
                 <p className="text-[10px] font-bold text-emerald-600 uppercase mt-2">Valor da sessão em aberto</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-amber-700 mt-2">
+                  Retiradas no caixa: -R$ {currentSessionCashExpenses.toFixed(2)}
+                </p>
               </div>
 
               <div className="bg-blue-50 rounded-2xl border border-blue-100 p-4">
@@ -322,6 +347,35 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
 
             <div className="mt-5">
+              {currentSessionCashExpenseEntries.length > 0 && (
+                <div className="mb-4 bg-amber-50 border border-amber-200 rounded-2xl p-4">
+                  <p className="text-[10px] font-black text-amber-700 uppercase tracking-widest mb-2">
+                    Retiradas do caixa (sessão atual)
+                  </p>
+                  <div className="space-y-2 max-h-[140px] overflow-y-auto pr-1 scrollbar-hide">
+                    {currentSessionCashExpenseEntries.map((entry) => (
+                      <div
+                        key={entry.id}
+                        className="bg-white border border-amber-100 rounded-xl px-3 py-2 flex items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-xs font-black uppercase text-slate-800 truncate">
+                            {entry.purchaseDescription || entry.ingredientName}
+                          </p>
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 truncate">
+                            {entry.ingredientId === 'cash-expense' || entry.quantity === 0
+                              ? 'Tipo: Outros'
+                              : `Insumo: ${entry.ingredientName}`}
+                          </p>
+                        </div>
+                        <p className="text-xs font-black text-amber-700">
+                          -R$ {Math.abs(Number(entry.cashRegisterImpact) || 0).toFixed(2)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Histórico Diário</p>
               {orderedDailySalesHistory.length === 0 ? (
                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 text-xs font-black uppercase tracking-widest text-slate-400">
@@ -331,7 +385,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1 scrollbar-hide">
                   {orderedDailySalesHistory.map((entry) => {
                     const closedAt = toDate(entry.closedAt);
-                    const closingEstimate = entry.openingCash + entry.totalRevenue - entry.totalPurchases;
+                    const cashExpenses = Number(entry.cashExpenses) > 0 ? Number(entry.cashExpenses) : 0;
+                    const closingEstimate =
+                      entry.openingCash + entry.totalRevenue - entry.totalPurchases - cashExpenses;
                     return (
                       <div key={entry.id} className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
                         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
@@ -348,7 +404,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           </p>
                         </div>
                         <div className="mt-2 text-[11px] font-bold text-slate-700">
-                          Caixa: R$ {entry.openingCash.toFixed(2)} | Faturamento: R$ {entry.totalRevenue.toFixed(2)} | Compras: R$ {entry.totalPurchases.toFixed(2)} | Lucro: R$ {entry.totalProfit.toFixed(2)} | Caixa estimado: R$ {closingEstimate.toFixed(2)}
+                          Caixa: R$ {entry.openingCash.toFixed(2)} | Faturamento: R$ {entry.totalRevenue.toFixed(2)} | Compras: R$ {entry.totalPurchases.toFixed(2)} | Compra no caixa: R$ {cashExpenses.toFixed(2)} | Lucro: R$ {entry.totalProfit.toFixed(2)} | Caixa estimado: R$ {closingEstimate.toFixed(2)}
                         </div>
                       </div>
                     );

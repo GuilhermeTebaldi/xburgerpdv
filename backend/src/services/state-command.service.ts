@@ -216,6 +216,7 @@ const cloneDailySalesHistoryEntry = (
   totalPurchases: toNonNegativeMoney(entry.totalPurchases),
   totalProfit: roundMoney(Number(entry.totalProfit) || 0),
   saleCount: Number.isFinite(Number(entry.saleCount)) ? Math.max(0, Math.floor(Number(entry.saleCount))) : 0,
+  cashExpenses: toNonNegativeMoney(entry.cashExpenses),
 });
 
 const ensureDailySalesHistory = (state: FrontAppState): FrontDailySalesHistoryEntry[] => {
@@ -928,6 +929,27 @@ const applyIngredientStockMove = (
   );
 
   const updatedIngredient = requireIngredient(state, command.ingredientId);
+  const shouldDebitCashRegister = appliedAmount > 0 && command.useCashRegister === true;
+  let cashRegisterImpact = 0;
+  const purchaseDescription =
+    shouldDebitCashRegister && command.purchaseDescription
+      ? normalizeOptionalNote(command.purchaseDescription)
+      : undefined;
+
+  if (shouldDebitCashRegister) {
+    const purchaseCost = roundMoney(appliedAmount * updatedIngredient.cost);
+    const availableCash = toNonNegativeMoney(state.cashRegisterAmount);
+    if (purchaseCost > availableCash + Number.EPSILON) {
+      throw new HttpError(409, 'Caixa insuficiente para registrar compra de insumo.', {
+        availableCash,
+        purchaseCost,
+        ingredientId: command.ingredientId,
+      });
+    }
+    state.cashRegisterAmount = roundMoney(availableCash - purchaseCost);
+    cashRegisterImpact = roundMoney(-purchaseCost);
+  }
+
   const entry: FrontStockEntry = {
     id: createId('st'),
     ingredientId: command.ingredientId,
@@ -936,6 +958,47 @@ const applyIngredientStockMove = (
     unitCost: updatedIngredient.cost,
     timestamp,
     source: 'MANUAL',
+    paidWithCashRegister: shouldDebitCashRegister,
+    cashRegisterImpact: cashRegisterImpact === 0 ? undefined : cashRegisterImpact,
+    purchaseDescription,
+  };
+  pushIngredientMovement(state, entry);
+};
+
+const applyCashExpense = (
+  state: FrontAppState,
+  command: Extract<StateCommandInput, { type: 'CASH_EXPENSE' }>
+) => {
+  const amount = roundMoney(command.amount);
+  if (amount <= 0) {
+    throw new HttpError(409, 'Valor inválido para saída do caixa.');
+  }
+
+  const availableCash = toNonNegativeMoney(state.cashRegisterAmount);
+  if (amount > availableCash + Number.EPSILON) {
+    throw new HttpError(409, 'Caixa insuficiente para registrar saída.', {
+      availableCash,
+      amount,
+    });
+  }
+
+  const purchaseDescription = normalizeOptionalNote(command.purchaseDescription);
+  if (!purchaseDescription) {
+    throw new HttpError(409, 'Descrição da saída é obrigatória.');
+  }
+
+  state.cashRegisterAmount = roundMoney(availableCash - amount);
+
+  const entry: FrontStockEntry = {
+    id: createId('st'),
+    ingredientId: 'cash-expense',
+    ingredientName: 'OUTROS',
+    quantity: 0,
+    timestamp: toTimestampIso(),
+    source: 'MANUAL',
+    paidWithCashRegister: true,
+    cashRegisterImpact: roundMoney(-amount),
+    purchaseDescription,
   };
   pushIngredientMovement(state, entry);
 };
@@ -987,6 +1050,13 @@ const applyCloseDay = (state: FrontAppState) => {
   const totalPurchases = roundMoney(
     state.sales.reduce((sum, sale) => sum + (Number.isFinite(sale.totalCost) ? sale.totalCost : 0), 0)
   );
+  const cashExpenses = roundMoney(
+    state.stockEntries.reduce((sum, entry) => {
+      const impact = Number(entry.cashRegisterImpact);
+      if (!Number.isFinite(impact) || impact >= 0) return sum;
+      return sum + Math.abs(impact);
+    }, 0)
+  );
   const openingCash = toNonNegativeMoney(state.cashRegisterAmount);
   const report: FrontDailySalesHistoryEntry = {
     id: createId('day'),
@@ -996,6 +1066,7 @@ const applyCloseDay = (state: FrontAppState) => {
     totalPurchases,
     totalProfit: roundMoney(totalRevenue - totalPurchases),
     saleCount: state.sales.length,
+    cashExpenses,
   };
 
   const history = ensureDailySalesHistory(state);
@@ -1065,6 +1136,9 @@ export const applyStateCommand = (
       return state;
     case 'INGREDIENT_STOCK_MOVE':
       applyIngredientStockMove(state, command);
+      return state;
+    case 'CASH_EXPENSE':
+      applyCashExpense(state, command);
       return state;
     case 'INGREDIENT_CREATE':
       ensureUniqueId(state, 'ingredient', command.ingredient.id);

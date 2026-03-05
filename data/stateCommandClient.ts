@@ -90,7 +90,18 @@ export type StateCommand =
     })
   | (BaseCommand & { type: 'SALE_UNDO_LAST' })
   | (BaseCommand & { type: 'SALE_UNDO_BY_ID'; saleId: string })
-  | (BaseCommand & { type: 'INGREDIENT_STOCK_MOVE'; ingredientId: string; amount: number })
+  | (BaseCommand & {
+      type: 'INGREDIENT_STOCK_MOVE';
+      ingredientId: string;
+      amount: number;
+      useCashRegister?: boolean;
+      purchaseDescription?: string;
+    })
+  | (BaseCommand & {
+      type: 'CASH_EXPENSE';
+      amount: number;
+      purchaseDescription: string;
+    })
   | (BaseCommand & { type: 'INGREDIENT_CREATE'; ingredient: Ingredient })
   | (BaseCommand & { type: 'INGREDIENT_UPDATE'; ingredient: Ingredient })
   | (BaseCommand & { type: 'INGREDIENT_DELETE'; ingredientId: string })

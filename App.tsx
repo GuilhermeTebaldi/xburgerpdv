@@ -71,7 +71,21 @@ interface AdminSessionBarrier {
   lastHeartbeatAt: number;
 }
 
+interface StockUpdateOptions {
+  useCashRegister?: boolean;
+  purchaseDescription?: string;
+}
+
 const roundMoney = (value: number): number => Number(value.toFixed(2));
+
+const calculateCashRegisterExpensesFromStockEntries = (entries: StockEntry[]): number =>
+  roundMoney(
+    entries.reduce((sum, entry) => {
+      const impact = Number(entry.cashRegisterImpact);
+      if (!Number.isFinite(impact) || impact >= 0) return sum;
+      return sum + Math.abs(impact);
+    }, 0)
+  );
 
 const readCashHistoryLegacyMode = (): boolean => {
   if (typeof window === 'undefined') return false;
@@ -140,6 +154,7 @@ const normalizeDailyHistoryEntry = (value: unknown): DailySalesHistoryEntry | nu
     totalPurchases: roundMoney(Math.max(0, Number(source.totalPurchases) || 0)),
     totalProfit: roundMoney(Number(source.totalProfit) || 0),
     saleCount,
+    cashExpenses: roundMoney(Math.max(0, Number(source.cashExpenses) || 0)),
   };
 };
 
@@ -1323,16 +1338,93 @@ const App: React.FC = () => {
     }
   };
 
-  const handleUpdateStock = useCallback((id: string, amount: number) => {
+  const handleUpdateStock = useCallback((id: string, amount: number, options: StockUpdateOptions = {}) => {
+    const useCashRegister = amount > 0 && options.useCashRegister === true;
+    const purchaseDescription = useCashRegister ? options.purchaseDescription?.trim() : undefined;
     void runCommandWithSync(
       {
         type: 'INGREDIENT_STOCK_MOVE',
         ingredientId: id,
         amount,
+        useCashRegister,
+        purchaseDescription,
       },
-      amount > 0 ? 'Estoque Atualizado!' : 'Gasto de Insumo Registrado!'
+      amount > 0
+        ? useCashRegister
+          ? 'Estoque atualizado e compra abatida do caixa!'
+          : 'Estoque Atualizado!'
+        : 'Gasto de Insumo Registrado!'
     );
   }, [runCommandWithSync]);
+
+  const handleRegisterCashPurchase = useCallback(
+    async (
+      ingredientId: string,
+      purchaseAmount: number,
+      purchaseDescription?: string
+    ): Promise<boolean> => {
+      const ingredient = ingredients.find((item) => item.id === ingredientId);
+      if (!ingredient) {
+        showNotification('Insumo não encontrado para compra.');
+        return false;
+      }
+
+      if (!Number.isFinite(ingredient.cost) || ingredient.cost <= 0) {
+        showNotification('Custo do insumo inválido para calcular entrada de estoque.');
+        return false;
+      }
+
+      const normalizedPurchaseAmount = roundMoney(Math.max(0, purchaseAmount));
+      if (normalizedPurchaseAmount <= 0) {
+        showNotification('Valor de compra inválido.');
+        return false;
+      }
+
+      const stockAmount = Number((normalizedPurchaseAmount / ingredient.cost).toFixed(6));
+      if (!Number.isFinite(stockAmount) || stockAmount <= 0) {
+        showNotification('Não foi possível calcular a quantidade de estoque para essa compra.');
+        return false;
+      }
+
+      return runCommandWithSync(
+        {
+          type: 'INGREDIENT_STOCK_MOVE',
+          ingredientId,
+          amount: stockAmount,
+          useCashRegister: true,
+          purchaseDescription: purchaseDescription?.trim() || undefined,
+        },
+        'Compra registrada no caixa e estoque atualizado!'
+      );
+    },
+    [ingredients, runCommandWithSync, showNotification]
+  );
+
+  const handleRegisterCashExpense = useCallback(
+    async (purchaseAmount: number, purchaseDescription: string): Promise<boolean> => {
+      const normalizedPurchaseAmount = roundMoney(Math.max(0, purchaseAmount));
+      if (normalizedPurchaseAmount <= 0) {
+        showNotification('Valor de compra inválido.');
+        return false;
+      }
+
+      const normalizedDescription = purchaseDescription.trim();
+      if (!normalizedDescription) {
+        showNotification('Informe o que foi comprado.');
+        return false;
+      }
+
+      return runCommandWithSync(
+        {
+          type: 'CASH_EXPENSE',
+          amount: normalizedPurchaseAmount,
+          purchaseDescription: normalizedDescription,
+        },
+        'Saída do caixa registrada!'
+      );
+    },
+    [runCommandWithSync, showNotification]
+  );
 
   const handleAddProduct = (product: Product) => {
     void runCommandWithSync({ type: 'PRODUCT_CREATE', product }, 'Produto Adicionado!');
@@ -1415,6 +1507,7 @@ const App: React.FC = () => {
         0
       )
     );
+    const cashExpenses = calculateCashRegisterExpensesFromStockEntries(stockEntries);
     const openingCash = roundMoney(Math.max(0, cashRegisterAmount));
 
     return {
@@ -1425,8 +1518,9 @@ const App: React.FC = () => {
       totalPurchases,
       totalProfit: roundMoney(totalRevenue - totalPurchases),
       saleCount: sales.length,
+      cashExpenses,
     };
-  }, [cashRegisterAmount, sales]);
+  }, [cashRegisterAmount, sales, stockEntries]);
 
   const persistLocalCloseDayReport = useCallback((report: DailySalesHistoryEntry) => {
     const normalizedReport = normalizeDailyHistoryEntry(report);
@@ -1835,6 +1929,8 @@ const App: React.FC = () => {
             dailySalesHistory={dailySalesHistory}
             onSetCashRegister={handleSetCashRegister}
             onCloseDay={handleCloseDay}
+            onRegisterCashPurchase={handleRegisterCashPurchase}
+            onRegisterCashExpense={handleRegisterCashExpense}
           />
         )}
 
@@ -1857,6 +1953,7 @@ const App: React.FC = () => {
               sales={globalSales} 
               cancelledSales={globalCancelledSales} 
               stockEntries={globalStockEntries} 
+              sessionStockEntries={stockEntries}
               allProducts={products}
               allIngredients={ingredients}
               cleaningMaterials={cleaningMaterials}

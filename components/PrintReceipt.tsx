@@ -295,11 +295,13 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
           padding: 4mm 3mm;
           font-size: 11px;
           line-height: 1.3;
+          font-weight: 700;
+          letter-spacing: 0.1px;
         }
         .receipt-center { text-align: center; }
-        .receipt-strong { font-weight: 700; }
+        .receipt-strong { font-weight: 900; }
         .receipt-divider {
-          border-top: 1px dashed #000;
+          border-top: 2px dashed #000;
           margin: 6px 0;
         }
         .receipt-row {
@@ -307,12 +309,19 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
           justify-content: space-between;
           gap: 8px;
         }
+        .receipt-item .receipt-row:first-child {
+          font-weight: 800;
+        }
+        .receipt-row span:last-child {
+          font-weight: 800;
+        }
         .receipt-item + .receipt-item {
           margin-top: 5px;
         }
         .receipt-note {
           margin-top: 2px;
           font-size: 10px;
+          font-weight: 700;
         }
         .receipt-actions {
           margin: 18px 0 28px;
@@ -335,9 +344,30 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
           color: #111;
         }
         @media print {
+          html, body {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
           .no-print { display: none !important; }
           .receipt-shell { min-height: auto; }
-          .receipt-paper { margin: 0; padding: 3mm 2.5mm; }
+          .receipt-paper {
+            margin: 0;
+            padding: 3mm 2.5mm;
+            font-size: 12px;
+            line-height: 1.25;
+            font-weight: 900;
+          }
+          .receipt-paper * {
+            color: #000 !important;
+            font-weight: 900;
+            -webkit-text-stroke: 0.15px #000;
+            text-shadow: 0 0 0 #000;
+            text-rendering: geometricPrecision;
+          }
+          .receipt-paper .receipt-strong {
+            font-weight: 900 !important;
+            -webkit-text-stroke: 0.2px #000;
+          }
         }
       `}</style>
 
