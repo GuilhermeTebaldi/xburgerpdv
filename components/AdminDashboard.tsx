@@ -167,6 +167,26 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const salesCost = sales.reduce((sum, s) => sum + (s.totalCost || 0), 0);
   const cancelledRevenue = cancelledSales.reduce((sum, s) => sum + s.total, 0);
   const stockOutCost = useMemo(() => {
+    const saleOutByIngredient = new Map<string, number>();
+
+    stockEntries.forEach((entry) => {
+      const quantity = Number(entry.quantity);
+      if (!Number.isFinite(quantity) || quantity >= 0) return;
+
+      const isSaleEntry =
+        entry.source === 'SALE' ||
+        (typeof entry.saleId === 'string' && entry.saleId.trim()) ||
+        (typeof entry.id === 'string' && entry.id.startsWith('st-sale-'));
+      if (!isSaleEntry) return;
+
+      const ingredientId = entry.ingredientId || '';
+      if (!ingredientId) return;
+      saleOutByIngredient.set(
+        ingredientId,
+        (saleOutByIngredient.get(ingredientId) || 0) + Math.abs(quantity)
+      );
+    });
+
     const total = stockEntries.reduce((sum, entry) => {
       const quantity = Number(entry.quantity);
       if (!Number.isFinite(quantity) || quantity >= 0) return sum;
@@ -188,6 +208,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       const absoluteQuantity = Math.abs(quantity);
       const normalizedImpact = absoluteQuantity * normalizedUnitCost;
       if (isLikelyInventoryAdjustment(ingredient, absoluteQuantity, normalizedImpact)) {
+        return sum;
+      }
+
+      const relatedSaleOut = saleOutByIngredient.get(entry.ingredientId) || 0;
+      if (relatedSaleOut <= 0) {
+        return sum;
+      }
+      if (absoluteQuantity > relatedSaleOut * 2) {
         return sum;
       }
 
