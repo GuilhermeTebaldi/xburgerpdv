@@ -153,6 +153,20 @@ const reviveTimestamp = <T extends { timestamp?: unknown }>(item: T): T => {
 const reviveListWithDates = <T extends { timestamp?: unknown }>(items: T[]): T[] =>
   items.map(reviveTimestamp);
 
+const normalizeStockEntryMetadata = (entry: StockEntry): StockEntry => {
+  if (entry.source) return entry;
+  if (typeof entry.saleId === 'string' && entry.saleId.trim()) {
+    return { ...entry, source: 'SALE' };
+  }
+  if (typeof entry.id === 'string' && entry.id.startsWith('st-sale-')) {
+    return { ...entry, source: 'SALE' };
+  }
+  return entry;
+};
+
+const normalizeStockEntryList = (items: StockEntry[]): StockEntry[] =>
+  items.map(normalizeStockEntryMetadata);
+
 const reviveDailySalesHistory = (items: DailySalesHistoryEntry[]): DailySalesHistoryEntry[] =>
   items.map((item) => {
     if (item.closedAt && !(item.closedAt instanceof Date)) {
@@ -177,7 +191,9 @@ const normalizeStateRecord = (
   ingredients: toArray<Ingredient>(source.ingredients, defaults.ingredients),
   products: toArray<Product>(source.products, defaults.products),
   sales: reviveListWithDates(toArray<Sale>(source.sales, defaults.sales)),
-  stockEntries: reviveListWithDates(toArray<StockEntry>(source.stockEntries, defaults.stockEntries)),
+  stockEntries: normalizeStockEntryList(
+    reviveListWithDates(toArray<StockEntry>(source.stockEntries, defaults.stockEntries))
+  ),
   cleaningMaterials: toArray<CleaningMaterial>(source.cleaningMaterials, defaults.cleaningMaterials),
   cleaningStockEntries: reviveListWithDates(
     toArray<CleaningStockEntry>(source.cleaningStockEntries, defaults.cleaningStockEntries)
@@ -186,8 +202,8 @@ const normalizeStateRecord = (
   globalCancelledSales: reviveListWithDates(
     toArray<Sale>(source.globalCancelledSales, defaults.globalCancelledSales)
   ),
-  globalStockEntries: reviveListWithDates(
-    toArray<StockEntry>(source.globalStockEntries, defaults.globalStockEntries)
+  globalStockEntries: normalizeStockEntryList(
+    reviveListWithDates(toArray<StockEntry>(source.globalStockEntries, defaults.globalStockEntries))
   ),
   globalCleaningStockEntries: reviveListWithDates(
     toArray<CleaningStockEntry>(

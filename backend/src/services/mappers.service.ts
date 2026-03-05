@@ -151,17 +151,28 @@ export const toFrontIngredientEntry = (
   movement: StockMovement & {
     ingredient: { id: string; name: string } | null;
   }
-): FrontStockEntry => ({
-  id: movement.id,
-  ingredientId: movement.ingredient?.id || movement.ingredientId || '',
-  ingredientName: movement.ingredient?.name || 'Insumo removido',
-  quantity:
-    movement.direction === StockDirection.OUT
-      ? -roundQuantity(toNumber(movement.quantity))
-      : roundQuantity(toNumber(movement.quantity)),
-  timestamp: movement.createdAt,
-  unitCost: roundMoney(toNumber(movement.unitCost)),
-});
+): FrontStockEntry => {
+  const source: FrontStockEntry['source'] =
+    movement.reason === 'SALE'
+      ? 'SALE'
+      : movement.reason === 'SYSTEM'
+        ? 'AUTO_REPLENISH'
+        : 'MANUAL';
+
+  return {
+    id: movement.id,
+    ingredientId: movement.ingredient?.id || movement.ingredientId || '',
+    ingredientName: movement.ingredient?.name || 'Insumo removido',
+    quantity:
+      movement.direction === StockDirection.OUT
+        ? -roundQuantity(toNumber(movement.quantity))
+        : roundQuantity(toNumber(movement.quantity)),
+    timestamp: movement.createdAt,
+    unitCost: roundMoney(toNumber(movement.unitCost)),
+    source,
+    saleId: movement.saleId || undefined,
+  };
+};
 
 export const toFrontCleaningEntry = (
   movement: StockMovement & {

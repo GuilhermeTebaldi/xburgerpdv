@@ -44,6 +44,14 @@ const EditIngredientModal: React.FC<EditIngredientModalProps> = ({
     const normalized = normalizeUnit(value);
     return normalized === 'kg' || normalized.includes('quilo') || normalized.includes('kilogram');
   };
+  const isMlUnit = (value: string): boolean => {
+    const normalized = normalizeUnit(value);
+    return normalized === 'ml' || normalized.includes('mililit');
+  };
+  const isGramUnit = (value: string): boolean => {
+    const normalized = normalizeUnit(value);
+    return normalized === 'g' || normalized.includes('gram');
+  };
 
   useEffect(() => {
     if (!ingredient) return;
@@ -61,6 +69,7 @@ const EditIngredientModal: React.FC<EditIngredientModalProps> = ({
   }, [ingredient]);
 
   const isKgSelected = isKgUnit(unit);
+  const isSmallUnit = isGramUnit(unit) || isMlUnit(unit);
   const calcPrice = parseDecimalInput(calcBagPrice);
   const calcKg = parseDecimalInput(calcBagKg);
   const isCalcValid = calcPrice !== null && calcPrice >= 0 && calcKg !== null && calcKg > 0;
@@ -187,7 +196,7 @@ const EditIngredientModal: React.FC<EditIngredientModalProps> = ({
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                   {isKgSelected ? (
                     <>
-                      Preço de Custo em <span className="text-green-600">gramas</span> (R$)
+                      Preço de Custo por <span className="text-green-600">kg</span> (R$)
                     </>
                   ) : (
                     'Preço de Custo (R$)'
@@ -224,6 +233,11 @@ const EditIngredientModal: React.FC<EditIngredientModalProps> = ({
                   className="w-full bg-slate-100 border-none rounded-2xl pl-12 pr-4 py-3 font-bold text-slate-800 focus:ring-2 focus:ring-red-500"
                 />
               </div>
+              {isSmallUnit && (
+                <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">
+                  Em g/ml, custo deve ser por grama/ml (ex.: R$ 20/kg = R$ 0.0200/g).
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Estoque Mínimo</label>
@@ -404,14 +418,14 @@ const EditIngredientModal: React.FC<EditIngredientModalProps> = ({
             <div className="flex justify-end">
               <button
                 type="button"
-                disabled={calcPer100g === null}
+                disabled={calcPerKg === null}
                 onClick={() => {
-                  if (calcPer100g === null) return;
-                  setCost(String(Number(calcPer100g.toFixed(6))));
+                  if (calcPerKg === null) return;
+                  setCost(String(Number(calcPerKg.toFixed(6))));
                 }}
                 className="qb-btn-touch bg-slate-900 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black disabled:opacity-40"
               >
-                Usar no custo
+                Usar custo por kg
               </button>
             </div>
           </div>

@@ -70,6 +70,66 @@ const toDate = (value: Date | string): Date => {
   return parsed;
 };
 
+const roundMoney = (value: number): number => Number(value.toFixed(2));
+
+const normalizeUnit = (value: string): string => value.trim().toLowerCase();
+
+const hasToken = (unit: string, token: string): boolean =>
+  new RegExp(`(^|[^a-z])${token}([^a-z]|$)`).test(unit);
+
+const isKgUnit = (unit: string): boolean =>
+  hasToken(unit, 'kg') || unit.includes('quilo') || unit.includes('kilogram');
+
+const isMlUnit = (unit: string): boolean =>
+  hasToken(unit, 'ml') || unit.includes('mililit');
+
+const isLiterUnit = (unit: string): boolean =>
+  !isMlUnit(unit) &&
+  (hasToken(unit, 'l') ||
+    hasToken(unit, 'lt') ||
+    hasToken(unit, 'lts') ||
+    unit.includes('litro'));
+
+const isGramUnit = (unit: string): boolean =>
+  !isKgUnit(unit) && (hasToken(unit, 'g') || unit.includes('gram'));
+
+const normalizeIngredientCostForReport = (
+  ingredient: Ingredient | undefined,
+  rawCost: number
+): number => {
+  if (!Number.isFinite(rawCost) || rawCost <= 0) return 0;
+  if (!ingredient) return rawCost;
+
+  const unit = normalizeUnit(ingredient.unit || '');
+  if (!unit) return rawCost;
+
+  if (isGramUnit(unit) || isMlUnit(unit)) {
+    if (rawCost >= 1) return rawCost / 1000; // entered as per kg/l
+    if (rawCost >= 0.1) return rawCost / 100; // entered as per 100g/ml
+    return rawCost;
+  }
+
+  if (isKgUnit(unit) || isLiterUnit(unit)) {
+    if (rawCost > 0 && rawCost <= 0.05) return rawCost * 1000; // entered as per g/ml
+    if (rawCost > 0.05 && rawCost <= 0.5) return rawCost * 100; // entered as per 10g/ml
+    if (rawCost > 0.5 && rawCost <= 2) return rawCost * 10; // entered as per 100g/ml
+    return rawCost;
+  }
+
+  return rawCost;
+};
+
+const isLikelyInventoryAdjustment = (ingredient: Ingredient | undefined, quantity: number, impact: number): boolean => {
+  if (!Number.isFinite(quantity) || quantity <= 0) return false;
+  if (impact >= 500) return true;
+  if (!ingredient) return quantity >= 100;
+
+  const unit = normalizeUnit(ingredient.unit || '');
+  if (isGramUnit(unit) || isMlUnit(unit)) return quantity >= 5000;
+  if (isKgUnit(unit) || isLiterUnit(unit)) return quantity >= 10;
+  return quantity >= 100;
+};
+
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ 
   sales, 
   cancelledSales, 
@@ -107,12 +167,34 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const salesCost = sales.reduce((sum, s) => sum + (s.totalCost || 0), 0);
   const cancelledRevenue = cancelledSales.reduce((sum, s) => sum + s.total, 0);
   const stockOutCost = useMemo(() => {
-    return stockEntries.reduce((sum, entry) => {
-      if (entry.source === 'SALE') return sum;
-      if (entry.quantity >= 0) return sum;
-      const unitCost = entry.unitCost ?? allIngredients.find(i => i.id === entry.ingredientId)?.cost ?? 0;
-      return sum + Math.abs(entry.quantity) * unitCost;
+    const total = stockEntries.reduce((sum, entry) => {
+      const quantity = Number(entry.quantity);
+      if (!Number.isFinite(quantity) || quantity >= 0) return sum;
+
+      // Legacy safety: some old records may miss `source` but still carry `saleId`.
+      const isSaleEntry =
+        entry.source === 'SALE' ||
+        (typeof entry.saleId === 'string' && entry.saleId.trim()) ||
+        (typeof entry.id === 'string' && entry.id.startsWith('st-sale-'));
+      if (isSaleEntry) {
+        return sum;
+      }
+
+      const ingredient = allIngredients.find((i) => i.id === entry.ingredientId);
+      const rawUnitCost = Number(entry.unitCost ?? ingredient?.cost ?? 0);
+      if (!Number.isFinite(rawUnitCost) || rawUnitCost <= 0) return sum;
+
+      const normalizedUnitCost = normalizeIngredientCostForReport(ingredient, rawUnitCost);
+      const absoluteQuantity = Math.abs(quantity);
+      const normalizedImpact = absoluteQuantity * normalizedUnitCost;
+      if (isLikelyInventoryAdjustment(ingredient, absoluteQuantity, normalizedImpact)) {
+        return sum;
+      }
+
+      return sum + normalizedImpact;
     }, 0);
+
+    return roundMoney(total);
   }, [stockEntries, allIngredients]);
   const cleaningStockOutCost = useMemo(() => {
     return cleaningStockEntries.reduce((sum, entry) => {
@@ -480,6 +562,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             </div>
           </div>
+
         </div>
       )}
 

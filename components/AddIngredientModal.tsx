@@ -18,6 +18,13 @@ const AddIngredientModal: React.FC<AddIngredientModalProps> = ({ isOpen, onClose
   const [isPhotoOptionsOpen, setIsPhotoOptionsOpen] = useState(false);
   const [photoSourceMode, setPhotoSourceMode] = useState<'GALLERY' | 'LINK'>('LINK');
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
+  const normalizedUnit = unit.trim().toLowerCase();
+  const isBulkUnit =
+    normalizedUnit === 'kg' ||
+    normalizedUnit === 'l' ||
+    normalizedUnit.includes('quilo') ||
+    normalizedUnit.includes('litro');
+  const isSmallUnit = normalizedUnit === 'g' || normalizedUnit === 'ml';
 
   if (!isOpen) return null;
 
@@ -142,7 +149,9 @@ const AddIngredientModal: React.FC<AddIngredientModalProps> = ({ isOpen, onClose
 
           <div className="qb-ingredient-grid grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Preço de Custo (R$)</label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                {isBulkUnit ? 'Preço de Custo por kg/litro (R$)' : 'Preço de Custo (R$)'}
+              </label>
               <input 
                 type="number" 
                 step="0.01"
@@ -151,6 +160,11 @@ const AddIngredientModal: React.FC<AddIngredientModalProps> = ({ isOpen, onClose
                 placeholder="0.00"
                 className="w-full bg-slate-100 border-none rounded-2xl px-4 py-3 font-bold text-slate-800 focus:ring-2 focus:ring-red-500"
               />
+              {isSmallUnit && (
+                <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">
+                  Em g/ml, informe custo por grama/ml (ex.: R$ 20/kg = R$ 0.0200/g).
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Estoque Mínimo</label>

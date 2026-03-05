@@ -7,6 +7,7 @@ import type {
   SaleCustomerType,
   SaleDraft,
   SalePaymentMethod,
+  StockEntry,
 } from '../types';
 import { DEFAULT_APP_STATE, type AppState } from './appStorage';
 
@@ -225,6 +226,20 @@ const reviveTimestamp = <T extends { timestamp?: unknown }>(item: T): T => {
 const reviveTimestampList = <T extends { timestamp?: unknown }>(items: T[]): T[] =>
   items.map(reviveTimestamp);
 
+const normalizeStockEntryMetadata = (entry: StockEntry): StockEntry => {
+  if (entry.source) return entry;
+  if (typeof entry.saleId === 'string' && entry.saleId.trim()) {
+    return { ...entry, source: 'SALE' };
+  }
+  if (typeof entry.id === 'string' && entry.id.startsWith('st-sale-')) {
+    return { ...entry, source: 'SALE' };
+  }
+  return entry;
+};
+
+const normalizeStockEntryList = (items: StockEntry[]): StockEntry[] =>
+  items.map(normalizeStockEntryMetadata);
+
 const reviveDailySalesHistory = (items: DailySalesHistoryEntry[]): DailySalesHistoryEntry[] =>
   items.map((item) => {
     if (item.closedAt && !(item.closedAt instanceof Date)) {
@@ -252,7 +267,9 @@ const normalizeAppState = (payload: unknown): AppState => {
     ingredients: toArray(source.ingredients, DEFAULT_APP_STATE.ingredients),
     products: toArray(source.products, DEFAULT_APP_STATE.products),
     sales: reviveTimestampList(toArray(source.sales, DEFAULT_APP_STATE.sales)),
-    stockEntries: reviveTimestampList(toArray(source.stockEntries, DEFAULT_APP_STATE.stockEntries)),
+    stockEntries: normalizeStockEntryList(
+      reviveTimestampList(toArray(source.stockEntries, DEFAULT_APP_STATE.stockEntries))
+    ),
     cleaningMaterials: toArray(source.cleaningMaterials, DEFAULT_APP_STATE.cleaningMaterials),
     cleaningStockEntries: reviveTimestampList(
       toArray(source.cleaningStockEntries, DEFAULT_APP_STATE.cleaningStockEntries)
@@ -261,8 +278,8 @@ const normalizeAppState = (payload: unknown): AppState => {
     globalCancelledSales: reviveTimestampList(
       toArray(source.globalCancelledSales, DEFAULT_APP_STATE.globalCancelledSales)
     ),
-    globalStockEntries: reviveTimestampList(
-      toArray(source.globalStockEntries, DEFAULT_APP_STATE.globalStockEntries)
+    globalStockEntries: normalizeStockEntryList(
+      reviveTimestampList(toArray(source.globalStockEntries, DEFAULT_APP_STATE.globalStockEntries))
     ),
     globalCleaningStockEntries: reviveTimestampList(
       toArray(source.globalCleaningStockEntries, DEFAULT_APP_STATE.globalCleaningStockEntries)
