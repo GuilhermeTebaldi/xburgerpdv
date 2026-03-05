@@ -6,6 +6,7 @@ import { formatStockQuantityByUnit, getRecipeQuantityUnitLabel } from '../utils/
 
 interface SalesSummaryProps {
   sales: Sale[];
+  archivedSales?: Sale[];
   allIngredients: Ingredient[];
   stockEntries: StockEntry[];
   cashRegisterAmount: number;
@@ -15,6 +16,13 @@ interface SalesSummaryProps {
 }
 
 type SummaryTab = 'REPORT' | 'CASH';
+
+interface HistoryDrawerEntry {
+  entry: DailySalesHistoryEntry;
+  dayKey: string;
+  sales: Sale[];
+  inferred: boolean;
+}
 
 const COLORS = ['#ef4444', '#f59e0b', '#3b82f6', '#10b981', '#6366f1', '#ec4899'];
 
@@ -34,6 +42,10 @@ const toDate = (value: Date | string): Date => {
   return date;
 };
 
+const getDayKey = (value: Date | string): string => toDate(value).toLocaleDateString('pt-BR');
+
+const roundMoney = (value: number): number => Number(value.toFixed(2));
+
 const escapeHtml = (value: string): string =>
   value
     .replace(/&/g, '&amp;')
@@ -44,6 +56,7 @@ const escapeHtml = (value: string): string =>
 
 const SalesSummary: React.FC<SalesSummaryProps> = ({
   sales,
+  archivedSales = [],
   allIngredients,
   stockEntries,
   cashRegisterAmount,
@@ -104,13 +117,76 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
     [cashRegisterAmount, totalCost, totalProfit, totalRevenue, sales.length]
   );
 
-  const orderedHistory = useMemo(
-    () =>
-      [...dailySalesHistory].sort(
-        (a, b) => toDate(b.closedAt).getTime() - toDate(a.closedAt).getTime()
-      ),
-    [dailySalesHistory]
-  );
+  const archiveSalesByDay = useMemo(() => {
+    const map = new Map<string, Sale[]>();
+    archivedSales.forEach((sale) => {
+      const dayKey = getDayKey(sale.timestamp);
+      const current = map.get(dayKey);
+      if (current) {
+        current.push(sale);
+        return;
+      }
+      map.set(dayKey, [sale]);
+    });
+    return map;
+  }, [archivedSales]);
+
+  const orderedHistory = useMemo<HistoryDrawerEntry[]>(() => {
+    const explicitEntries: HistoryDrawerEntry[] = dailySalesHistory.map((entry) => {
+      const dayKey = getDayKey(entry.closedAt);
+      return {
+        entry,
+        dayKey,
+        sales: archiveSalesByDay.get(dayKey) || [],
+        inferred: false,
+      };
+    });
+
+    const explicitDayKeys = new Set(explicitEntries.map((item) => item.dayKey));
+    const todayKey = getDayKey(new Date());
+    const inferredEntries: HistoryDrawerEntry[] = [];
+
+    archiveSalesByDay.forEach((daySales, dayKey) => {
+      if (explicitDayKeys.has(dayKey) || dayKey === todayKey) return;
+
+      const totals = daySales.reduce(
+        (acc, sale) => ({
+          totalRevenue: acc.totalRevenue + (Number.isFinite(sale.total) ? sale.total : 0),
+          totalPurchases:
+            acc.totalPurchases + (Number.isFinite(sale.totalCost) ? sale.totalCost : 0),
+        }),
+        { totalRevenue: 0, totalPurchases: 0 }
+      );
+      const latestTimestamp = daySales.reduce<Date>(
+        (latest, sale) => {
+          const saleDate = toDate(sale.timestamp);
+          return saleDate.getTime() > latest.getTime() ? saleDate : latest;
+        },
+        toDate(daySales[0]?.timestamp ?? new Date())
+      );
+      const totalRevenue = roundMoney(totals.totalRevenue);
+      const totalPurchases = roundMoney(totals.totalPurchases);
+
+      inferredEntries.push({
+        dayKey,
+        sales: daySales,
+        inferred: true,
+        entry: {
+          id: `legacy-history-${dayKey.replace(/[^0-9]/g, '')}`,
+          closedAt: latestTimestamp,
+          openingCash: 0,
+          totalRevenue,
+          totalPurchases,
+          totalProfit: roundMoney(totalRevenue - totalPurchases),
+          saleCount: daySales.length,
+        },
+      });
+    });
+
+    return [...explicitEntries, ...inferredEntries].sort(
+      (a, b) => toDate(b.entry.closedAt).getTime() - toDate(a.entry.closedAt).getTime()
+    );
+  }, [archiveSalesByDay, dailySalesHistory]);
 
   const printReport = useCallback(
     (report: DailySalesHistoryEntry, reportSales: Sale[] = []) => {
@@ -432,7 +508,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
                   Nenhum fechamento registrado ainda.
                 </p>
               ) : (
-                orderedHistory.map((entry) => {
+                orderedHistory.map(({ entry, sales: historySales, inferred }) => {
                   const entryDate = toDate(entry.closedAt);
                   const entryEstimatedCash =
                     entry.openingCash + entry.totalRevenue - entry.totalPurchases;
@@ -448,13 +524,18 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
                         <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
                           Fechado em {entryDate.toLocaleString('pt-BR')}
                         </p>
+                        {inferred && (
+                          <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+                            Histórico antigo (recuperado das vendas arquivadas)
+                          </p>
+                        )}
                         <p className="text-[11px] font-bold text-slate-700">
                           Faturamento: {formatCurrency(entry.totalRevenue)} | Compras: {formatCurrency(entry.totalPurchases)} | Caixa: {formatCurrency(entryEstimatedCash)}
                         </p>
                       </div>
                       <button
                         onClick={() => {
-                          printReport(entry);
+                          printReport(entry, historySales);
                         }}
                         className="qb-btn-touch bg-slate-900 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-colors w-full sm:w-auto sm:self-end"
                       >

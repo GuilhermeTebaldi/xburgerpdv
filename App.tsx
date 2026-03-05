@@ -1828,6 +1828,7 @@ const App: React.FC = () => {
         {view === ViewMode.REPORTS && (
           <SalesSummary 
             sales={sales} 
+            archivedSales={globalSales}
             allIngredients={ingredients} 
             stockEntries={stockEntries}
             cashRegisterAmount={cashRegisterAmount}
