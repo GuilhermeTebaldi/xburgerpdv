@@ -1426,6 +1426,38 @@ const App: React.FC = () => {
     [runCommandWithSync, showNotification]
   );
 
+  const handleRevertCashExpense = useCallback(
+    async (entryId: string): Promise<boolean> => {
+      const targetEntry = stockEntries.find((entry) => entry.id === entryId);
+      if (!targetEntry) {
+        showNotification('Retirada não encontrada para reverter.');
+        return false;
+      }
+
+      const impact = Number(targetEntry.cashRegisterImpact);
+      if (!Number.isFinite(impact) || impact >= 0) {
+        showNotification('Movimentação selecionada não é uma retirada do caixa.');
+        return false;
+      }
+
+      const amount = roundMoney(Math.abs(impact));
+      const description = targetEntry.purchaseDescription || targetEntry.ingredientName || 'Movimentação';
+      const confirmed = confirm(
+        `Reverter esta retirada?\n${description}\nValor: R$ ${amount.toFixed(2)}`
+      );
+      if (!confirmed) return false;
+
+      return runCommandWithSync(
+        {
+          type: 'CASH_EXPENSE_REVERT',
+          entryId,
+        },
+        'Retirada revertida e valor devolvido ao caixa!'
+      );
+    },
+    [runCommandWithSync, showNotification, stockEntries]
+  );
+
   const handleAddProduct = (product: Product) => {
     void runCommandWithSync({ type: 'PRODUCT_CREATE', product }, 'Produto Adicionado!');
   };
@@ -1931,6 +1963,7 @@ const App: React.FC = () => {
             onCloseDay={handleCloseDay}
             onRegisterCashPurchase={handleRegisterCashPurchase}
             onRegisterCashExpense={handleRegisterCashExpense}
+            onRevertCashExpense={handleRevertCashExpense}
           />
         )}
 

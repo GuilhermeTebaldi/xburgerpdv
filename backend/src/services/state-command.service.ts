@@ -1003,6 +1003,47 @@ const applyCashExpense = (
   pushIngredientMovement(state, entry);
 };
 
+const applyCashExpenseRevert = (
+  state: FrontAppState,
+  command: Extract<StateCommandInput, { type: 'CASH_EXPENSE_REVERT' }>
+) => {
+  const targetEntry = state.stockEntries.find((entry) => entry.id === command.entryId);
+  if (!targetEntry) {
+    throw new HttpError(404, 'Retirada do caixa não encontrada para reversão.');
+  }
+
+  const impact = Number(targetEntry.cashRegisterImpact);
+  if (!Number.isFinite(impact) || impact >= 0) {
+    throw new HttpError(409, 'Movimentação informada não é uma retirada paga com caixa.');
+  }
+
+  if (targetEntry.ingredientId !== 'cash-expense' && targetEntry.quantity > 0) {
+    const ingredient = state.ingredients.find((entry) => entry.id === targetEntry.ingredientId);
+    if (ingredient) {
+      if (ingredient.currentStock + Number.EPSILON < targetEntry.quantity) {
+        throw new HttpError(409, 'Estoque insuficiente para reverter esta compra do caixa.', {
+          ingredientId: ingredient.id,
+          available: ingredient.currentStock,
+          required: targetEntry.quantity,
+        });
+      }
+
+      state.ingredients = state.ingredients.map((entry) =>
+        entry.id === ingredient.id
+          ? { ...entry, currentStock: Math.max(0, entry.currentStock - targetEntry.quantity) }
+          : entry
+      );
+    }
+  }
+
+  const refundAmount = roundMoney(Math.abs(impact));
+  const availableCash = toNonNegativeMoney(state.cashRegisterAmount);
+  state.cashRegisterAmount = roundMoney(availableCash + refundAmount);
+
+  state.stockEntries = state.stockEntries.filter((entry) => entry.id !== command.entryId);
+  state.globalStockEntries = state.globalStockEntries.filter((entry) => entry.id !== command.entryId);
+};
+
 const applyCleaningStockMove = (
   state: FrontAppState,
   command: Extract<StateCommandInput, { type: 'CLEANING_STOCK_MOVE' }>
@@ -1139,6 +1180,9 @@ export const applyStateCommand = (
       return state;
     case 'CASH_EXPENSE':
       applyCashExpense(state, command);
+      return state;
+    case 'CASH_EXPENSE_REVERT':
+      applyCashExpenseRevert(state, command);
       return state;
     case 'INGREDIENT_CREATE':
       ensureUniqueId(state, 'ingredient', command.ingredient.id);

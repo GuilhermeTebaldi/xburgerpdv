@@ -1128,6 +1128,94 @@ test('cash expense blocks when cash register is insufficient', () => {
   );
 });
 
+test('cash expense revert restores cash and removes withdrawal entry', () => {
+  let state = createBaseState();
+  state = applyStateCommand(state, {
+    type: 'SET_CASH_REGISTER',
+    amount: 30,
+  });
+  state = applyStateCommand(state, {
+    type: 'CASH_EXPENSE',
+    amount: 7.5,
+    purchaseDescription: 'Compra de gás',
+  });
+
+  const entryId = state.stockEntries[0]?.id;
+  assert.ok(entryId);
+
+  const next = applyStateCommand(state, {
+    type: 'CASH_EXPENSE_REVERT',
+    entryId,
+  });
+
+  assert.equal(next.cashRegisterAmount, 30);
+  assert.equal(next.stockEntries.length, 0);
+  assert.equal(next.globalStockEntries.length, 0);
+});
+
+test('cash expense revert also rolls back ingredient stock purchase paid with cash register', () => {
+  let state = createBaseState();
+  state = applyStateCommand(state, {
+    type: 'SET_CASH_REGISTER',
+    amount: 50,
+  });
+  state = applyStateCommand(state, {
+    type: 'INGREDIENT_STOCK_MOVE',
+    ingredientId: 'i-bread',
+    amount: 2,
+    useCashRegister: true,
+    purchaseDescription: 'Compra de pão',
+  });
+
+  const entryId = state.stockEntries[0]?.id;
+  assert.ok(entryId);
+
+  const next = applyStateCommand(state, {
+    type: 'CASH_EXPENSE_REVERT',
+    entryId,
+  });
+
+  assert.equal(next.cashRegisterAmount, 50);
+  assert.equal(next.ingredients.find((entry) => entry.id === 'i-bread')?.currentStock, 50);
+  assert.equal(next.stockEntries.length, 0);
+});
+
+test('cash expense revert blocks when ingredient stock is no longer available to rollback', () => {
+  let state = createBaseState();
+  state = applyStateCommand(state, {
+    type: 'SET_CASH_REGISTER',
+    amount: 50,
+  });
+  state = applyStateCommand(state, {
+    type: 'INGREDIENT_STOCK_MOVE',
+    ingredientId: 'i-bread',
+    amount: 2,
+    useCashRegister: true,
+    purchaseDescription: 'Compra de pão',
+  });
+  state = applyStateCommand(state, {
+    type: 'INGREDIENT_STOCK_MOVE',
+    ingredientId: 'i-bread',
+    amount: -52,
+  });
+
+  const entryId = state.stockEntries.find((entry) => Number(entry.cashRegisterImpact) < 0)?.id;
+  assert.ok(entryId);
+
+  assert.throws(
+    () =>
+      applyStateCommand(state, {
+        type: 'CASH_EXPENSE_REVERT',
+        entryId,
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof HttpError);
+      assert.equal(error.statusCode, 409);
+      return true;
+    }
+  );
+});
+
 test('close day snapshots report in history and resets session sales state', () => {
   let state = createBaseState();
   state = applyStateCommand(state, {

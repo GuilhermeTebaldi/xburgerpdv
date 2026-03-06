@@ -103,6 +103,10 @@ export type StateCommand =
       amount: number;
       purchaseDescription: string;
     })
+  | (BaseCommand & {
+      type: 'CASH_EXPENSE_REVERT';
+      entryId: string;
+    })
   | (BaseCommand & { type: 'INGREDIENT_CREATE'; ingredient: Ingredient })
   | (BaseCommand & { type: 'INGREDIENT_UPDATE'; ingredient: Ingredient })
   | (BaseCommand & { type: 'INGREDIENT_DELETE'; ingredientId: string })

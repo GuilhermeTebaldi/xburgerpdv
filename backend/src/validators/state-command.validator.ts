@@ -140,6 +140,11 @@ const cashExpenseCommandSchema = baseCommandSchema.extend({
   purchaseDescription: z.string().trim().min(1).max(200),
 });
 
+const cashExpenseRevertCommandSchema = baseCommandSchema.extend({
+  type: z.literal('CASH_EXPENSE_REVERT'),
+  entryId: idSchema,
+});
+
 const ingredientCreateCommandSchema = baseCommandSchema.extend({
   type: z.literal('INGREDIENT_CREATE'),
   ingredient: ingredientSchema,
@@ -235,6 +240,7 @@ export const stateCommandSchema = z.discriminatedUnion('type', [
   saleUndoByIdCommandSchema,
   ingredientStockMoveCommandSchema,
   cashExpenseCommandSchema,
+  cashExpenseRevertCommandSchema,
   ingredientCreateCommandSchema,
   ingredientUpdateCommandSchema,
   ingredientDeleteCommandSchema,

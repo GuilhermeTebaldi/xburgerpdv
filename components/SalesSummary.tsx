@@ -22,6 +22,7 @@ interface SalesSummaryProps {
     purchaseAmount: number,
     purchaseDescription: string
   ) => Promise<boolean> | boolean;
+  onRevertCashExpense?: (entryId: string) => Promise<boolean> | boolean;
 }
 
 type SummaryTab = 'REPORT' | 'CASH';
@@ -127,6 +128,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
   onCloseDay,
   onRegisterCashPurchase,
   onRegisterCashExpense,
+  onRevertCashExpense,
 }) => {
   const [selectedSaleId, setSelectedSaleId] = useState<string | null>(null);
   const [popoverStyle, setPopoverStyle] = useState<React.CSSProperties>({});
@@ -138,6 +140,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
   const [cashPurchaseIngredientId, setCashPurchaseIngredientId] = useState('');
   const [cashPurchaseAmountInput, setCashPurchaseAmountInput] = useState('');
   const [cashPurchaseDescription, setCashPurchaseDescription] = useState('');
+  const [revertingEntryId, setRevertingEntryId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -552,6 +555,21 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
     onRegisterCashPurchase,
   ]);
 
+  const revertCashExpenseEntry = useCallback(
+    async (entryId: string) => {
+      if (!onRevertCashExpense) return;
+      if (revertingEntryId) return;
+
+      setRevertingEntryId(entryId);
+      try {
+        await onRevertCashExpense(entryId);
+      } finally {
+        setRevertingEntryId(null);
+      }
+    },
+    [onRevertCashExpense, revertingEntryId]
+  );
+
   const handleRestart = async () => {
     if (isClosing) return;
     if (!confirm('Deseja realmente encerrar o dia? O caixa será zerado para uma nova sessão.')) return;
@@ -889,9 +907,22 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
                         {toDate(entry.timestamp).toLocaleString('pt-BR')}
                       </p>
                     </div>
-                    <p className="text-xs font-black text-amber-700">
-                      -{formatCurrency(Math.abs(Number(entry.cashRegisterImpact) || 0))}
-                    </p>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <p className="text-xs font-black text-amber-700">
+                        -{formatCurrency(Math.abs(Number(entry.cashRegisterImpact) || 0))}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void revertCashExpenseEntry(entry.id);
+                        }}
+                        disabled={revertingEntryId !== null}
+                        className="qb-btn-touch bg-emerald-100 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Reverter retirada e devolver valor ao caixa"
+                      >
+                        {revertingEntryId === entry.id ? 'Revertendo...' : 'Reverter'}
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
