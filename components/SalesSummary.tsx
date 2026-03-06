@@ -55,6 +55,58 @@ const toDate = (value: Date | string): Date => {
 const getDayKey = (value: Date | string): string => toDate(value).toLocaleDateString('pt-BR');
 
 const roundMoney = (value: number): number => Number(value.toFixed(2));
+const LOCAL_DAILY_HISTORY_KEY = 'qb_daily_sales_history_local_v1';
+
+const normalizeDailyHistoryEntry = (value: unknown): DailySalesHistoryEntry | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const closedAtRaw = source.closedAt;
+  const closedAt =
+    closedAtRaw instanceof Date || typeof closedAtRaw === 'string'
+      ? closedAtRaw
+      : new Date().toISOString();
+
+  const saleCountRaw = Number(source.saleCount);
+  const saleCount = Number.isFinite(saleCountRaw) && saleCountRaw >= 0 ? Math.floor(saleCountRaw) : 0;
+
+  return {
+    id:
+      typeof source.id === 'string' && source.id.trim()
+        ? source.id
+        : `day-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    closedAt,
+    openingCash: roundMoney(Math.max(0, Number(source.openingCash) || 0)),
+    totalRevenue: roundMoney(Math.max(0, Number(source.totalRevenue) || 0)),
+    totalPurchases: roundMoney(Math.max(0, Number(source.totalPurchases) || 0)),
+    totalProfit: roundMoney(Number(source.totalProfit) || 0),
+    saleCount,
+    cashExpenses: roundMoney(Math.max(0, Number(source.cashExpenses) || 0)),
+  };
+};
+
+const readLocalDailySalesHistory = (): DailySalesHistoryEntry[] => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(LOCAL_DAILY_HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((entry) => normalizeDailyHistoryEntry(entry))
+      .filter((entry): entry is DailySalesHistoryEntry => entry !== null);
+  } catch {
+    return [];
+  }
+};
+
+const getHistoryEntryFingerprint = (entry: DailySalesHistoryEntry): string => {
+  const closedAtIso = toDate(entry.closedAt).toISOString();
+  const totalRevenue = roundMoney(Number(entry.totalRevenue) || 0);
+  const totalPurchases = roundMoney(Number(entry.totalPurchases) || 0);
+  const saleCount = Math.max(0, Math.floor(Number(entry.saleCount) || 0));
+  const cashExpenses = roundMoney(Math.max(0, Number(entry.cashExpenses) || 0));
+  return `${closedAtIso}|${totalRevenue}|${totalPurchases}|${saleCount}|${cashExpenses}`;
+};
 
 const escapeHtml = (value: string): string =>
   value
@@ -196,8 +248,40 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
     return map;
   }, [archivedSales]);
 
+  const mergedDailySalesHistory = useMemo<DailySalesHistoryEntry[]>(() => {
+    const normalizedPropEntries = dailySalesHistory
+      .map((entry) => normalizeDailyHistoryEntry(entry))
+      .filter((entry): entry is DailySalesHistoryEntry => entry !== null);
+
+    const localEntries = readLocalDailySalesHistory();
+    if (localEntries.length === 0) {
+      return normalizedPropEntries.sort(
+        (a, b) => toDate(b.closedAt).getTime() - toDate(a.closedAt).getTime()
+      );
+    }
+
+    const merged = [...normalizedPropEntries, ...localEntries].sort(
+      (a, b) => toDate(b.closedAt).getTime() - toDate(a.closedAt).getTime()
+    );
+
+    const seenIds = new Set<string>();
+    const seenFingerprints = new Set<string>();
+    const deduped: DailySalesHistoryEntry[] = [];
+
+    merged.forEach((entry) => {
+      if (seenIds.has(entry.id)) return;
+      const fingerprint = getHistoryEntryFingerprint(entry);
+      if (seenFingerprints.has(fingerprint)) return;
+      seenIds.add(entry.id);
+      seenFingerprints.add(fingerprint);
+      deduped.push(entry);
+    });
+
+    return deduped;
+  }, [dailySalesHistory]);
+
   const orderedHistory = useMemo<HistoryDrawerEntry[]>(() => {
-    const explicitEntries: HistoryDrawerEntry[] = dailySalesHistory.map((entry) => {
+    const explicitEntries: HistoryDrawerEntry[] = mergedDailySalesHistory.map((entry) => {
       const dayKey = getDayKey(entry.closedAt);
       return {
         entry,
@@ -252,7 +336,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
     return [...explicitEntries, ...inferredEntries].sort(
       (a, b) => toDate(b.entry.closedAt).getTime() - toDate(a.entry.closedAt).getTime()
     );
-  }, [archiveSalesByDay, dailySalesHistory]);
+  }, [archiveSalesByDay, mergedDailySalesHistory]);
 
   const printReport = useCallback(
     (report: DailySalesHistoryEntry, reportSales: Sale[] = []) => {
