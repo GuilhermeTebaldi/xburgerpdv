@@ -18,6 +18,7 @@ interface ReceiptLine {
 
 interface ReceiptViewModel {
   restaurantName: string;
+  orderNumber: number | null;
   orderId: string;
   paidAt: Date | null;
   lines: ReceiptLine[];
@@ -84,6 +85,11 @@ const toDate = (value: unknown): Date | null => {
   return Number.isFinite(parsed.getTime()) ? parsed : null;
 };
 
+const isSameCalendarDay = (a: Date, b: Date): boolean =>
+  a.getFullYear() === b.getFullYear() &&
+  a.getMonth() === b.getMonth() &&
+  a.getDate() === b.getDate();
+
 const formatPaymentMethod = (method: SalePaymentMethod | null | undefined): string => {
   if (!method) return 'NAO INFORMADO';
   if (method === 'DEBITO') return 'DEBITO';
@@ -101,6 +107,35 @@ const collectSales = (state: AppState): Sale[] => {
     }
   });
   return [...grouped.values()];
+};
+
+const getOrderGroupKey = (sale: Sale): string =>
+  sale.saleDraftId ? `draft:${sale.saleDraftId}` : `sale:${sale.id}`;
+
+const buildOrderNumberByGroup = (allSales: Sale[]): Map<string, number> => {
+  const firstTimestampByGroup = new Map<string, number>();
+
+  allSales.forEach((sale) => {
+    const key = getOrderGroupKey(sale);
+    const saleDate = toDate(sale.timestamp);
+    const currentTs = saleDate ? saleDate.getTime() : Number.POSITIVE_INFINITY;
+    const existingTs = firstTimestampByGroup.get(key);
+    if (existingTs === undefined || currentTs < existingTs) {
+      firstTimestampByGroup.set(key, currentTs);
+    }
+  });
+
+  const orderedGroups = [...firstTimestampByGroup.entries()].sort((a, b) => {
+    const tsDiff = a[1] - b[1];
+    if (tsDiff !== 0) return tsDiff;
+    return a[0].localeCompare(b[0]);
+  });
+
+  const numberByGroup = new Map<string, number>();
+  orderedGroups.forEach(([groupKey], index) => {
+    numberByGroup.set(groupKey, index + 1);
+  });
+  return numberByGroup;
 };
 
 const resolveReceiptSales = (
@@ -194,6 +229,22 @@ const buildReceiptViewModel = (state: AppState, receiptId: string): ReceiptViewM
   if (!resolved) return null;
 
   const { orderId, targetSale, sales } = resolved;
+  const orderGroupKey = getOrderGroupKey(targetSale);
+  const sessionOrderNumberByGroup = buildOrderNumberByGroup(state.sales);
+  let orderNumber = sessionOrderNumberByGroup.get(orderGroupKey) ?? null;
+
+  if (orderNumber === null) {
+    const targetSaleDate = toDate(targetSale.timestamp);
+    if (targetSaleDate) {
+      const sameDaySales = allSales.filter((sale) => {
+        const saleDate = toDate(sale.timestamp);
+        return saleDate ? isSameCalendarDay(saleDate, targetSaleDate) : false;
+      });
+      const dayOrderNumberByGroup = buildOrderNumberByGroup(sameDaySales);
+      orderNumber = dayOrderNumberByGroup.get(orderGroupKey) ?? null;
+    }
+  }
+
   const relatedDraft = targetSale.saleDraftId
     ? state.saleDrafts.find((draft) => draft.id === targetSale.saleDraftId)
     : undefined;
@@ -213,6 +264,7 @@ const buildReceiptViewModel = (state: AppState, receiptId: string): ReceiptViewM
 
   return {
     restaurantName: getRestaurantName(),
+    orderNumber,
     orderId,
     paidAt,
     lines,
@@ -424,6 +476,10 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
 
             <div className="receipt-row">
               <span className="receipt-label receipt-strong">Pedido</span>
+              <span className="receipt-value">{receipt.orderNumber ? String(receipt.orderNumber) : '--'}</span>
+            </div>
+            <div className="receipt-row">
+              <span className="receipt-label">Código</span>
               <span className="receipt-value receipt-value-break">{receipt.orderId}</span>
             </div>
             <div className="receipt-row">
