@@ -24,6 +24,8 @@ interface ReceiptViewModel {
   lines: ReceiptLine[];
   total: number;
   paymentMethodLabel: string;
+  paymentCashReceived: number | null;
+  paymentChange: number | null;
   observations: string[];
 }
 
@@ -41,6 +43,11 @@ const roundMoney = (value: number): number => Number(value.toFixed(2));
 
 const formatMoney = (value: number): string =>
   moneyFormatter.format(Number.isFinite(value) ? value : 0);
+
+const normalizeMoneyValue = (value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return roundMoney(value);
+};
 
 const formatDateTime = (value: Date | null): string => {
   if (!value) return '--';
@@ -259,8 +266,10 @@ const buildReceiptViewModel = (state: AppState, receiptId: string): ReceiptViewM
     toDate(targetSale.payment?.confirmedAt) ||
     toDate(targetSale.timestamp);
 
-  const paymentMethod =
-    relatedDraft?.payment?.method ?? targetSale.payment?.method ?? null;
+  const payment = relatedDraft?.payment ?? targetSale.payment;
+  const paymentMethod = payment?.method ?? null;
+  const paymentCashReceived = normalizeMoneyValue(payment?.cashReceived);
+  const paymentChange = normalizeMoneyValue(payment?.change);
 
   return {
     restaurantName: getRestaurantName(),
@@ -270,6 +279,8 @@ const buildReceiptViewModel = (state: AppState, receiptId: string): ReceiptViewM
     lines,
     total,
     paymentMethodLabel: formatPaymentMethod(paymentMethod),
+    paymentCashReceived,
+    paymentChange,
     observations,
   };
 };
@@ -494,6 +505,18 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
               <span className="receipt-label">Pagamento</span>
               <span className="receipt-value">{receipt.paymentMethodLabel}</span>
             </div>
+            {receipt.paymentMethodLabel === 'DINHEIRO' && receipt.paymentCashReceived !== null && (
+              <div className="receipt-row">
+                <span className="receipt-label">Recebido</span>
+                <span className="receipt-value">{formatMoney(receipt.paymentCashReceived)}</span>
+              </div>
+            )}
+            {receipt.paymentMethodLabel === 'DINHEIRO' && receipt.paymentChange !== null && (
+              <div className="receipt-row">
+                <span className="receipt-label">{receipt.paymentChange >= 0 ? 'Troco' : 'Faltam'}</span>
+                <span className="receipt-value">{formatMoney(Math.abs(receipt.paymentChange))}</span>
+              </div>
+            )}
 
             <div className="receipt-divider" />
 
