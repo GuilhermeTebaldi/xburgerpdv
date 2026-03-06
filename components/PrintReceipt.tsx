@@ -27,6 +27,9 @@ interface ReceiptViewModel {
 }
 
 const DEFAULT_RESTAURANT_NAME = 'LANCHESDOBEN';
+const DEFAULT_RECEIPT_PAPER_WIDTH_MM = 58;
+const MIN_RECEIPT_PAPER_WIDTH_MM = 48;
+const MAX_RECEIPT_PAPER_WIDTH_MM = 80;
 
 const moneyFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -40,7 +43,12 @@ const formatMoney = (value: number): string =>
 
 const formatDateTime = (value: Date | null): string => {
   if (!value) return '--';
-  return value.toLocaleString('pt-BR');
+  const datePart = value.toLocaleDateString('pt-BR');
+  const timePart = value.toLocaleTimeString('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return `${datePart} ${timePart}`;
 };
 
 const normalizeText = (value: unknown): string | null => {
@@ -53,6 +61,18 @@ const getRestaurantName = (): string => {
   if (typeof window === 'undefined') return DEFAULT_RESTAURANT_NAME;
   const local = normalizeText(window.localStorage.getItem('qb_restaurant_name'));
   return local || DEFAULT_RESTAURANT_NAME;
+};
+
+const clampPaperWidthMm = (value: number): number =>
+  Math.min(MAX_RECEIPT_PAPER_WIDTH_MM, Math.max(MIN_RECEIPT_PAPER_WIDTH_MM, Math.round(value)));
+
+const getReceiptPaperWidthMm = (): number => {
+  if (typeof window === 'undefined') return DEFAULT_RECEIPT_PAPER_WIDTH_MM;
+
+  const raw = window.localStorage.getItem('qb_receipt_paper_width_mm');
+  const parsed = raw ? Number(raw) : NaN;
+  if (!Number.isFinite(parsed)) return DEFAULT_RECEIPT_PAPER_WIDTH_MM;
+  return clampPaperWidthMm(parsed);
 };
 
 const toDate = (value: unknown): Date | null => {
@@ -207,6 +227,7 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const hasTriggeredPrintRef = useRef(false);
+  const paperWidthMm = useMemo(() => getReceiptPaperWidthMm(), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -274,7 +295,7 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
   return (
     <div className="receipt-shell">
       <style>{`
-        @page { size: 80mm auto; margin: 0; }
+        @page { size: ${paperWidthMm}mm auto; margin: 0; }
         html, body {
           margin: 0;
           padding: 0;
@@ -290,13 +311,13 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
           background: #fff;
         }
         .receipt-paper {
-          width: 80mm;
-          max-width: 80mm;
-          padding: 4mm 3mm;
-          font-size: 11px;
-          line-height: 1.3;
+          width: ${paperWidthMm}mm;
+          max-width: ${paperWidthMm}mm;
+          padding: 3mm 2mm;
+          font-size: 10px;
+          line-height: 1.28;
           font-weight: 700;
-          letter-spacing: 0.1px;
+          letter-spacing: 0;
         }
         .receipt-center { text-align: center; }
         .receipt-strong { font-weight: 900; }
@@ -305,14 +326,27 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
           margin: 6px 0;
         }
         .receipt-row {
-          display: flex;
-          justify-content: space-between;
-          gap: 8px;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          align-items: start;
+          column-gap: 6px;
+        }
+        .receipt-label {
+          min-width: 0;
+          word-break: break-word;
+        }
+        .receipt-value {
+          text-align: right;
+          white-space: nowrap;
+        }
+        .receipt-value-break {
+          white-space: normal;
+          word-break: break-all;
         }
         .receipt-item .receipt-row:first-child {
           font-weight: 800;
         }
-        .receipt-row span:last-child {
+        .receipt-row .receipt-value {
           font-weight: 800;
         }
         .receipt-item + .receipt-item {
@@ -352,21 +386,19 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
           .receipt-shell { min-height: auto; }
           .receipt-paper {
             margin: 0;
-            padding: 3mm 2.5mm;
-            font-size: 12px;
+            padding: 2.5mm 2mm;
+            font-size: 10px;
             line-height: 1.25;
-            font-weight: 900;
+            font-weight: 700;
           }
           .receipt-paper * {
             color: #000 !important;
-            font-weight: 900;
-            -webkit-text-stroke: 0.15px #000;
-            text-shadow: 0 0 0 #000;
-            text-rendering: geometricPrecision;
+            text-shadow: none;
+            -webkit-text-stroke: 0;
+            text-rendering: optimizeLegibility;
           }
           .receipt-paper .receipt-strong {
             font-weight: 900 !important;
-            -webkit-text-stroke: 0.2px #000;
           }
         }
       `}</style>
@@ -391,20 +423,20 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
             <div className="receipt-divider" />
 
             <div className="receipt-row">
-              <span className="receipt-strong">Pedido</span>
-              <span>{receipt.orderId}</span>
+              <span className="receipt-label receipt-strong">Pedido</span>
+              <span className="receipt-value receipt-value-break">{receipt.orderId}</span>
             </div>
             <div className="receipt-row">
-              <span>Pago em</span>
-              <span>{formatDateTime(receipt.paidAt)}</span>
+              <span className="receipt-label">Pago em</span>
+              <span className="receipt-value">{formatDateTime(receipt.paidAt)}</span>
             </div>
             <div className="receipt-row">
-              <span>Impresso em</span>
-              <span>{formatDateTime(printedAt)}</span>
+              <span className="receipt-label">Impresso em</span>
+              <span className="receipt-value">{formatDateTime(printedAt)}</span>
             </div>
             <div className="receipt-row">
-              <span>Pagamento</span>
-              <span>{receipt.paymentMethodLabel}</span>
+              <span className="receipt-label">Pagamento</span>
+              <span className="receipt-value">{receipt.paymentMethodLabel}</span>
             </div>
 
             <div className="receipt-divider" />
@@ -412,14 +444,14 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
             {receipt.lines.map((line) => (
               <div key={line.id} className="receipt-item">
                 <div className="receipt-row">
-                  <span>
+                  <span className="receipt-label">
                     {line.qty}x {line.name}
                   </span>
-                  <span>{formatMoney(line.subtotal)}</span>
+                  <span className="receipt-value">{formatMoney(line.subtotal)}</span>
                 </div>
                 <div className="receipt-row">
-                  <span>Valor un.</span>
-                  <span>{formatMoney(line.unitPrice)}</span>
+                  <span className="receipt-label">Valor un.</span>
+                  <span className="receipt-value">{formatMoney(line.unitPrice)}</span>
                 </div>
                 {line.note && <div className="receipt-note">Obs: {line.note}</div>}
               </div>
@@ -440,8 +472,8 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
             <div className="receipt-divider" />
 
             <div className="receipt-row receipt-strong">
-              <span>TOTAL</span>
-              <span>{formatMoney(receipt.total)}</span>
+              <span className="receipt-label">TOTAL</span>
+              <span className="receipt-value">{formatMoney(receipt.total)}</span>
             </div>
 
             <div className="receipt-divider" />

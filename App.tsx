@@ -2267,7 +2267,9 @@ const App: React.FC = () => {
           <div className="w-full max-w-3xl bg-white rounded-[36px] border-2 border-slate-100 shadow-2xl overflow-hidden">
             <div className="p-5 bg-slate-900 text-white flex items-center justify-between">
               <div>
-                <h3 className="text-xl font-black uppercase tracking-tight">Histórico para Desfazer</h3>
+                <h3 className="text-xl font-black uppercase tracking-tight">
+                  {`Histórico de Vendas ${new Date().toLocaleDateString('pt-BR')}`}
+                </h3>
                 <p className="text-[10px] uppercase tracking-widest text-slate-300">
                   Apenas vendas do dia atual (até Fechar Dia / Reiniciar)
                 </p>
