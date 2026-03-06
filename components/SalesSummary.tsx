@@ -533,7 +533,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
             onClick={() => setHistoryVisible((current) => !current)}
             className="qb-btn-touch bg-white text-slate-800 px-5 py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-sm border border-slate-200 hover:border-red-400 hover:text-red-600 transition-all active:scale-95"
           >
-            {historyVisible ? 'Fechar Histórico' : 'Histórico'}
+            {historyVisible ? 'Fechar Histórico' : 'Histórico de Fechamentos'}
           </button>
           <button
             onClick={handleRestart}
