@@ -11,6 +11,7 @@ import {
   SalePaymentMethod,
   StockEntry,
 } from '../types';
+import { APP_ORIGINS, buildAppChannelSummary } from '../utils/appChannelSummary';
 import { formatIngredientStockQuantity, formatStockQuantityByUnit } from '../utils/recipe';
 import AdminSalesAnalyticsTab from './AdminSalesAnalyticsTab';
 
@@ -56,105 +57,6 @@ const saleOriginBadgeClasses: Record<SaleOrigin, string> = {
   LOCAL: 'bg-slate-100 text-slate-700 border-slate-200',
   IFOOD: 'bg-red-100 text-red-700 border-red-200',
   APP99: 'bg-amber-100 text-amber-700 border-amber-200',
-};
-
-type AppOrigin = 'IFOOD' | 'APP99';
-
-interface AppChannelSummary {
-  totalOrders: number;
-  totalRevenue: number;
-  totalReference: number;
-  totalDelta: number;
-  byOrigin: Record<
-    AppOrigin,
-    {
-      orders: number;
-      revenue: number;
-      reference: number;
-      delta: number;
-    }
-  >;
-}
-
-const APP_ORIGINS: AppOrigin[] = ['IFOOD', 'APP99'];
-
-const isAppOrigin = (origin: SaleOrigin | undefined): origin is AppOrigin =>
-  origin === 'IFOOD' || origin === 'APP99';
-
-const getSaleGroupKey = (sale: Sale): string =>
-  sale.saleDraftId ? `draft:${sale.saleDraftId}` : `sale:${sale.id}`;
-
-const buildEmptyAppChannelSummary = (): AppChannelSummary => ({
-  totalOrders: 0,
-  totalRevenue: 0,
-  totalReference: 0,
-  totalDelta: 0,
-  byOrigin: {
-    IFOOD: { orders: 0, revenue: 0, reference: 0, delta: 0 },
-    APP99: { orders: 0, revenue: 0, reference: 0, delta: 0 },
-  },
-});
-
-const buildAppChannelSummary = (entries: Sale[]): AppChannelSummary => {
-  const grouped = new Map<
-    string,
-    {
-      origin: AppOrigin;
-      fallbackRevenue: number;
-      appRevenue: number | null;
-      reference: number;
-    }
-  >();
-
-  entries.forEach((sale) => {
-    const origin = sale.saleOrigin || 'LOCAL';
-    if (!isAppOrigin(origin)) return;
-
-    const key = getSaleGroupKey(sale);
-    const current = grouped.get(key) || {
-      origin,
-      fallbackRevenue: 0,
-      appRevenue: null,
-      reference: 0,
-    };
-
-    current.origin = origin;
-    current.fallbackRevenue += Number(sale.total) || 0;
-    current.reference +=
-      Number.isFinite(Number(sale.basePrice)) && Number(sale.basePrice) > 0
-        ? Number(sale.basePrice)
-        : Number(sale.total) || 0;
-
-    const appTotal = Number(sale.appOrderTotal);
-    if (Number.isFinite(appTotal) && appTotal > 0) {
-      current.appRevenue = appTotal;
-    }
-
-    grouped.set(key, current);
-  });
-
-  if (grouped.size === 0) return buildEmptyAppChannelSummary();
-
-  const summary = buildEmptyAppChannelSummary();
-  summary.totalOrders = grouped.size;
-
-  grouped.forEach((group) => {
-    const revenue = roundMoney(group.appRevenue ?? group.fallbackRevenue);
-    const reference = roundMoney(group.reference);
-    const delta = roundMoney(revenue - reference);
-    const originSummary = summary.byOrigin[group.origin];
-
-    originSummary.orders += 1;
-    originSummary.revenue = roundMoney(originSummary.revenue + revenue);
-    originSummary.reference = roundMoney(originSummary.reference + reference);
-    originSummary.delta = roundMoney(originSummary.delta + delta);
-
-    summary.totalRevenue = roundMoney(summary.totalRevenue + revenue);
-    summary.totalReference = roundMoney(summary.totalReference + reference);
-    summary.totalDelta = roundMoney(summary.totalDelta + delta);
-  });
-
-  return summary;
 };
 
 const renderPaymentMethodBadge = (sale: Sale) => {
@@ -927,6 +829,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 const monthRevenue: number = monthSales.reduce((s: number, v: Sale) => s + v.total, 0);
                 const monthCost: number = monthSales.reduce((s: number, v: Sale) => s + (v.totalCost || 0), 0);
                 const monthProfit: number = monthRevenue - monthCost;
+                const monthAppSummary = buildAppChannelSummary(monthSales);
                 return (
                 <div key={month} className="relative group">
                   <button 
@@ -936,6 +839,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="1.5" className="group-hover:stroke-blue-500 transition-colors"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
                     <span className="font-black text-[10px] uppercase text-slate-600 text-center group-hover:text-slate-900 mt-2 mb-2">{month}</span>
                     <span className="font-black text-sm text-green-600">R$ {monthProfit.toFixed(2)}</span>
+                    <span className="text-[9px] font-black uppercase tracking-widest text-amber-700 mt-2">
+                      Apps: {monthAppSummary.totalOrders} • R$ {monthAppSummary.totalRevenue.toFixed(2)}
+                    </span>
                   </button>
                   <button 
                     onClick={(e) => handleDeleteMonth(e, month)}
@@ -958,6 +864,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   const dayRevenue: number = daySales.reduce((s: number, v: Sale) => s + v.total, 0);
                   const dayCost: number = daySales.reduce((s: number, v: Sale) => s + (v.totalCost || 0), 0);
                   const dayProfit: number = dayRevenue - dayCost;
+                  const dayAppSummary = buildAppChannelSummary(daySales);
                   return (
                   <div key={day} className="relative group">
                     <button 
@@ -967,6 +874,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" className="mb-2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
                       <span className="font-black text-xs text-slate-800 mb-2">{day}</span>
                       <span className="font-black text-sm text-green-600">R$ {dayProfit.toFixed(2)}</span>
+                      <span className="text-[9px] font-black uppercase tracking-widest text-amber-700 mt-2">
+                        Apps: {dayAppSummary.totalOrders} • R$ {dayAppSummary.totalRevenue.toFixed(2)}
+                      </span>
                     </button>
                     <button 
                       onClick={(e) => handleDeleteDay(e, day)}
@@ -1205,6 +1115,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
             const filteredMonths = Object.keys(vendaGroups)
               .filter(month => month.endsWith(selectedYear))
               .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+            const filteredYearSales = filteredMonths.flatMap((month) =>
+              Object.values(vendaGroups[month]).flat()
+            ) as Sale[];
+            const selectedYearAppSummary = buildAppChannelSummary(filteredYearSales);
             
             return (
               <div className="space-y-6">
@@ -1225,24 +1139,71 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     ))}
                   </div>
                 )}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-white rounded-2xl border border-slate-200 p-4">
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Pedidos App</p>
+                    <p className="text-2xl font-black text-slate-900 mt-1">{selectedYearAppSummary.totalOrders}</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-2">
+                      Ano {selectedYear}
+                    </p>
+                  </div>
+                  <div className="bg-amber-50 rounded-2xl border border-amber-100 p-4">
+                    <p className="text-[10px] font-black text-amber-700 uppercase tracking-widest">
+                      Faturamento Apps
+                    </p>
+                    <p className="text-2xl font-black text-amber-800 mt-1">
+                      R$ {selectedYearAppSummary.totalRevenue.toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="bg-blue-50 rounded-2xl border border-blue-100 p-4">
+                    <p className="text-[10px] font-black text-blue-700 uppercase tracking-widest">Diferença Apps</p>
+                    <p
+                      className={`text-2xl font-black mt-1 ${
+                        selectedYearAppSummary.totalDelta >= 0 ? 'text-emerald-700' : 'text-red-700'
+                      }`}
+                    >
+                      R$ {selectedYearAppSummary.totalDelta.toFixed(2)}
+                    </p>
+                  </div>
+                </div>
                 {filteredMonths.map(month => (
                   <div key={month} className="bg-white rounded-[32px] overflow-hidden border border-slate-200 shadow-sm">
+                    {(() => {
+                      const monthSales = Object.values(vendaGroups[month]).flat() as Sale[];
+                      const monthAppSummary = buildAppChannelSummary(monthSales);
+                      return (
+                        <>
                     <button 
                       className="qb-btn-touch w-full p-6 flex items-center justify-between hover:bg-slate-50 transition-colors"
                       onClick={() => setExpandedMonths({...expandedMonths, [month]: !expandedMonths[month]})}
                     >
-                      <span className="font-black text-lg text-slate-800 uppercase">{month}</span>
+                      <div className="text-left">
+                        <span className="font-black text-lg text-slate-800 uppercase block">{month}</span>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+                          Apps: {monthAppSummary.totalOrders} pedidos • R$ {monthAppSummary.totalRevenue.toFixed(2)}
+                        </span>
+                      </div>
                       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className={`transition-transform ${expandedMonths[month] ? 'rotate-180' : ''}`}><polyline points="6 9 12 15 18 9"/></svg>
                     </button>
                     {expandedMonths[month] && (
                       <div className="px-6 pb-6 border-t border-slate-100 space-y-4">
                         {Object.keys(vendaGroups[month]).reverse().map(day => (
                           <div key={day} className="bg-slate-50 rounded-2xl overflow-hidden border border-slate-200">
+                            {(() => {
+                              const daySales = vendaGroups[month][day] as Sale[];
+                              const dayAppSummary = buildAppChannelSummary(daySales);
+                              return (
+                                <>
                             <button 
                               className="qb-btn-touch w-full p-4 flex items-center justify-between hover:bg-slate-100 transition-colors"
                               onClick={() => setExpandedDays({...expandedDays, [`vendas_${day}`]: !expandedDays[`vendas_${day}`]})}
                             >
-                              <span className="font-black text-slate-700 text-sm uppercase">{day}</span>
+                              <div className="text-left">
+                                <span className="font-black text-slate-700 text-sm uppercase block">{day}</span>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+                                  Apps: {dayAppSummary.totalOrders} pedidos • R$ {dayAppSummary.totalRevenue.toFixed(2)}
+                                </span>
+                              </div>
                               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className={`transition-transform ${expandedDays[`vendas_${day}`] ? 'rotate-180' : ''}`}><polyline points="6 9 12 15 18 9"/></svg>
                             </button>
                             {expandedDays[`vendas_${day}`] && (
@@ -1291,10 +1252,16 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                 </table>
                               </div>
                             )}
+                                </>
+                              );
+                            })()}
                           </div>
                         ))}
                       </div>
                     )}
+                        </>
+                      );
+                    })()}
                   </div>
                 ))}
               </div>

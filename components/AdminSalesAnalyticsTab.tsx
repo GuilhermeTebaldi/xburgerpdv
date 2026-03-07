@@ -13,6 +13,7 @@ import {
 } from 'recharts';
 
 import { Product, Sale } from '../types';
+import { APP_ORIGINS, buildAppChannelSummary } from '../utils/appChannelSummary';
 import { buildSalesAnalytics } from '../utils/salesAnalytics';
 
 interface AdminSalesAnalyticsTabProps {
@@ -26,6 +27,10 @@ const CURRENCY_FORMATTER = new Intl.NumberFormat('pt-BR', {
 });
 
 const COLORS = ['#2563eb', '#0891b2', '#14b8a6', '#16a34a', '#eab308', '#f97316', '#ef4444'];
+const APP_ORIGIN_LABELS = {
+  IFOOD: 'iFood',
+  APP99: '99',
+} as const;
 
 const truncateLabel = (value: string, max = 18): string =>
   value.length > max ? `${value.slice(0, Math.max(0, max - 3))}...` : value;
@@ -78,6 +83,7 @@ const StatCard = ({
 
 const AdminSalesAnalyticsTab: React.FC<AdminSalesAnalyticsTabProps> = ({ sales, products }) => {
   const analytics = useMemo(() => buildSalesAnalytics(sales), [sales]);
+  const appChannelSummary = useMemo(() => buildAppChannelSummary(sales), [sales]);
   const [selectedProductKey, setSelectedProductKey] = useState<string | null>(null);
 
   const productsById = useMemo(() => {
@@ -224,6 +230,68 @@ const AdminSalesAnalyticsTab: React.FC<AdminSalesAnalyticsTabProps> = ({ sales, 
           helper={`${formatInt(analytics.peaks.weakestHourSales)} vendas`}
           tone="slate"
         />
+      </div>
+
+      <div className="bg-white rounded-3xl border border-slate-200 p-6">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <div>
+            <h4 className="text-sm font-black text-slate-900 uppercase tracking-widest">Canais de App</h4>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mt-1">
+              Indicadores de iFood e 99 no período analisado
+            </p>
+          </div>
+          <div className="bg-slate-100 border border-slate-200 rounded-xl px-3 py-2">
+            <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Pedidos App</p>
+            <p className="text-lg font-black text-slate-900">{appChannelSummary.totalOrders}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+          <div className="bg-amber-50 border border-amber-100 rounded-2xl p-3">
+            <p className="text-[10px] font-black uppercase tracking-wider text-amber-700">Faturamento Apps</p>
+            <p className="text-xl font-black text-amber-800">{formatCurrency(appChannelSummary.totalRevenue)}</p>
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3">
+            <p className="text-[10px] font-black uppercase tracking-wider text-slate-600">Referência Balcão</p>
+            <p className="text-xl font-black text-slate-900">{formatCurrency(appChannelSummary.totalReference)}</p>
+          </div>
+          <div className="bg-blue-50 border border-blue-100 rounded-2xl p-3">
+            <p className="text-[10px] font-black uppercase tracking-wider text-blue-700">Diferença Apps</p>
+            <p
+              className={`text-xl font-black ${
+                appChannelSummary.totalDelta >= 0 ? 'text-emerald-700' : 'text-red-700'
+              }`}
+            >
+              {formatCurrency(appChannelSummary.totalDelta)}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {APP_ORIGINS.map((origin) => {
+            const originSummary = appChannelSummary.byOrigin[origin];
+            return (
+              <div key={origin} className="bg-slate-50 border border-slate-200 rounded-2xl p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-black uppercase text-slate-800">{APP_ORIGIN_LABELS[origin]}</p>
+                  <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                    Pedidos: {originSummary.orders}
+                  </p>
+                </div>
+                <p className="text-xs font-black text-slate-700 mt-2">
+                  Faturamento: {formatCurrency(originSummary.revenue)}
+                </p>
+                <p
+                  className={`text-[10px] font-black uppercase tracking-wider mt-1 ${
+                    originSummary.delta >= 0 ? 'text-emerald-700' : 'text-red-700'
+                  }`}
+                >
+                  Diferença: {formatCurrency(originSummary.delta)}
+                </p>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
