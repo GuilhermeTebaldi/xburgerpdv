@@ -262,6 +262,93 @@ test('draft cash payment computes change and blocks insufficient cash on confirm
   assert.equal(paid.saleDrafts?.[0]?.status, 'PAID');
 });
 
+test('draft app sale keeps channel metadata and applies real app amount to revenue', () => {
+  const base = createBaseState();
+  const withSecondProduct: FrontAppState = {
+    ...base,
+    products: [
+      ...base.products,
+      {
+        id: 'p-sauce-shot',
+        name: 'Molho Extra',
+        price: 6,
+        imageUrl: 'https://example.com/sauce.jpg',
+        category: 'Side',
+        recipe: [{ ingredientId: 'i-sauce', quantity: 10 }],
+      },
+    ],
+  };
+
+  const withDraft = applyStateCommand(withSecondProduct, {
+    type: 'SALE_DRAFT_CREATE',
+    draftId: 'draft-app-001',
+  });
+  const withBurger = applyStateCommand(withDraft, {
+    type: 'SALE_DRAFT_ADD_ITEM',
+    draftId: 'draft-app-001',
+    productId: 'p-burger',
+  });
+  const withSauce = applyStateCommand(withBurger, {
+    type: 'SALE_DRAFT_ADD_ITEM',
+    draftId: 'draft-app-001',
+    productId: 'p-sauce-shot',
+  });
+  const pending = applyStateCommand(withSauce, {
+    type: 'SALE_DRAFT_FINALIZE',
+    draftId: 'draft-app-001',
+    paymentMethod: 'PIX',
+    saleOrigin: 'IFOOD',
+    appOrderTotal: 30,
+  });
+  const paid = applyStateCommand(pending, {
+    type: 'SALE_DRAFT_CONFIRM_PAID',
+    draftId: 'draft-app-001',
+  });
+
+  assert.equal(paid.saleDrafts?.[0]?.status, 'PAID');
+  assert.equal(paid.saleDrafts?.[0]?.saleOrigin, 'IFOOD');
+  assert.equal(paid.saleDrafts?.[0]?.appOrderTotal, 30);
+  assert.equal(paid.sales.length, 2);
+  assert.equal(
+    paid.sales.every((sale) => sale.saleOrigin === 'IFOOD'),
+    true
+  );
+  assert.equal(
+    paid.sales.every((sale) => sale.appOrderTotal === 30),
+    true
+  );
+  assert.equal(
+    Number(paid.sales.reduce((sum, sale) => sum + sale.total, 0).toFixed(2)),
+    30
+  );
+});
+
+test('draft app sale blocks invalid app amount on finalize', () => {
+  const base = createBaseState();
+  const withDraft = applyStateCommand(base, { type: 'SALE_DRAFT_CREATE', draftId: 'draft-app-err' });
+  const withItem = applyStateCommand(withDraft, {
+    type: 'SALE_DRAFT_ADD_ITEM',
+    draftId: 'draft-app-err',
+    productId: 'p-burger',
+  });
+
+  assert.throws(
+    () =>
+      applyStateCommand(withItem, {
+        type: 'SALE_DRAFT_FINALIZE',
+        draftId: 'draft-app-err',
+        paymentMethod: 'PIX',
+        saleOrigin: 'APP99',
+        appOrderTotal: 0,
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof HttpError);
+      assert.equal(error.statusCode, 422);
+      return true;
+    }
+  );
+});
+
 test('multiple open drafts can coexist while one is pending payment', () => {
   const base = createBaseState();
   const draftDelivery = applyStateCommand(base, {

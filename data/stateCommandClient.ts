@@ -6,6 +6,7 @@ import type {
   RecipeItem,
   SaleCustomerType,
   SaleDraft,
+  SaleOrigin,
   SalePaymentMethod,
   StockEntry,
 } from '../types';
@@ -80,6 +81,8 @@ export type StateCommand =
       draftId: string;
       paymentMethod: SalePaymentMethod;
       cashReceived?: number;
+      saleOrigin?: SaleOrigin;
+      appOrderTotal?: number;
     })
   | (BaseCommand & {
       type: 'SALE_DRAFT_CONFIRM_PAID';
@@ -128,6 +131,7 @@ export type StateCommand =
 interface StateWriteContext {
   version: string;
   token: string;
+  expiresAtMs: number | null;
 }
 
 let writeContext: StateWriteContext | null = null;
@@ -184,6 +188,7 @@ const fetchWithTimeout = async (
     try {
       return await fetch(input, {
         ...init,
+        cache: init.cache ?? 'no-store',
         signal: controller.signal,
       });
     } catch (error) {
@@ -201,6 +206,40 @@ const normalizeVersionHeader = (value: string | null): string | null => {
   return trimmed.replace(/^W\//i, '').replace(/^"(.+)"$/, '$1') || null;
 };
 
+const decodeBase64Url = (value: string): string | null => {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padLength = (4 - (normalized.length % 4)) % 4;
+  const padded = `${normalized}${'='.repeat(padLength)}`;
+  try {
+    if (typeof atob === 'function') {
+      return atob(padded);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const readJwtExpirationMs = (token: string): number | null => {
+  const parts = token.split('.');
+  if (parts.length < 2) return null;
+  const payloadRaw = decodeBase64Url(parts[1]);
+  if (!payloadRaw) return null;
+  try {
+    const payload = JSON.parse(payloadRaw) as { exp?: unknown };
+    const expSeconds = Number(payload.exp);
+    if (!Number.isFinite(expSeconds) || expSeconds <= 0) return null;
+    return expSeconds * 1000;
+  } catch {
+    return null;
+  }
+};
+
+const isWriteContextExpiringSoon = (context: StateWriteContext, safetyWindowMs = 45000): boolean => {
+  if (context.expiresAtMs === null) return false;
+  return Date.now() + safetyWindowMs >= context.expiresAtMs;
+};
+
 const readContextFromResponse = (response: Response): StateWriteContext => {
   const version =
     normalizeVersionHeader(response.headers.get('x-state-version')) ??
@@ -211,7 +250,7 @@ const readContextFromResponse = (response: Response): StateWriteContext => {
     throw new Error('Falha ao obter contexto seguro de escrita de estado.');
   }
 
-  return { version, token };
+  return { version, token, expiresAtMs: readJwtExpirationMs(token) };
 };
 
 const toArray = <T>(value: unknown, fallback: T[]): T[] => (Array.isArray(value) ? (value as T[]) : [...fallback]);
@@ -375,7 +414,7 @@ export const runStateCommand = async (command: StateCommand): Promise<AppState> 
   const payloadCommand = withCommandId(command);
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (!writeContext) {
+    if (!writeContext || isWriteContextExpiringSoon(writeContext)) {
       await refreshWriteContext();
     }
 

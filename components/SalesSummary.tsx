@@ -1,7 +1,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { DailySalesHistoryEntry, Ingredient, Sale, StockEntry } from '../types';
+import { DailySalesHistoryEntry, Ingredient, Sale, SaleOrigin, StockEntry } from '../types';
 import { formatStockQuantityByUnit, getRecipeQuantityUnitLabel } from '../utils/recipe';
 
 interface SalesSummaryProps {
@@ -45,6 +45,15 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethodSummaryKey, string> = {
   CREDITO: 'Crédito',
   DINHEIRO: 'Dinheiro',
 };
+
+const getSaleOriginLabel = (origin: SaleOrigin | null | undefined): string => {
+  if (origin === 'IFOOD') return 'iFood';
+  if (origin === 'APP99') return '99';
+  return 'Balcão';
+};
+
+const isAppSaleOrigin = (origin: SaleOrigin | null | undefined): boolean =>
+  origin === 'IFOOD' || origin === 'APP99';
 
 const formatCurrency = (value: number): string => `R$ ${value.toFixed(2)}`;
 
@@ -354,8 +363,8 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
         }),
         { totalRevenue: 0, totalPurchases: 0 }
       );
-      const latestTimestamp = daySales.reduce<Date>(
-        (latest, sale) => {
+      const latestTimestamp = daySales.reduce(
+        (latest: Date, sale) => {
           const saleDate = toDate(sale.timestamp);
           return saleDate.getTime() > latest.getTime() ? saleDate : latest;
         },
@@ -464,11 +473,18 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
       .map((sale, index) => {
         const saleProfit = (sale.total || 0) - (sale.totalCost || 0);
         const paymentMethod = sale.payment?.method || '--';
+        const saleOrigin = getSaleOriginLabel(sale.saleOrigin);
+        const appValue =
+          isAppSaleOrigin(sale.saleOrigin) && Number.isFinite(Number(sale.appOrderTotal))
+            ? `R$ ${(Number(sale.appOrderTotal) || 0).toFixed(2)}`
+            : '--';
         return `<tr>
           <td>${index + 1}</td>
           <td>${toDate(sale.timestamp).toLocaleString('pt-BR')}</td>
           <td>${escapeHtml(sale.productName || 'Sem nome')}</td>
           <td>${escapeHtml(paymentMethod)}</td>
+          <td>${escapeHtml(saleOrigin)}</td>
+          <td>${appValue}</td>
           <td>R$ ${(sale.total || 0).toFixed(2)}</td>
           <td>R$ ${(sale.totalCost || 0).toFixed(2)}</td>
           <td>R$ ${saleProfit.toFixed(2)}</td>
@@ -501,6 +517,8 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
           <th>Horário</th>
           <th>Produto</th>
           <th>Pagamento</th>
+          <th>Canal</th>
+          <th>Valor App</th>
           <th>Faturamento</th>
           <th>Compras</th>
           <th>Lucro</th>
@@ -1108,6 +1126,16 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
                           >
                             {toDate(sale.timestamp).toLocaleTimeString()}
                           </p>
+                          <p
+                            className={`text-[9px] font-black uppercase tracking-widest ${
+                              selectedSaleId === sale.id ? 'text-blue-100' : 'text-blue-500'
+                            }`}
+                          >
+                            {getSaleOriginLabel(sale.saleOrigin)}
+                            {isAppSaleOrigin(sale.saleOrigin) &&
+                              Number.isFinite(Number(sale.appOrderTotal)) &&
+                              ` • App R$ ${(Number(sale.appOrderTotal) || 0).toFixed(2)}`}
+                          </p>
                           {sale.priceAdjustment !== undefined && Math.abs(sale.priceAdjustment) > 0.009 && (
                             <p
                               className={`text-[9px] font-black uppercase tracking-widest ${
@@ -1200,6 +1228,23 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
                     </div>
                   );
                 })}
+              </div>
+              <div className="mt-3 pt-3 border-t border-slate-800 space-y-1 text-[10px] font-black uppercase tracking-widest">
+                <div className="flex items-center justify-between text-slate-300">
+                  <span>Pagamento</span>
+                  <span>{selectedSale.payment?.method || '--'}</span>
+                </div>
+                <div className="flex items-center justify-between text-blue-300">
+                  <span>Canal</span>
+                  <span>{getSaleOriginLabel(selectedSale.saleOrigin)}</span>
+                </div>
+                {isAppSaleOrigin(selectedSale.saleOrigin) &&
+                  Number.isFinite(Number(selectedSale.appOrderTotal)) && (
+                    <div className="flex items-center justify-between text-amber-300">
+                      <span>Valor app</span>
+                      <span>R$ {(Number(selectedSale.appOrderTotal) || 0).toFixed(2)}</span>
+                    </div>
+                  )}
               </div>
               <div className="mt-5 pt-3 border-t border-slate-800 flex justify-between items-center">
                 <div><p className="text-[8px] font-bold text-slate-500 uppercase">Custo</p><p className="text-sm font-black text-slate-100">{formatCurrency(selectedSale.totalCost)}</p></div>

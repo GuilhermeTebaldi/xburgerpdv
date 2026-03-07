@@ -59,6 +59,7 @@ export interface ComboItem {
 export type SaleStatus = 'DRAFT' | 'PENDING_PAYMENT' | 'PAID' | 'CANCELLED';
 export type SalePaymentMethod = 'PIX' | 'DEBITO' | 'CREDITO' | 'DINHEIRO';
 export type SaleCustomerType = 'BALCAO' | 'ENTREGA';
+export type SaleOrigin = 'LOCAL' | 'IFOOD' | 'APP99';
 
 export interface SalePayment {
   method: SalePaymentMethod | null;
@@ -84,6 +85,8 @@ export interface SaleDraft {
   items: SaleDraftItem[];
   total: number;
   customerType?: SaleCustomerType;
+  saleOrigin?: SaleOrigin;
+  appOrderTotal?: number | null;
   status: SaleStatus;
   payment: SalePayment;
   stockDebited: boolean;
@@ -114,6 +117,8 @@ export interface Sale {
   status?: SaleStatus;
   payment?: SalePayment;
   saleDraftId?: string;
+  saleOrigin?: SaleOrigin;
+  appOrderTotal?: number | null;
 }
 
 export interface DailySalesHistoryEntry {

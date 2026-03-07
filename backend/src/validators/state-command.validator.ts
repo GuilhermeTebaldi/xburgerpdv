@@ -55,6 +55,7 @@ const baseCommandSchema = z.object({
 
 const salePaymentMethodSchema = z.enum(['PIX', 'DEBITO', 'CREDITO', 'DINHEIRO']);
 const saleCustomerTypeSchema = z.enum(['BALCAO', 'ENTREGA']);
+const saleOriginSchema = z.enum(['LOCAL', 'IFOOD', 'APP99']);
 
 const saleRegisterCommandSchema = baseCommandSchema.extend({
   type: z.literal('SALE_REGISTER'),
@@ -105,6 +106,8 @@ const saleDraftFinalizeCommandSchema = baseCommandSchema.extend({
   draftId: idSchema,
   paymentMethod: salePaymentMethodSchema,
   cashReceived: z.coerce.number().finite().min(0).optional(),
+  saleOrigin: saleOriginSchema.optional(),
+  appOrderTotal: z.coerce.number().finite().positive().optional(),
 });
 
 const saleDraftConfirmPaidCommandSchema = baseCommandSchema.extend({

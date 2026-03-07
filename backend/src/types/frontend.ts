@@ -58,6 +58,7 @@ export interface FrontComboItem {
 export type FrontSaleStatus = 'DRAFT' | 'PENDING_PAYMENT' | 'PAID' | 'CANCELLED';
 export type FrontSalePaymentMethod = 'PIX' | 'DEBITO' | 'CREDITO' | 'DINHEIRO';
 export type FrontSaleCustomerType = 'BALCAO' | 'ENTREGA';
+export type FrontSaleOrigin = 'LOCAL' | 'IFOOD' | 'APP99';
 
 export interface FrontSalePayment {
   method: FrontSalePaymentMethod | null;
@@ -83,6 +84,8 @@ export interface FrontSaleDraft {
   items: FrontSaleDraftItem[];
   total: number;
   customerType?: FrontSaleCustomerType;
+  saleOrigin?: FrontSaleOrigin;
+  appOrderTotal?: number | null;
   status: FrontSaleStatus;
   payment: FrontSalePayment;
   stockDebited: boolean;
@@ -113,6 +116,8 @@ export interface FrontSale {
   status?: FrontSaleStatus;
   payment?: FrontSalePayment;
   saleDraftId?: string;
+  saleOrigin?: FrontSaleOrigin;
+  appOrderTotal?: number | null;
 }
 
 export interface FrontDailySalesHistoryEntry {

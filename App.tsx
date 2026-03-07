@@ -22,6 +22,7 @@ import {
   Sale,
   SaleCustomerType,
   SaleDraft,
+  SaleOrigin,
   SalePaymentMethod,
   ViewMode,
   StockEntry,
@@ -333,6 +334,17 @@ const parseMoneyInput = (raw: string): number | null => {
   return parsed;
 };
 
+const isAppSaleOrigin = (origin: SaleOrigin): boolean =>
+  origin === 'IFOOD' || origin === 'APP99';
+
+const isSameSaleOrigin = (left: SaleOrigin, right: SaleOrigin): boolean => left === right;
+
+const getSaleOriginLabel = (origin: SaleOrigin): string => {
+  if (origin === 'IFOOD') return 'iFood';
+  if (origin === 'APP99') return '99';
+  return 'Balcão';
+};
+
 const getStateSyncErrorMessage = (error: unknown): string => {
   if (error instanceof Error && error.message.trim()) {
     return error.message;
@@ -545,6 +557,8 @@ const App: React.FC = () => {
   const [cartEntryFx, setCartEntryFx] = useState<{ id: number; label: string } | null>(null);
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<SalePaymentMethod>('PIX');
+  const [saleOrigin, setSaleOrigin] = useState<SaleOrigin>('LOCAL');
+  const [appOrderTotalInput, setAppOrderTotalInput] = useState('');
   const [cashReceivedInput, setCashReceivedInput] = useState('');
   const cartEntryFxTimeoutRef = useRef<number | null>(null);
 
@@ -1023,6 +1037,8 @@ const App: React.FC = () => {
       setIsCartOpen(true);
       setIsPaymentOpen(false);
       setPaymentMethod('PIX');
+      setSaleOrigin('LOCAL');
+      setAppOrderTotalInput('');
       setCashReceivedInput('');
       showNotification(`Nova venda ${customerType === 'ENTREGA' ? 'de entrega' : 'de balcão'} aberta.`);
     })();
@@ -1180,6 +1196,13 @@ const App: React.FC = () => {
     }
 
     setPaymentMethod(activeDraft.payment.method || 'PIX');
+    const nextOrigin = activeDraft.saleOrigin || 'LOCAL';
+    setSaleOrigin(nextOrigin);
+    setAppOrderTotalInput(
+      isAppSaleOrigin(nextOrigin)
+        ? String(activeDraft.appOrderTotal ?? activeDraft.total)
+        : ''
+    );
     setCashReceivedInput(
       activeDraft.payment.cashReceived !== null && activeDraft.payment.cashReceived !== undefined
         ? String(activeDraft.payment.cashReceived)
@@ -1188,10 +1211,42 @@ const App: React.FC = () => {
     setIsPaymentOpen(true);
   };
 
+  const closeAppSaleOriginPanel = useCallback(() => {
+    setSaleOrigin('LOCAL');
+    setAppOrderTotalInput('');
+  }, []);
+
+  const handleToggleAppSaleOrigin = useCallback(
+    (origin: Extract<SaleOrigin, 'IFOOD' | 'APP99'>) => {
+      if (!activeDraft) return;
+
+      if (isSameSaleOrigin(saleOrigin, origin)) {
+        closeAppSaleOriginPanel();
+        return;
+      }
+
+      const persistedOriginValue =
+        activeDraft.saleOrigin === origin && Number(activeDraft.appOrderTotal) > 0
+          ? Number(activeDraft.appOrderTotal)
+          : undefined;
+      const typedValue = parseMoneyInput(appOrderTotalInput);
+      const fallbackValue = typedValue && typedValue > 0 ? typedValue : activeDraft.total;
+      setSaleOrigin(origin);
+      setAppOrderTotalInput(String(persistedOriginValue ?? fallbackValue));
+    },
+    [activeDraft, appOrderTotalInput, closeAppSaleOriginPanel, saleOrigin]
+  );
+
   const handleSavePaymentMethod = async (): Promise<boolean> => {
     if (!activeDraft) return false;
     if (activeDraft.items.length === 0) {
       showNotification('Carrinho vazio. Não é possível finalizar.');
+      return false;
+    }
+
+    const appOrderTotalParsed = isAppSaleOrigin(saleOrigin) ? parseMoneyInput(appOrderTotalInput) : null;
+    if (isAppSaleOrigin(saleOrigin) && (appOrderTotalParsed === null || appOrderTotalParsed <= 0)) {
+      showNotification('Informe o valor real da venda no app (iFood/99).');
       return false;
     }
 
@@ -1201,15 +1256,48 @@ const App: React.FC = () => {
       return false;
     }
 
-    return runCommandWithSync(
-      {
-        type: 'SALE_DRAFT_FINALIZE',
-        draftId: activeDraft.id,
-        paymentMethod,
-        cashReceived: paymentMethod === 'DINHEIRO' ? (cashReceivedParsed ?? undefined) : undefined,
-      },
-      'Forma de pagamento atualizada.'
+    const finalizeCommand: StateCommand = {
+      type: 'SALE_DRAFT_FINALIZE',
+      draftId: activeDraft.id,
+      paymentMethod,
+      cashReceived: paymentMethod === 'DINHEIRO' ? (cashReceivedParsed ?? undefined) : undefined,
+      saleOrigin,
+      appOrderTotal: isAppSaleOrigin(saleOrigin) ? (appOrderTotalParsed ?? undefined) : undefined,
+    };
+
+    // Defensive: backend must persist app-origin and app amount before allowing confirm.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const ok = await runCommandWithSync(finalizeCommand, undefined, {
+        silentSuccessNotification: true,
+      });
+      if (!ok) return false;
+
+      if (!isAppSaleOrigin(saleOrigin)) {
+        showNotification('Forma de pagamento atualizada.');
+        return true;
+      }
+
+      const persistedDraft = saleDraftsRef.current.find((draft) => draft.id === activeDraft.id);
+      const persistedOrigin = persistedDraft?.saleOrigin || 'LOCAL';
+      const persistedAppTotal = Number(persistedDraft?.appOrderTotal);
+      const expectedAppTotal = Number(appOrderTotalParsed);
+      const hasPersistedAppTotal =
+        Number.isFinite(persistedAppTotal) &&
+        persistedAppTotal > 0 &&
+        Number.isFinite(expectedAppTotal) &&
+        expectedAppTotal > 0 &&
+        Math.abs(persistedAppTotal - expectedAppTotal) <= 0.009;
+
+      if (isAppSaleOrigin(persistedOrigin) && hasPersistedAppTotal) {
+        showNotification('Forma de pagamento atualizada.');
+        return true;
+      }
+    }
+
+    showNotification(
+      'O servidor não confirmou o valor do app. Atualize o backend/sessão antes de confirmar o pagamento.'
     );
+    return false;
   };
 
   const openReceiptPrintWindow = useCallback(
@@ -1748,6 +1836,21 @@ const App: React.FC = () => {
 
     return groupOrder;
   }, [recentSalesForUndo]);
+  const parsedAppOrderTotalInput = useMemo(
+    () => parseMoneyInput(appOrderTotalInput),
+    [appOrderTotalInput]
+  );
+  const paymentAppOrderTotal = useMemo(() => {
+    if (!activeDraft) return null;
+    if (!isAppSaleOrigin(saleOrigin)) return null;
+    const parsed = parsedAppOrderTotalInput;
+    if (parsed !== null && parsed > 0) return parsed;
+    if (typeof activeDraft.appOrderTotal === 'number' && activeDraft.appOrderTotal > 0) {
+      return activeDraft.appOrderTotal;
+    }
+    return activeDraft.total;
+  }, [activeDraft, parsedAppOrderTotalInput, saleOrigin]);
+  const effectivePaymentTotal = paymentAppOrderTotal ?? activeDraft?.total ?? 0;
   const paymentCashReceived = useMemo(() => {
     if (paymentMethod !== 'DINHEIRO') return null;
     return parseMoneyInput(cashReceivedInput);
@@ -1755,11 +1858,21 @@ const App: React.FC = () => {
   const paymentCashDelta = useMemo(() => {
     if (paymentMethod !== 'DINHEIRO' || !activeDraft) return null;
     if (paymentCashReceived === null) return null;
-    return paymentCashReceived - activeDraft.total;
-  }, [activeDraft, paymentCashReceived, paymentMethod]);
+    return paymentCashReceived - effectivePaymentTotal;
+  }, [activeDraft, effectivePaymentTotal, paymentCashReceived, paymentMethod]);
+  const isAppSaleOriginActive = isAppSaleOrigin(saleOrigin);
   const isCashPaymentInsufficient =
     paymentMethod === 'DINHEIRO' &&
     (paymentCashReceived === null || (paymentCashDelta !== null && paymentCashDelta < 0));
+  const isAppOrderTotalInvalid =
+    isAppSaleOriginActive &&
+    (parsedAppOrderTotalInput === null || parsedAppOrderTotalInput <= 0);
+  const isPaymentActionBlocked =
+    isConfirmingPaid || isStateHydrating || pendingStateOps > 0;
+  const isConfirmPaidDisabled =
+    isCashPaymentInsufficient ||
+    (isAppSaleOriginActive && isAppOrderTotalInvalid) ||
+    isPaymentActionBlocked;
 
   useEffect(() => {
     if (!isUndoHistoryOpen) return;
@@ -2031,7 +2144,8 @@ const App: React.FC = () => {
                 {openSaleDrafts.length === 0 && <option value="">Nenhuma venda aberta</option>}
                 {openSaleDrafts.map((draft) => (
                   <option key={draft.id} value={draft.id}>
-                    {draft.customerType || 'BALCAO'} • {draft.status} • R$ {formatMoney(draft.total)}
+                    {draft.customerType || 'BALCAO'} • {getSaleOriginLabel(draft.saleOrigin || 'LOCAL')} •{' '}
+                    {draft.status} • R$ {formatMoney(draft.total)}
                   </option>
                 ))}
               </select>
@@ -2076,6 +2190,22 @@ const App: React.FC = () => {
                   {activeDraft.status === 'PENDING_PAYMENT' && (
                     <span className="text-[10px] font-black uppercase tracking-widest text-yellow-700 px-2 py-1 rounded-lg bg-yellow-100 border border-yellow-300">
                       Aguardando confirmação de pagamento
+                    </span>
+                  )}
+                  <span
+                    className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg border ${
+                      activeDraft.saleOrigin === 'IFOOD'
+                        ? 'text-red-700 bg-red-100 border-red-300'
+                        : activeDraft.saleOrigin === 'APP99'
+                          ? 'text-amber-700 bg-amber-100 border-amber-300'
+                          : 'text-slate-500 bg-slate-100 border-slate-200'
+                    }`}
+                  >
+                    Canal: {getSaleOriginLabel(activeDraft.saleOrigin || 'LOCAL')}
+                  </span>
+                  {isAppSaleOrigin(activeDraft.saleOrigin || 'LOCAL') && (
+                    <span className="text-[10px] font-black uppercase tracking-widest text-amber-700 px-2 py-1 rounded-lg bg-amber-100 border border-amber-300">
+                      Valor app: R$ {formatMoney(activeDraft.appOrderTotal ?? activeDraft.total)}
                     </span>
                   )}
                 </div>
@@ -2194,9 +2324,55 @@ const App: React.FC = () => {
             </div>
 
             <div className="p-5 bg-slate-50 space-y-4">
-              <div className="bg-white border border-slate-200 rounded-2xl p-4">
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Total da venda</p>
-                <p className="text-3xl font-black text-red-600">R$ {formatMoney(activeDraft.total)}</p>
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                  Total dos itens
+                </p>
+                <div className="flex items-center gap-2">
+                  {isAppSaleOriginActive && (
+                    <button
+                      type="button"
+                      onClick={closeAppSaleOriginPanel}
+                      className="qb-btn-touch group relative"
+                      title="Remover canal de app e voltar para balcão"
+                    >
+                      <span
+                        className={`inline-flex h-10 w-10 items-center justify-center rounded-full border-2 text-[10px] font-black uppercase tracking-widest shadow-lg transition-transform group-hover:scale-105 ${
+                          saleOrigin === 'IFOOD'
+                            ? 'border-red-700 bg-red-600 text-white shadow-red-200'
+                            : 'border-yellow-500 bg-yellow-400 text-slate-900 shadow-yellow-200'
+                        }`}
+                      >
+                        {saleOrigin === 'IFOOD' ? 'IF' : '99'}
+                      </span>
+                      <span className="absolute -top-1 -right-1 inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 text-[10px] font-black">
+                        X
+                      </span>
+                    </button>
+                  )}
+                  {isAppSaleOriginActive ? (
+                    <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+                      <span className="text-2xl font-black text-red-600 leading-none">R$</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={appOrderTotalInput}
+                        onChange={(e) => setAppOrderTotalInput(e.target.value)}
+                        className="w-40 bg-transparent text-3xl font-black text-red-600 leading-none focus:outline-none"
+                        placeholder={formatMoney(activeDraft.total)}
+                        aria-label="Valor real cobrado no app"
+                      />
+                    </div>
+                  ) : (
+                    <p className="text-3xl font-black text-red-600">R$ {formatMoney(effectivePaymentTotal)}</p>
+                  )}
+                </div>
+                {isAppOrderTotalInvalid && (
+                  <p className="text-[10px] font-black uppercase tracking-widest text-red-700">
+                    Informe um valor válido maior que zero.
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-2">
@@ -2217,6 +2393,38 @@ const App: React.FC = () => {
                         : method}
                   </button>
                 ))}
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                  Canal da venda
+                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleAppSaleOrigin('IFOOD')}
+                    className={`qb-btn-touch w-12 h-12 rounded-full border font-black text-[9px] uppercase tracking-tight transition-all ${
+                      saleOrigin === 'IFOOD'
+                        ? 'bg-red-600 text-white border-red-700 shadow-lg shadow-red-200'
+                        : 'bg-white text-red-600 border-red-200 hover:border-red-400'
+                    }`}
+                    title="Venda pelo iFood"
+                  >
+                    iFood
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleAppSaleOrigin('APP99')}
+                    className={`qb-btn-touch w-12 h-12 rounded-full border font-black text-lg leading-none transition-all ${
+                      saleOrigin === 'APP99'
+                        ? 'bg-yellow-400 text-slate-900 border-yellow-500 shadow-lg shadow-yellow-200'
+                        : 'bg-white text-yellow-600 border-yellow-300 hover:border-yellow-500'
+                    }`}
+                    title="Venda pelo 99"
+                  >
+                    99
+                  </button>
+                </div>
               </div>
 
               {paymentMethod === 'DINHEIRO' ? (
@@ -2285,7 +2493,7 @@ const App: React.FC = () => {
               </button>
               <button
                 onClick={handleConfirmPaid}
-                disabled={isCashPaymentInsufficient || isConfirmingPaid || isStateHydrating || pendingStateOps > 0}
+                disabled={isConfirmPaidDisabled}
                 className="qb-btn-touch bg-green-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition-colors disabled:opacity-40"
               >
                 {isConfirmingPaid ? 'Confirmando...' : 'Confirmar Pago'}

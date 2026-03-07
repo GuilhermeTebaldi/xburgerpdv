@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { DEFAULT_APP_STATE, loadAppState, type AppState } from '../data/appStorage';
-import type { Sale, SaleDraft, SalePaymentMethod } from '../types';
+import type { Sale, SaleDraft, SaleOrigin, SalePaymentMethod } from '../types';
 
 interface PrintReceiptProps {
   receiptId: string;
@@ -22,10 +22,15 @@ interface ReceiptViewModel {
   orderId: string;
   paidAt: Date | null;
   lines: ReceiptLine[];
+  itemsTotal: number;
   total: number;
   paymentMethodLabel: string;
   paymentCashReceived: number | null;
   paymentChange: number | null;
+  saleOriginLabel: string | null;
+  saleOriginShortLabel: string | null;
+  appOrderTotal: number | null;
+  isAppSale: boolean;
   observations: string[];
 }
 
@@ -103,6 +108,21 @@ const formatPaymentMethod = (method: SalePaymentMethod | null | undefined): stri
   if (method === 'CREDITO') return 'CREDITO';
   if (method === 'DINHEIRO') return 'DINHEIRO';
   return method;
+};
+
+const isAppSaleOrigin = (origin: SaleOrigin): boolean =>
+  origin === 'IFOOD' || origin === 'APP99';
+
+const formatSaleOrigin = (origin: SaleOrigin | null | undefined): string => {
+  if (origin === 'IFOOD') return 'IFOOD';
+  if (origin === 'APP99') return '99';
+  return 'BALCAO';
+};
+
+const formatSaleOriginShort = (origin: SaleOrigin | null | undefined): string | null => {
+  if (origin === 'IFOOD') return 'IF';
+  if (origin === 'APP99') return '99';
+  return null;
 };
 
 const collectSales = (state: AppState): Sale[] => {
@@ -217,6 +237,11 @@ const buildReceiptLines = (
       }
     }
 
+    const lineOrigin = sale.saleOrigin || draft?.saleOrigin || 'LOCAL';
+    if (isAppSaleOrigin(lineOrigin)) {
+      unitPrice = qty > 0 ? roundMoney(sale.total / qty) : roundMoney(sale.total);
+    }
+
     return {
       id: sale.id,
       qty,
@@ -258,8 +283,12 @@ const buildReceiptViewModel = (state: AppState, receiptId: string): ReceiptViewM
 
   const { lines, observations } = buildReceiptLines(sales, relatedDraft);
   const linesTotal = roundMoney(lines.reduce((sum, line) => sum + line.subtotal, 0));
-  const total =
-    relatedDraft && Number.isFinite(relatedDraft.total) ? roundMoney(relatedDraft.total) : linesTotal;
+  const saleOrigin = relatedDraft?.saleOrigin || targetSale.saleOrigin || 'LOCAL';
+  const isAppSale = isAppSaleOrigin(saleOrigin);
+  const appOrderTotal = isAppSale
+    ? normalizeMoneyValue(relatedDraft?.appOrderTotal ?? targetSale.appOrderTotal)
+    : null;
+  const total = isAppSale ? appOrderTotal ?? linesTotal : linesTotal;
 
   const paidAt =
     toDate(relatedDraft?.payment?.confirmedAt) ||
@@ -277,10 +306,15 @@ const buildReceiptViewModel = (state: AppState, receiptId: string): ReceiptViewM
     orderId,
     paidAt,
     lines,
+    itemsTotal: linesTotal,
     total,
     paymentMethodLabel: formatPaymentMethod(paymentMethod),
     paymentCashReceived,
     paymentChange,
+    saleOriginLabel: isAppSale ? formatSaleOrigin(saleOrigin) : null,
+    saleOriginShortLabel: formatSaleOriginShort(saleOrigin),
+    appOrderTotal,
+    isAppSale,
     observations,
   };
 };
@@ -420,6 +454,16 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
           font-size: 10px;
           font-weight: 700;
         }
+        .receipt-badge {
+          display: inline-block;
+          border: 1px solid #000;
+          border-radius: 999px;
+          padding: 0 5px;
+          margin-left: 4px;
+          font-size: 9px;
+          line-height: 1.2;
+          vertical-align: middle;
+        }
         .receipt-actions {
           margin: 18px 0 28px;
           display: flex;
@@ -505,6 +549,12 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
               <span className="receipt-label">Pagamento</span>
               <span className="receipt-value">{receipt.paymentMethodLabel}</span>
             </div>
+            {receipt.saleOriginLabel && (
+              <div className="receipt-row">
+                <span className="receipt-label">Canal</span>
+                <span className="receipt-value">{receipt.saleOriginLabel}</span>
+              </div>
+            )}
             {receipt.paymentMethodLabel === 'DINHEIRO' && receipt.paymentCashReceived !== null && (
               <div className="receipt-row">
                 <span className="receipt-label">Recebido</span>
@@ -550,8 +600,20 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
 
             <div className="receipt-divider" />
 
+            {receipt.isAppSale && (
+              <div className="receipt-row">
+                <span className="receipt-label">Total itens</span>
+                <span className="receipt-value">{formatMoney(receipt.itemsTotal)}</span>
+              </div>
+            )}
+
             <div className="receipt-row receipt-strong">
-              <span className="receipt-label">TOTAL</span>
+              <span className="receipt-label">
+                TOTAL
+                {receipt.saleOriginShortLabel && (
+                  <span className="receipt-badge">{receipt.saleOriginShortLabel}</span>
+                )}
+              </span>
               <span className="receipt-value">{formatMoney(receipt.total)}</span>
             </div>
 

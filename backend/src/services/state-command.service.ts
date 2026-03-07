@@ -11,6 +11,7 @@ import type {
   FrontSaleDraftItem,
   FrontSalePayment,
   FrontSalePaymentMethod,
+  FrontSaleOrigin,
   FrontSale,
   FrontStockEntry,
 } from '../types/frontend.js';
@@ -155,6 +156,78 @@ const cloneRecipe = (recipe: FrontRecipeItem[] | undefined): FrontRecipeItem[] |
 const isSalePaymentMethod = (value: unknown): value is FrontSalePaymentMethod =>
   value === 'PIX' || value === 'DEBITO' || value === 'CREDITO' || value === 'DINHEIRO';
 
+const isSaleOrigin = (value: unknown): value is FrontSaleOrigin =>
+  value === 'LOCAL' || value === 'IFOOD' || value === 'APP99';
+
+const normalizeSaleOrigin = (value: unknown): FrontSaleOrigin =>
+  isSaleOrigin(value) ? value : 'LOCAL';
+
+const isAppSaleOrigin = (origin: FrontSaleOrigin): boolean =>
+  origin === 'IFOOD' || origin === 'APP99';
+
+const normalizeAppOrderTotal = (value: unknown): number | null => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return roundMoney(parsed);
+};
+
+const allocateOrderTotalByWeight = (
+  lineTotals: number[],
+  targetTotal: number
+): number[] => {
+  if (lineTotals.length === 0) return [];
+
+  const targetCents = Math.max(0, Math.round(targetTotal * 100));
+  if (lineTotals.length === 1) {
+    return [roundMoney(targetCents / 100)];
+  }
+
+  const normalizedWeights = lineTotals.map((value) =>
+    Number.isFinite(value) && value > 0 ? value : 0
+  );
+  const totalWeight = normalizedWeights.reduce((sum, value) => sum + value, 0);
+
+  const effectiveWeights =
+    totalWeight > 0
+      ? normalizedWeights
+      : normalizedWeights.map(() => 1);
+  const effectiveWeightTotal = effectiveWeights.reduce((sum, value) => sum + value, 0);
+
+  const baseShares = effectiveWeights.map((weight, index) => {
+    const rawShare = (targetCents * weight) / effectiveWeightTotal;
+    const floorShare = Math.floor(rawShare);
+    return {
+      index,
+      cents: floorShare,
+      fraction: rawShare - floorShare,
+    };
+  });
+
+  let distributed = baseShares.reduce((sum, entry) => sum + entry.cents, 0);
+  let remainder = targetCents - distributed;
+
+  if (remainder > 0) {
+    const sortedByFraction = [...baseShares].sort((a, b) => {
+      const diff = b.fraction - a.fraction;
+      if (diff !== 0) return diff;
+      return a.index - b.index;
+    });
+    for (let step = 0; step < remainder; step += 1) {
+      sortedByFraction[step % sortedByFraction.length].cents += 1;
+    }
+  }
+
+  distributed = baseShares.reduce((sum, entry) => sum + entry.cents, 0);
+  remainder = targetCents - distributed;
+  if (remainder !== 0) {
+    baseShares[baseShares.length - 1].cents += remainder;
+  }
+
+  return baseShares
+    .sort((a, b) => a.index - b.index)
+    .map((entry) => roundMoney(entry.cents / 100));
+};
+
 const normalizeSalePayment = (payment: unknown): FrontSalePayment => {
   const candidate =
     payment && typeof payment === 'object' && !Array.isArray(payment)
@@ -193,6 +266,8 @@ const cloneSaleDraft = (draft: FrontSaleDraft): FrontSaleDraft => ({
   ...draft,
   items: Array.isArray(draft?.items) ? draft.items.map(cloneSaleDraftItem) : [],
   payment: normalizeSalePayment(draft?.payment),
+  saleOrigin: normalizeSaleOrigin(draft?.saleOrigin),
+  appOrderTotal: normalizeAppOrderTotal(draft?.appOrderTotal),
   stockDebited: Boolean(draft?.stockDebited),
 });
 
@@ -201,6 +276,8 @@ const cloneSale = (sale: FrontSale): FrontSale => ({
   recipe: cloneRecipe(sale.recipe),
   stockDebited: cloneRecipe(sale.stockDebited),
   payment: cloneSalePayment(sale.payment),
+  saleOrigin: normalizeSaleOrigin(sale?.saleOrigin),
+  appOrderTotal: normalizeAppOrderTotal(sale?.appOrderTotal),
 });
 
 const cloneDailySalesHistoryEntry = (
@@ -380,7 +457,8 @@ const scaleRecipe = (recipe: FrontRecipeItem[], quantity: number): FrontRecipeIt
 const updateDraftPayment = (
   draft: FrontSaleDraft,
   method: FrontSalePaymentMethod,
-  cashReceivedInput: number | undefined
+  cashReceivedInput: number | undefined,
+  amountDue: number
 ): void => {
   const cashReceived =
     method === 'DINHEIRO'
@@ -394,7 +472,7 @@ const updateDraftPayment = (
   draft.payment = {
     method,
     cashReceived,
-    change: normalizePaymentChange(method, draft.total, cashReceived),
+    change: normalizePaymentChange(method, amountDue, cashReceived),
     confirmedAt: draft.payment.confirmedAt ?? null,
   };
 };
@@ -406,6 +484,8 @@ const applySaleDraftCreate = (
   const drafts = ensureSaleDrafts(state);
   const existing = drafts.find((entry) => entry.id === command.draftId);
   if (existing) {
+    existing.saleOrigin = normalizeSaleOrigin(existing.saleOrigin);
+    existing.appOrderTotal = normalizeAppOrderTotal(existing.appOrderTotal);
     if (command.customerType) {
       existing.customerType = command.customerType;
       existing.updatedAt = toTimestampIso();
@@ -421,6 +501,8 @@ const applySaleDraftCreate = (
     items: [],
     total: 0,
     customerType: command.customerType,
+    saleOrigin: 'LOCAL',
+    appOrderTotal: null,
     status: 'DRAFT',
     payment: defaultSalePayment(),
     stockDebited: false,
@@ -540,7 +622,26 @@ const applySaleDraftFinalize = (
   }
 
   draft.total = normalizeDraftTotal(draft);
-  updateDraftPayment(draft, command.paymentMethod, command.cashReceived);
+  const saleOrigin = normalizeSaleOrigin(command.saleOrigin ?? draft.saleOrigin);
+  let appOrderTotal: number | null = null;
+
+  if (isAppSaleOrigin(saleOrigin)) {
+    appOrderTotal = normalizeAppOrderTotal(
+      command.appOrderTotal ?? draft.appOrderTotal ?? draft.total
+    );
+    if (appOrderTotal === null) {
+      throw new HttpError(422, 'Informe o valor real da venda no app antes de finalizar.');
+    }
+  }
+
+  draft.saleOrigin = saleOrigin;
+  draft.appOrderTotal = appOrderTotal;
+  updateDraftPayment(
+    draft,
+    command.paymentMethod,
+    command.cashReceived,
+    draft.appOrderTotal ?? draft.total
+  );
   draft.status = 'PENDING_PAYMENT';
   draft.updatedAt = toTimestampIso();
 };
@@ -568,6 +669,15 @@ const applySaleDraftConfirmPaid = (
   }
 
   draft.total = normalizeDraftTotal(draft);
+  const saleOrigin = normalizeSaleOrigin(draft.saleOrigin);
+  draft.saleOrigin = saleOrigin;
+  draft.appOrderTotal = isAppSaleOrigin(saleOrigin)
+    ? normalizeAppOrderTotal(draft.appOrderTotal ?? draft.total)
+    : null;
+  if (isAppSaleOrigin(saleOrigin) && draft.appOrderTotal === null) {
+    throw new HttpError(422, 'Informe o valor real da venda no app antes de confirmar.');
+  }
+  const amountDue = draft.appOrderTotal ?? draft.total;
 
   const paymentMethod = draft.payment.method;
   if (!paymentMethod) {
@@ -579,13 +689,13 @@ const applySaleDraftConfirmPaid = (
     if (cashReceived === null || !Number.isFinite(cashReceived)) {
       throw new HttpError(422, 'Informe o valor recebido em dinheiro antes de confirmar.');
     }
-    if (cashReceived + Number.EPSILON < draft.total) {
+    if (cashReceived + Number.EPSILON < amountDue) {
       throw new HttpError(409, 'Valor em dinheiro insuficiente para confirmar pagamento.', {
-        total: draft.total,
+        total: amountDue,
         cashReceived,
       });
     }
-    draft.payment.change = roundMoney(cashReceived - draft.total);
+    draft.payment.change = roundMoney(cashReceived - amountDue);
   } else {
     draft.payment.cashReceived = null;
     draft.payment.change = null;
@@ -660,6 +770,19 @@ const applySaleDraftConfirmPaid = (
     }
   }
 
+  if (draft.appOrderTotal !== null) {
+    const allocatedTotals = allocateOrderTotalByWeight(
+      plannedSales.map((plan) => plan.total),
+      draft.appOrderTotal
+    );
+
+    plannedSales.forEach((plan, index) => {
+      const nextTotal = allocatedTotals[index] ?? 0;
+      plan.total = nextTotal;
+      plan.priceAdjustment = roundMoney(nextTotal - plan.basePrice);
+    });
+  }
+
   const timestamp = toTimestampIso();
   const paymentSnapshot: FrontSalePayment = {
     method: draft.payment.method,
@@ -708,6 +831,8 @@ const applySaleDraftConfirmPaid = (
       status: 'PAID',
       payment: cloneSalePayment(paymentSnapshot),
       saleDraftId: draft.id,
+      saleOrigin,
+      appOrderTotal: draft.appOrderTotal,
     };
     state.sales.push(paidSale);
     state.globalSales.push(cloneSale(paidSale));
@@ -795,6 +920,8 @@ const applySaleRegister = (state: FrontAppState, command: Extract<StateCommandIn
     priceAdjustment: finalPrice - product.price,
     baseCost,
     status: 'PAID',
+    saleOrigin: 'LOCAL',
+    appOrderTotal: null,
   };
 
   Object.entries(totals).forEach(([ingredientId, quantity]) => {

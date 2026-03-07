@@ -7,6 +7,7 @@ import {
   Ingredient,
   Product,
   Sale,
+  SaleOrigin,
   SalePaymentMethod,
   StockEntry,
 } from '../types';
@@ -45,6 +46,18 @@ const paymentMethodBadgeClasses: Record<SalePaymentMethod, string> = {
   DINHEIRO: 'bg-emerald-100 text-emerald-700 border-emerald-200',
 };
 
+const saleOriginLabels: Record<SaleOrigin, string> = {
+  LOCAL: 'Balcão',
+  IFOOD: 'iFood',
+  APP99: '99',
+};
+
+const saleOriginBadgeClasses: Record<SaleOrigin, string> = {
+  LOCAL: 'bg-slate-100 text-slate-700 border-slate-200',
+  IFOOD: 'bg-red-100 text-red-700 border-red-200',
+  APP99: 'bg-amber-100 text-amber-700 border-amber-200',
+};
+
 const renderPaymentMethodBadge = (sale: Sale) => {
   const method = sale.payment?.method;
   if (!method) {
@@ -60,6 +73,17 @@ const renderPaymentMethodBadge = (sale: Sale) => {
       className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${paymentMethodBadgeClasses[method]}`}
     >
       {paymentMethodLabels[method]}
+    </span>
+  );
+};
+
+const renderSaleOriginBadge = (sale: Sale) => {
+  const origin = sale.saleOrigin || 'LOCAL';
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${saleOriginBadgeClasses[origin]}`}
+    >
+      {saleOriginLabels[origin]}
     </span>
   );
 };
@@ -827,7 +851,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                    {archives[selectedArchiveMonth!][selectedArchiveDay].map((s, i) => (
                      <div key={s.id + i} className="flex justify-between p-3 border-b border-slate-50 text-xs">
                         <span className="font-bold text-slate-500">{s.timestamp.toLocaleTimeString()}</span>
-                        <span className="font-black text-slate-800 uppercase">{s.productName}</span>
+                        <span className="font-black text-slate-800 uppercase">
+                          {s.productName}
+                          <span className="ml-2 text-[9px] text-slate-500">
+                            {saleOriginLabels[s.saleOrigin || 'LOCAL']}
+                          </span>
+                        </span>
                         <span className="font-black text-slate-900">R$ {s.total.toFixed(2)}</span>
                      </div>
                    ))}
@@ -1035,20 +1064,32 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               <div className="overflow-x-auto">
                                 <table className="w-full text-left bg-white">
                                   <thead>
-                                    <tr className="border-b border-slate-100">
-                                      <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-400">Horário</th>
-                                      <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-400">Produto</th>
-                                      <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-400">Pagamento</th>
-                                      <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-right">Ajuste</th>
-                                      <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-right">Valor</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-slate-50">
+                                      <tr className="border-b border-slate-100">
+                                        <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-400">Horário</th>
+                                        <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-400">Produto</th>
+                                        <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-400">Pagamento</th>
+                                        <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-400">Canal</th>
+                                        <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-right">Ajuste</th>
+                                        <th className="px-4 py-3 text-[10px] font-black uppercase text-slate-400 text-right">Valor</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-50">
                                     {vendaGroups[month][day].slice().reverse().map(sale => (
                                       <tr key={sale.id}>
                                         <td className="px-4 py-3 text-xs font-bold text-slate-500">{sale.timestamp.toLocaleTimeString()}</td>
                                         <td className="px-4 py-3 font-black text-slate-800 uppercase text-xs">{sale.productName}</td>
                                         <td className="px-4 py-3 text-xs font-black text-slate-800">{renderPaymentMethodBadge(sale)}</td>
+                                        <td className="px-4 py-3 text-xs font-black text-slate-800">
+                                          <div className="space-y-1">
+                                            {renderSaleOriginBadge(sale)}
+                                            {(sale.saleOrigin === 'IFOOD' || sale.saleOrigin === 'APP99') &&
+                                              Number.isFinite(Number(sale.appOrderTotal)) && (
+                                                <p className="text-[9px] font-black uppercase tracking-widest text-amber-700">
+                                                  App: R$ {(Number(sale.appOrderTotal) || 0).toFixed(2)}
+                                                </p>
+                                              )}
+                                          </div>
+                                        </td>
                                         <td className="px-4 py-3 text-xs font-black text-right">
                                           {sale.priceAdjustment !== undefined ? (
                                             <span className={`${sale.priceAdjustment >= 0 ? 'text-green-600' : 'text-red-600'}`}>
