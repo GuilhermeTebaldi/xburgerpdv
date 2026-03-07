@@ -35,7 +35,16 @@ interface HistoryDrawerEntry {
   inferred: boolean;
 }
 
+type PaymentMethodSummaryKey = 'PIX' | 'DEBITO' | 'CREDITO' | 'DINHEIRO';
+
 const COLORS = ['#ef4444', '#f59e0b', '#3b82f6', '#10b981', '#6366f1', '#ec4899'];
+const PAYMENT_METHOD_ORDER: PaymentMethodSummaryKey[] = ['DEBITO', 'PIX', 'DINHEIRO', 'CREDITO'];
+const PAYMENT_METHOD_LABELS: Record<PaymentMethodSummaryKey, string> = {
+  PIX: 'Pix',
+  DEBITO: 'Débito',
+  CREDITO: 'Crédito',
+  DINHEIRO: 'Dinheiro',
+};
 
 const formatCurrency = (value: number): string => `R$ ${value.toFixed(2)}`;
 
@@ -116,6 +125,42 @@ const escapeHtml = (value: string): string =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+
+const summarizePaymentMethods = (
+  reportSales: Sale[]
+): {
+  rows: { label: string; value: number }[];
+  unclassifiedValue: number;
+} => {
+  const totals: Record<PaymentMethodSummaryKey, number> = {
+    PIX: 0,
+    DEBITO: 0,
+    CREDITO: 0,
+    DINHEIRO: 0,
+  };
+  let unclassifiedValue = 0;
+
+  reportSales.forEach((sale) => {
+    const total = Number(sale.total);
+    if (!Number.isFinite(total) || total <= 0) return;
+
+    const method = sale.payment?.method;
+    if (method && method in totals) {
+      totals[method as PaymentMethodSummaryKey] += total;
+      return;
+    }
+
+    unclassifiedValue += total;
+  });
+
+  return {
+    rows: PAYMENT_METHOD_ORDER.map((method) => ({
+      label: PAYMENT_METHOD_LABELS[method],
+      value: roundMoney(totals[method]),
+    })),
+    unclassifiedValue: roundMoney(unclassifiedValue),
+  };
+};
 
 const SalesSummary: React.FC<SalesSummaryProps> = ({
   sales,
@@ -353,6 +398,43 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
     const orderedSales = [...reportSales].sort(
       (a, b) => toDate(a.timestamp).getTime() - toDate(b.timestamp).getTime()
     );
+    const paymentSummary = summarizePaymentMethods(orderedSales);
+    const paymentRows = paymentSummary.rows
+      .map(
+        (row) => `<tr>
+          <td>${escapeHtml(row.label)}</td>
+          <td>R$ ${row.value.toFixed(2)}</td>
+        </tr>`
+      )
+      .join('');
+    const paymentUnclassifiedRow =
+      paymentSummary.unclassifiedValue > 0
+        ? `<tr>
+          <td>Não informado</td>
+          <td>R$ ${paymentSummary.unclassifiedValue.toFixed(2)}</td>
+        </tr>`
+        : '';
+    const paymentSummarySection =
+      orderedSales.length > 0
+        ? `<section class="section">
+    <h2>Fechamento por Forma de Pagamento</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Forma</th>
+          <th>Valor</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${paymentRows}
+        ${paymentUnclassifiedRow}
+      </tbody>
+    </table>
+  </section>`
+        : `<section class="section">
+    <h2>Fechamento por Forma de Pagamento</h2>
+    <p class="muted">Sem detalhamento de vendas para calcular por método.</p>
+  </section>`;
     const productSummary = orderedSales.reduce<
       Record<string, { qty: number; revenue: number; cost: number }>
     >((acc, sale) => {
@@ -469,6 +551,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
     <div class="card"><div class="label">Saída de Caixa</div><div class="value">R$ ${cashExpenses.toFixed(2)}</div></div>
     <div class="card"><div class="label">Caixa Estimado</div><div class="value">R$ ${estimatedCash.toFixed(2)}</div></div>
   </div>
+  ${paymentSummarySection}
   ${detailsSection}
 </body>
 </html>`;

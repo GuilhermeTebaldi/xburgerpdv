@@ -1,5 +1,5 @@
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 
 import { ComboItem, Ingredient, Product, RecipeItem } from '../types';
 import {
@@ -9,6 +9,11 @@ import {
   normalizeRecipeItems,
   normalizeRecipeQuantity,
 } from '../utils/recipe';
+import {
+  convertImageFileToDataUrl,
+  isCloudinaryUploadConfigured,
+  uploadImageToCloudinary,
+} from '../utils/cloudinaryUpload';
 import ComboItemsBuilder from './ComboItemsBuilder';
 
 interface AddProductModalProps {
@@ -18,6 +23,8 @@ interface AddProductModalProps {
   products: Product[];
   onAdd: (product: Product) => void;
 }
+
+const MAX_PRODUCT_IMAGE_BYTES = 6 * 1024 * 1024;
 
 const AddProductModal: React.FC<AddProductModalProps> = ({
   isOpen,
@@ -30,8 +37,13 @@ const AddProductModal: React.FC<AddProductModalProps> = ({
   const [price, setPrice] = useState('');
   const [category, setCategory] = useState<'Snack' | 'Drink' | 'Side' | 'Combo'>('Snack');
   const [imageUrl, setImageUrl] = useState('');
+  const [isImageUrlVisible, setIsImageUrlVisible] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [uploadErrorMessage, setUploadErrorMessage] = useState('');
   const [recipe, setRecipe] = useState<RecipeItem[]>([]);
   const [comboItems, setComboItems] = useState<ComboItem[]>([]);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
+  const isCloudinaryConfigured = isCloudinaryUploadConfigured();
 
   const comboRecipe = useMemo(() => {
     return buildRecipeFromComboItems(products, comboItems);
@@ -39,6 +51,9 @@ const AddProductModal: React.FC<AddProductModalProps> = ({
 
   const isCombo = category === 'Combo';
   const recipeToPersist = normalizeRecipeItems(isCombo ? comboRecipe : recipe);
+  const normalizedImageUrl = imageUrl.trim();
+  const hasImageSelected = normalizedImageUrl.length > 0;
+  const isLocalImagePreview = normalizedImageUrl.startsWith('data:image/');
 
   if (!isOpen) return null;
 
@@ -88,12 +103,53 @@ const AddProductModal: React.FC<AddProductModalProps> = ({
     });
   };
 
+  const handleGalleryFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (!selectedFile) return;
+
+    if (!selectedFile.type.startsWith('image/')) {
+      alert('Selecione um arquivo de imagem válido.');
+      if (galleryInputRef.current) galleryInputRef.current.value = '';
+      return;
+    }
+
+    if (selectedFile.size > MAX_PRODUCT_IMAGE_BYTES) {
+      alert('A imagem deve ter no máximo 6MB.');
+      if (galleryInputRef.current) galleryInputRef.current.value = '';
+      return;
+    }
+
+    setUploadErrorMessage('');
+    setIsUploadingImage(true);
+
+    try {
+      const uploadedImageUrl = isCloudinaryConfigured
+        ? await uploadImageToCloudinary(selectedFile)
+        : await convertImageFileToDataUrl(selectedFile);
+      setImageUrl(uploadedImageUrl);
+      setIsImageUrlVisible(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Falha ao processar imagem.';
+      setUploadErrorMessage(message);
+      alert(message);
+    } finally {
+      setIsUploadingImage(false);
+      if (galleryInputRef.current) {
+        galleryInputRef.current.value = '';
+      }
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const normalizedName = name.trim();
-    const normalizedImageUrl = imageUrl.trim();
     const normalizedPriceRaw = price.trim().replace(',', '.');
     const parsedPrice = Number(normalizedPriceRaw);
+
+    if (isUploadingImage) {
+      alert('Aguarde o envio da imagem para finalizar o cadastro.');
+      return;
+    }
 
     if (!normalizedName || !normalizedImageUrl || recipeToPersist.length === 0) {
       alert("Preencha todos os campos e adicione pelo menos um ingrediente à receita!");
@@ -127,8 +183,13 @@ const AddProductModal: React.FC<AddProductModalProps> = ({
     setPrice('');
     setCategory('Snack');
     setImageUrl('');
+    setIsImageUrlVisible(false);
+    setUploadErrorMessage('');
     setRecipe([]);
     setComboItems([]);
+    if (galleryInputRef.current) {
+      galleryInputRef.current.value = '';
+    }
     onClose();
   };
 
@@ -191,14 +252,72 @@ const AddProductModal: React.FC<AddProductModalProps> = ({
               </select>
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">URL da Imagem</label>
-              <input 
-                type="text" 
-                value={imageUrl}
-                onChange={e => setImageUrl(e.target.value)}
-                placeholder="https://imagem.jpg"
-                className="w-full bg-slate-100 border-none rounded-2xl px-4 py-3 font-bold text-slate-800 focus:ring-2 focus:ring-red-500"
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Foto do Produto</label>
+                <button
+                  type="button"
+                  onClick={() => setIsImageUrlVisible((current) => !current)}
+                  className="qb-btn-touch bg-slate-100 text-slate-700 px-2.5 py-1.5 rounded-lg font-black text-[9px] uppercase tracking-widest hover:bg-slate-200 transition-colors"
+                >
+                  URL
+                </button>
+              </div>
+
+              <input
+                ref={galleryInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleGalleryFileChange}
+                className="hidden"
               />
+
+              <button
+                type="button"
+                onClick={() => galleryInputRef.current?.click()}
+                disabled={isUploadingImage}
+                className="qb-btn-touch w-full bg-slate-100 text-slate-700 px-4 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-colors text-left disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isUploadingImage
+                  ? 'Enviando para Cloudinary...'
+                  : hasImageSelected
+                    ? 'Trocar imagem da galeria'
+                    : 'Selecionar imagem da galeria'}
+              </button>
+
+              {isImageUrlVisible && (
+                <input
+                  type="text"
+                  value={imageUrl}
+                  onChange={(e) => {
+                    setImageUrl(e.target.value);
+                    setUploadErrorMessage('');
+                  }}
+                  placeholder="https://res.cloudinary.com/.../image/upload/..."
+                  className="w-full bg-slate-100 border-none rounded-2xl px-4 py-3 font-bold text-slate-800 focus:ring-2 focus:ring-red-500"
+                />
+              )}
+
+              {!isCloudinaryConfigured && (
+                <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+                  Cloudinary não configurado: usando preview local ao escolher da galeria.
+                </p>
+              )}
+
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                {isUploadingImage
+                  ? 'Upload em andamento...'
+                  : hasImageSelected
+                    ? isLocalImagePreview
+                      ? 'Imagem local carregada.'
+                      : 'Imagem pronta para salvar.'
+                    : 'Nenhuma imagem selecionada.'}
+              </p>
+
+              {uploadErrorMessage && (
+                <p className="text-[10px] font-black uppercase tracking-widest text-red-600">
+                  {uploadErrorMessage}
+                </p>
+              )}
             </div>
           </div>
 

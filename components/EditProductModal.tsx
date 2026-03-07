@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { ComboItem, Ingredient, Product, RecipeItem } from '../types';
 import {
@@ -9,6 +9,11 @@ import {
   normalizeRecipeItems,
   normalizeRecipeQuantity,
 } from '../utils/recipe';
+import {
+  convertImageFileToDataUrl,
+  isCloudinaryUploadConfigured,
+  uploadImageToCloudinary,
+} from '../utils/cloudinaryUpload';
 import ComboItemsBuilder from './ComboItemsBuilder';
 
 interface EditProductModalProps {
@@ -19,6 +24,8 @@ interface EditProductModalProps {
   onClose: () => void;
   onSave: (product: Product) => void;
 }
+
+const MAX_PRODUCT_IMAGE_BYTES = 6 * 1024 * 1024;
 
 const recipeTotalsToItems = (totals: Record<string, number>): RecipeItem[] => {
   return Object.entries(totals)
@@ -105,11 +112,16 @@ const EditProductModal: React.FC<EditProductModalProps> = ({
   const [price, setPrice] = useState('');
   const [category, setCategory] = useState<'Snack' | 'Drink' | 'Side' | 'Combo'>('Snack');
   const [imageUrl, setImageUrl] = useState('');
+  const [isImageUrlVisible, setIsImageUrlVisible] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [uploadErrorMessage, setUploadErrorMessage] = useState('');
   const [recipe, setRecipe] = useState<RecipeItem[]>([]);
   const [comboItems, setComboItems] = useState<ComboItem[]>([]);
   const [comboExtraRecipe, setComboExtraRecipe] = useState<RecipeItem[]>([]);
   const [hasTouchedComboItems, setHasTouchedComboItems] = useState(false);
   const [hasTouchedComboExtras, setHasTouchedComboExtras] = useState(false);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
+  const isCloudinaryConfigured = isCloudinaryUploadConfigured();
 
   useEffect(() => {
     if (!product) return;
@@ -133,6 +145,12 @@ const EditProductModal: React.FC<EditProductModalProps> = ({
     );
     setHasTouchedComboItems(false);
     setHasTouchedComboExtras(false);
+    setIsImageUrlVisible(false);
+    setIsUploadingImage(false);
+    setUploadErrorMessage('');
+    if (galleryInputRef.current) {
+      galleryInputRef.current.value = '';
+    }
   }, [product]);
 
   const currentProductId = product?.id ?? null;
@@ -156,8 +174,48 @@ const EditProductModal: React.FC<EditProductModalProps> = ({
   const recipeToPersist = normalizeRecipeItems(
     isCombo ? (shouldKeepLegacyRecipe ? recipe : comboRecipeWithExtras) : recipe
   );
+  const normalizedImageUrl = imageUrl.trim();
+  const hasImageSelected = normalizedImageUrl.length > 0;
+  const isLocalImagePreview = normalizedImageUrl.startsWith('data:image/');
 
   if (!isOpen || !product) return null;
+
+  const handleGalleryFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (!selectedFile) return;
+
+    if (!selectedFile.type.startsWith('image/')) {
+      alert('Selecione um arquivo de imagem válido.');
+      if (galleryInputRef.current) galleryInputRef.current.value = '';
+      return;
+    }
+
+    if (selectedFile.size > MAX_PRODUCT_IMAGE_BYTES) {
+      alert('A imagem deve ter no máximo 6MB.');
+      if (galleryInputRef.current) galleryInputRef.current.value = '';
+      return;
+    }
+
+    setUploadErrorMessage('');
+    setIsUploadingImage(true);
+
+    try {
+      const uploadedImageUrl = isCloudinaryConfigured
+        ? await uploadImageToCloudinary(selectedFile)
+        : await convertImageFileToDataUrl(selectedFile);
+      setImageUrl(uploadedImageUrl);
+      setIsImageUrlVisible(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Falha ao processar imagem.';
+      setUploadErrorMessage(message);
+      alert(message);
+    } finally {
+      setIsUploadingImage(false);
+      if (galleryInputRef.current) {
+        galleryInputRef.current.value = '';
+      }
+    }
+  };
 
   const handleComboItemsChange = (items: ComboItem[]) => {
     if (isLegacyCombo && !hasTouchedComboItems && !hasTouchedComboExtras && comboItems.length === 0 && items.length > 0) {
@@ -237,7 +295,9 @@ const EditProductModal: React.FC<EditProductModalProps> = ({
               }`}
             >
               <div className="flex-1 min-w-0 pr-2">
-                <p className="font-extrabold text-slate-800 text-sm truncate uppercase">{ing.name}</p>
+                <p className="font-extrabold text-slate-800 text-sm uppercase whitespace-normal break-words leading-tight">
+                  {ing.name}
+                </p>
                 <p className="text-[9px] font-bold text-slate-400 uppercase">{recipeUnitLabel}</p>
               </div>
               <div className="flex items-center gap-3">
@@ -276,9 +336,13 @@ const EditProductModal: React.FC<EditProductModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const normalizedName = name.trim();
-    const normalizedImageUrl = imageUrl.trim();
     const normalizedPriceRaw = price.trim().replace(',', '.');
     const parsedPrice = Number(normalizedPriceRaw);
+
+    if (isUploadingImage) {
+      alert('Aguarde o envio da imagem para finalizar a edição.');
+      return;
+    }
 
     if (!normalizedName || !normalizedImageUrl || recipeToPersist.length === 0) {
       alert("Preencha todos os campos e adicione pelo menos um ingrediente à receita!");
@@ -366,14 +430,72 @@ const EditProductModal: React.FC<EditProductModalProps> = ({
               </select>
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">URL da Imagem</label>
-              <input 
-                type="text" 
-                value={imageUrl}
-                onChange={e => setImageUrl(e.target.value)}
-                placeholder="https://imagem.jpg"
-                className="w-full bg-slate-100 border-none rounded-2xl px-4 py-3 font-bold text-slate-800 focus:ring-2 focus:ring-red-500"
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Foto do Produto</label>
+                <button
+                  type="button"
+                  onClick={() => setIsImageUrlVisible((current) => !current)}
+                  className="qb-btn-touch bg-slate-100 text-slate-700 px-2.5 py-1.5 rounded-lg font-black text-[9px] uppercase tracking-widest hover:bg-slate-200 transition-colors"
+                >
+                  URL
+                </button>
+              </div>
+
+              <input
+                ref={galleryInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleGalleryFileChange}
+                className="hidden"
               />
+
+              <button
+                type="button"
+                onClick={() => galleryInputRef.current?.click()}
+                disabled={isUploadingImage}
+                className="qb-btn-touch w-full bg-slate-100 text-slate-700 px-4 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-colors text-left disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isUploadingImage
+                  ? 'Enviando para Cloudinary...'
+                  : hasImageSelected
+                    ? 'Trocar imagem da galeria'
+                    : 'Selecionar imagem da galeria'}
+              </button>
+
+              {isImageUrlVisible && (
+                <input
+                  type="text"
+                  value={imageUrl}
+                  onChange={(e) => {
+                    setImageUrl(e.target.value);
+                    setUploadErrorMessage('');
+                  }}
+                  placeholder="https://res.cloudinary.com/.../image/upload/..."
+                  className="w-full bg-slate-100 border-none rounded-2xl px-4 py-3 font-bold text-slate-800 focus:ring-2 focus:ring-red-500"
+                />
+              )}
+
+              {!isCloudinaryConfigured && (
+                <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+                  Cloudinary não configurado: usando preview local ao escolher da galeria.
+                </p>
+              )}
+
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                {isUploadingImage
+                  ? 'Upload em andamento...'
+                  : hasImageSelected
+                    ? isLocalImagePreview
+                      ? 'Imagem local carregada.'
+                      : 'Imagem pronta para salvar.'
+                    : 'Nenhuma imagem selecionada.'}
+              </p>
+
+              {uploadErrorMessage && (
+                <p className="text-[10px] font-black uppercase tracking-widest text-red-600">
+                  {uploadErrorMessage}
+                </p>
+              )}
             </div>
           </div>
 

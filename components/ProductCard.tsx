@@ -302,7 +302,7 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, onSale, allIngredien
         </div>
         
         <div className="w-full pointer-events-none">
-          <h3 className="text-sm sm:text-base font-extrabold text-slate-800 leading-tight mb-1 uppercase truncate">
+          <h3 className="text-sm sm:text-base font-extrabold text-slate-800 leading-tight mb-1 uppercase whitespace-normal break-words">
             {product.name}
           </h3>
           <p className="text-lg sm:text-xl font-black text-red-600">
