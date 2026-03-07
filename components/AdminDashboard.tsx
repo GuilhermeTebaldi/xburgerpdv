@@ -58,6 +58,105 @@ const saleOriginBadgeClasses: Record<SaleOrigin, string> = {
   APP99: 'bg-amber-100 text-amber-700 border-amber-200',
 };
 
+type AppOrigin = 'IFOOD' | 'APP99';
+
+interface AppChannelSummary {
+  totalOrders: number;
+  totalRevenue: number;
+  totalReference: number;
+  totalDelta: number;
+  byOrigin: Record<
+    AppOrigin,
+    {
+      orders: number;
+      revenue: number;
+      reference: number;
+      delta: number;
+    }
+  >;
+}
+
+const APP_ORIGINS: AppOrigin[] = ['IFOOD', 'APP99'];
+
+const isAppOrigin = (origin: SaleOrigin | undefined): origin is AppOrigin =>
+  origin === 'IFOOD' || origin === 'APP99';
+
+const getSaleGroupKey = (sale: Sale): string =>
+  sale.saleDraftId ? `draft:${sale.saleDraftId}` : `sale:${sale.id}`;
+
+const buildEmptyAppChannelSummary = (): AppChannelSummary => ({
+  totalOrders: 0,
+  totalRevenue: 0,
+  totalReference: 0,
+  totalDelta: 0,
+  byOrigin: {
+    IFOOD: { orders: 0, revenue: 0, reference: 0, delta: 0 },
+    APP99: { orders: 0, revenue: 0, reference: 0, delta: 0 },
+  },
+});
+
+const buildAppChannelSummary = (entries: Sale[]): AppChannelSummary => {
+  const grouped = new Map<
+    string,
+    {
+      origin: AppOrigin;
+      fallbackRevenue: number;
+      appRevenue: number | null;
+      reference: number;
+    }
+  >();
+
+  entries.forEach((sale) => {
+    const origin = sale.saleOrigin || 'LOCAL';
+    if (!isAppOrigin(origin)) return;
+
+    const key = getSaleGroupKey(sale);
+    const current = grouped.get(key) || {
+      origin,
+      fallbackRevenue: 0,
+      appRevenue: null,
+      reference: 0,
+    };
+
+    current.origin = origin;
+    current.fallbackRevenue += Number(sale.total) || 0;
+    current.reference +=
+      Number.isFinite(Number(sale.basePrice)) && Number(sale.basePrice) > 0
+        ? Number(sale.basePrice)
+        : Number(sale.total) || 0;
+
+    const appTotal = Number(sale.appOrderTotal);
+    if (Number.isFinite(appTotal) && appTotal > 0) {
+      current.appRevenue = appTotal;
+    }
+
+    grouped.set(key, current);
+  });
+
+  if (grouped.size === 0) return buildEmptyAppChannelSummary();
+
+  const summary = buildEmptyAppChannelSummary();
+  summary.totalOrders = grouped.size;
+
+  grouped.forEach((group) => {
+    const revenue = roundMoney(group.appRevenue ?? group.fallbackRevenue);
+    const reference = roundMoney(group.reference);
+    const delta = roundMoney(revenue - reference);
+    const originSummary = summary.byOrigin[group.origin];
+
+    originSummary.orders += 1;
+    originSummary.revenue = roundMoney(originSummary.revenue + revenue);
+    originSummary.reference = roundMoney(originSummary.reference + reference);
+    originSummary.delta = roundMoney(originSummary.delta + delta);
+
+    summary.totalRevenue = roundMoney(summary.totalRevenue + revenue);
+    summary.totalReference = roundMoney(summary.totalReference + reference);
+    summary.totalDelta = roundMoney(summary.totalDelta + delta);
+  });
+
+  return summary;
+};
+
 const renderPaymentMethodBadge = (sale: Sale) => {
   const method = sale.payment?.method;
   if (!method) {
@@ -256,6 +355,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       return sum + Math.abs(entry.quantity) * unitCost;
     }, 0);
   }, [cleaningStockEntries, cleaningMaterials]);
+  const appChannelSummary = useMemo(() => buildAppChannelSummary(sales), [sales]);
   const totalCost = salesCost + stockOutCost + cleaningStockOutCost;
   const totalProfit = totalRevenue - totalCost;
   const totalCleaningStockValue = useMemo(
@@ -615,6 +715,83 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
 
+          <div className="bg-white p-6 rounded-[32px] border-2 border-slate-100 shadow-sm">
+            <div className="flex items-center justify-between gap-3 mb-5">
+              <div>
+                <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">
+                  Canais de App
+                </h3>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+                  iFood e 99 consolidados por pedido
+                </p>
+              </div>
+              <div className="bg-slate-100 px-3 py-2 rounded-xl">
+                <p className="text-[10px] font-black text-slate-400 uppercase">Pedidos App</p>
+                <p className="text-xl font-black text-slate-900">{appChannelSummary.totalOrders}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+              <div className="bg-amber-50 rounded-2xl border border-amber-100 p-4">
+                <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-1">
+                  Faturamento Apps
+                </p>
+                <p className="text-2xl font-black text-amber-700">R$ {appChannelSummary.totalRevenue.toFixed(2)}</p>
+              </div>
+              <div className="bg-slate-50 rounded-2xl border border-slate-200 p-4">
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">
+                  Referência Balcão
+                </p>
+                <p className="text-2xl font-black text-slate-900">
+                  R$ {appChannelSummary.totalReference.toFixed(2)}
+                </p>
+              </div>
+              <div className="bg-blue-50 rounded-2xl border border-blue-100 p-4">
+                <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1">
+                  Diferença Apps
+                </p>
+                <p
+                  className={`text-2xl font-black ${
+                    appChannelSummary.totalDelta >= 0 ? 'text-emerald-700' : 'text-red-700'
+                  }`}
+                >
+                  R$ {appChannelSummary.totalDelta.toFixed(2)}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {APP_ORIGINS.map((origin) => {
+                const originSummary = appChannelSummary.byOrigin[origin];
+                const originName = saleOriginLabels[origin];
+                return (
+                  <div key={origin} className="bg-white rounded-2xl border border-slate-200 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${saleOriginBadgeClasses[origin]}`}
+                      >
+                        {originName}
+                      </span>
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                        Pedidos: {originSummary.orders}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-sm font-black text-slate-700 uppercase">
+                      Faturamento: R$ {originSummary.revenue.toFixed(2)}
+                    </p>
+                    <p
+                      className={`mt-1 text-xs font-black uppercase ${
+                        originSummary.delta >= 0 ? 'text-emerald-700' : 'text-red-700'
+                      }`}
+                    >
+                      Diferença: R$ {originSummary.delta.toFixed(2)}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
         </div>
       )}
 
@@ -839,10 +1016,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                      const selectedRevenue: number = selectedSales.reduce((s: number, v: Sale) => s + v.total, 0);
                      const selectedCost: number = selectedSales.reduce((s: number, v: Sale) => s + (v.totalCost || 0), 0);
                      const selectedProfit: number = selectedRevenue - selectedCost;
+                     const selectedAppSummary = buildAppChannelSummary(selectedSales);
                      return (
                        <>
                          <div className="bg-slate-50 p-6 rounded-3xl"><p className="text-[10px] font-bold text-slate-400 uppercase">Receita</p><p className="text-2xl font-black">R$ {selectedRevenue.toFixed(2)}</p></div>
                          <div className="bg-slate-50 p-6 rounded-3xl"><p className="text-[10px] font-bold text-slate-400 uppercase">Lucro</p><p className="text-2xl font-black text-green-600">R$ {selectedProfit.toFixed(2)}</p></div>
+                         <div className="bg-slate-50 p-6 rounded-3xl">
+                           <p className="text-[10px] font-bold text-slate-400 uppercase">Apps no dia</p>
+                           <p className="text-2xl font-black text-amber-700">R$ {selectedAppSummary.totalRevenue.toFixed(2)}</p>
+                           <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mt-2">
+                             Pedidos: {selectedAppSummary.totalOrders}
+                           </p>
+                         </div>
                        </>
                      );
                    })()}
