@@ -539,22 +539,42 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
   <meta charset="utf-8" />
   <title>Relatório Diário</title>
   <style>
+    body, body * { font-weight: 700; }
     body { font-family: Arial, sans-serif; padding: 24px; color: #0f172a; }
-    h1 { margin: 0 0 6px; font-size: 24px; }
-    h2 { margin: 0 0 10px; font-size: 17px; }
-    p { margin: 0 0 10px; }
+    h1 { margin: 0 0 6px; font-size: 18px; font-weight: 800; }
+    h2 { margin: 0 0 10px; font-size: 14px; font-weight: 800; }
+    p { margin: 0 0 10px; font-size: 12px; font-weight: 700; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
     .card { border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; background: #f8fafc; }
-    .label { font-size: 11px; text-transform: uppercase; color: #475569; font-weight: 700; letter-spacing: .08em; }
-    .value { font-size: 24px; font-weight: 800; margin-top: 6px; }
+    .label { font-size: 10px; text-transform: uppercase; color: #475569; font-weight: 800; letter-spacing: .08em; }
+    .value { font-size: 16px; font-weight: 900; margin-top: 6px; line-height: 1.25; }
     .section { margin-top: 22px; }
-    .muted { color: #64748b; font-size: 12px; }
-    .table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    .table th, .table td { border: 1px solid #cbd5e1; padding: 7px; text-align: left; }
-    .table th { background: #f1f5f9; text-transform: uppercase; letter-spacing: .04em; font-size: 10px; }
+    .muted { color: #64748b; font-size: 12px; font-weight: 700; }
+    .table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .table th, .table td { border: 1px solid #cbd5e1; padding: 7px; text-align: left; font-weight: 700; }
+    .table th { background: #f1f5f9; text-transform: uppercase; letter-spacing: .04em; font-size: 9px; font-weight: 800; }
     @media print {
-      body { padding: 12px; }
-      .grid { gap: 8px; }
+      @page { margin: 3mm; }
+      body {
+        padding: 0;
+        width: 100%;
+        max-width: 72mm;
+        margin: 0 auto;
+      }
+      h1 { font-size: 14px; }
+      h2 { font-size: 11px; }
+      p { font-size: 10px; }
+      .grid {
+        grid-template-columns: 1fr;
+        gap: 6px;
+      }
+      .card { padding: 8px; border-radius: 8px; }
+      .label { font-size: 8px; }
+      .value { font-size: 12px; }
+      .section { margin-top: 12px; }
+      .table { font-size: 9px; }
+      .table th, .table td { padding: 4px; }
+      .table th { font-size: 8px; }
     }
   </style>
 </head>
