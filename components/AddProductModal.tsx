@@ -25,6 +25,7 @@ interface AddProductModalProps {
 }
 
 const MAX_PRODUCT_IMAGE_BYTES = 6 * 1024 * 1024;
+const MAX_PRODUCT_IMAGE_URL_LENGTH = 200_000;
 
 const AddProductModal: React.FC<AddProductModalProps> = ({
   isOpen,
@@ -153,6 +154,10 @@ const AddProductModal: React.FC<AddProductModalProps> = ({
 
     if (!normalizedName || !normalizedImageUrl || recipeToPersist.length === 0) {
       alert("Preencha todos os campos e adicione pelo menos um ingrediente à receita!");
+      return;
+    }
+    if (normalizedImageUrl.length > MAX_PRODUCT_IMAGE_URL_LENGTH) {
+      alert('A imagem selecionada ficou muito grande. Use uma imagem menor.');
       return;
     }
     if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
