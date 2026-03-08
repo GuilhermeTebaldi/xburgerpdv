@@ -59,7 +59,7 @@ export interface ComboItem {
 export type SaleStatus = 'DRAFT' | 'PENDING_PAYMENT' | 'PAID' | 'CANCELLED';
 export type SalePaymentMethod = 'PIX' | 'DEBITO' | 'CREDITO' | 'DINHEIRO';
 export type SaleCustomerType = 'BALCAO' | 'ENTREGA';
-export type SaleOrigin = 'LOCAL' | 'IFOOD' | 'APP99';
+export type SaleOrigin = 'LOCAL' | 'IFOOD' | 'APP99' | 'KEETA';
 
 export interface SalePayment {
   method: SalePaymentMethod | null;

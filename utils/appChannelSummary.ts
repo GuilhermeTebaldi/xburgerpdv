@@ -1,6 +1,6 @@
 import { Sale, SaleOrigin } from '../types';
 
-export type AppOrigin = 'IFOOD' | 'APP99';
+export type AppOrigin = 'IFOOD' | 'APP99' | 'KEETA';
 
 export interface AppChannelOriginSummary {
   orders: number;
@@ -17,12 +17,12 @@ export interface AppChannelSummary {
   byOrigin: Record<AppOrigin, AppChannelOriginSummary>;
 }
 
-export const APP_ORIGINS: AppOrigin[] = ['IFOOD', 'APP99'];
+export const APP_ORIGINS: AppOrigin[] = ['IFOOD', 'APP99', 'KEETA'];
 
 const roundMoney = (value: number): number => Number((Number.isFinite(value) ? value : 0).toFixed(2));
 
 const isAppOrigin = (origin: SaleOrigin | undefined): origin is AppOrigin =>
-  origin === 'IFOOD' || origin === 'APP99';
+  origin === 'IFOOD' || origin === 'APP99' || origin === 'KEETA';
 
 const getSaleGroupKey = (sale: Sale): string =>
   sale.saleDraftId ? `draft:${sale.saleDraftId}` : `sale:${sale.id}`;
@@ -35,6 +35,7 @@ const buildEmptyAppChannelSummary = (): AppChannelSummary => ({
   byOrigin: {
     IFOOD: { orders: 0, revenue: 0, reference: 0, delta: 0 },
     APP99: { orders: 0, revenue: 0, reference: 0, delta: 0 },
+    KEETA: { orders: 0, revenue: 0, reference: 0, delta: 0 },
   },
 });
 

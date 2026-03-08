@@ -49,11 +49,12 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethodSummaryKey, string> = {
 const getSaleOriginLabel = (origin: SaleOrigin | null | undefined): string => {
   if (origin === 'IFOOD') return 'iFood';
   if (origin === 'APP99') return '99';
+  if (origin === 'KEETA') return 'Keeta';
   return 'Balcão';
 };
 
 const isAppSaleOrigin = (origin: SaleOrigin | null | undefined): boolean =>
-  origin === 'IFOOD' || origin === 'APP99';
+  origin === 'IFOOD' || origin === 'APP99' || origin === 'KEETA';
 
 const formatCurrency = (value: number): string => `R$ ${value.toFixed(2)}`;
 

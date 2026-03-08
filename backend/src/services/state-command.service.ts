@@ -157,13 +157,13 @@ const isSalePaymentMethod = (value: unknown): value is FrontSalePaymentMethod =>
   value === 'PIX' || value === 'DEBITO' || value === 'CREDITO' || value === 'DINHEIRO';
 
 const isSaleOrigin = (value: unknown): value is FrontSaleOrigin =>
-  value === 'LOCAL' || value === 'IFOOD' || value === 'APP99';
+  value === 'LOCAL' || value === 'IFOOD' || value === 'APP99' || value === 'KEETA';
 
 const normalizeSaleOrigin = (value: unknown): FrontSaleOrigin =>
   isSaleOrigin(value) ? value : 'LOCAL';
 
 const isAppSaleOrigin = (origin: FrontSaleOrigin): boolean =>
-  origin === 'IFOOD' || origin === 'APP99';
+  origin === 'IFOOD' || origin === 'APP99' || origin === 'KEETA';
 
 const normalizeAppOrderTotal = (value: unknown): number | null => {
   const parsed = Number(value);

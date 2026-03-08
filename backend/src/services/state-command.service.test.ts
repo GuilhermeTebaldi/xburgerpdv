@@ -323,6 +323,38 @@ test('draft app sale keeps channel metadata and applies real app amount to reven
   );
 });
 
+test('draft app sale with KEETA keeps channel metadata and applies real app amount to revenue', () => {
+  const base = createBaseState();
+  const withDraft = applyStateCommand(base, {
+    type: 'SALE_DRAFT_CREATE',
+    draftId: 'draft-app-keeta-001',
+  });
+  const withItem = applyStateCommand(withDraft, {
+    type: 'SALE_DRAFT_ADD_ITEM',
+    draftId: 'draft-app-keeta-001',
+    productId: 'p-burger',
+  });
+  const pending = applyStateCommand(withItem, {
+    type: 'SALE_DRAFT_FINALIZE',
+    draftId: 'draft-app-keeta-001',
+    paymentMethod: 'PIX',
+    saleOrigin: 'KEETA',
+    appOrderTotal: 18,
+  });
+  const paid = applyStateCommand(pending, {
+    type: 'SALE_DRAFT_CONFIRM_PAID',
+    draftId: 'draft-app-keeta-001',
+  });
+
+  assert.equal(paid.saleDrafts?.[0]?.status, 'PAID');
+  assert.equal(paid.saleDrafts?.[0]?.saleOrigin, 'KEETA');
+  assert.equal(paid.saleDrafts?.[0]?.appOrderTotal, 18);
+  assert.equal(paid.sales.length, 1);
+  assert.equal(paid.sales.every((sale) => sale.saleOrigin === 'KEETA'), true);
+  assert.equal(paid.sales.every((sale) => sale.appOrderTotal === 18), true);
+  assert.equal(Number(paid.sales.reduce((sum, sale) => sum + sale.total, 0).toFixed(2)), 18);
+});
+
 test('draft app sale blocks invalid app amount on finalize', () => {
   const base = createBaseState();
   const withDraft = applyStateCommand(base, { type: 'SALE_DRAFT_CREATE', draftId: 'draft-app-err' });

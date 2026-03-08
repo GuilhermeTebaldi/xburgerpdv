@@ -91,6 +91,66 @@
   }
 }
 
+@keyframes qb-payment-origin-morph-a {
+  0% {
+    transform: scale(1);
+    filter: saturate(1);
+  }
+  35% {
+    transform: scale(1.03);
+    filter: saturate(1.18);
+  }
+  100% {
+    transform: scale(1);
+    filter: saturate(1);
+  }
+}
+
+@keyframes qb-payment-origin-morph-b {
+  0% {
+    transform: scale(1);
+    filter: saturate(1);
+  }
+  35% {
+    transform: scale(1.03);
+    filter: saturate(1.18);
+  }
+  100% {
+    transform: scale(1);
+    filter: saturate(1);
+  }
+}
+
+@keyframes qb-payment-origin-icon-pop-a {
+  0% {
+    opacity: 0;
+    transform: scale(0.78) rotate(-11deg);
+  }
+  62% {
+    opacity: 1;
+    transform: scale(1.16) rotate(3deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+@keyframes qb-payment-origin-icon-pop-b {
+  0% {
+    opacity: 0;
+    transform: scale(0.78) rotate(11deg);
+  }
+  62% {
+    opacity: 1;
+    transform: scale(1.16) rotate(-3deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
 .qb-cart-button-bump-a {
   animation: qb-cart-jump-a 520ms cubic-bezier(0.22, 0.95, 0.3, 1);
 }
@@ -110,6 +170,22 @@
 .qb-cart-entry-chip {
   animation: qb-cart-chip-rise 900ms cubic-bezier(0.2, 0.78, 0.2, 1) forwards;
   transform-origin: 100% 100%;
+}
+
+.qb-payment-origin-morph-a {
+  animation: qb-payment-origin-morph-a 540ms cubic-bezier(0.22, 0.95, 0.3, 1);
+}
+
+.qb-payment-origin-morph-b {
+  animation: qb-payment-origin-morph-b 540ms cubic-bezier(0.22, 0.95, 0.3, 1);
+}
+
+.qb-payment-origin-icon-pop-a {
+  animation: qb-payment-origin-icon-pop-a 460ms cubic-bezier(0.2, 0.95, 0.3, 1);
+}
+
+.qb-payment-origin-icon-pop-b {
+  animation: qb-payment-origin-icon-pop-b 460ms cubic-bezier(0.2, 0.95, 0.3, 1);
 }
 
 .qb-sync-spinner {

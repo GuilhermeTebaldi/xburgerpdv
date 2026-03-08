@@ -30,6 +30,7 @@ const COLORS = ['#2563eb', '#0891b2', '#14b8a6', '#16a34a', '#eab308', '#f97316'
 const APP_ORIGIN_LABELS = {
   IFOOD: 'iFood',
   APP99: '99',
+  KEETA: 'Keeta',
 } as const;
 
 const truncateLabel = (value: string, max = 18): string =>
@@ -237,7 +238,7 @@ const AdminSalesAnalyticsTab: React.FC<AdminSalesAnalyticsTabProps> = ({ sales, 
           <div>
             <h4 className="text-sm font-black text-slate-900 uppercase tracking-widest">Canais de App</h4>
             <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mt-1">
-              Indicadores de iFood e 99 no período analisado
+              Indicadores de iFood, 99 e Keeta no período analisado
             </p>
           </div>
           <div className="bg-slate-100 border border-slate-200 rounded-xl px-3 py-2">
@@ -267,7 +268,7 @@ const AdminSalesAnalyticsTab: React.FC<AdminSalesAnalyticsTabProps> = ({ sales, 
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {APP_ORIGINS.map((origin) => {
             const originSummary = appChannelSummary.byOrigin[origin];
             return (

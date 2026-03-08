@@ -335,13 +335,14 @@ const parseMoneyInput = (raw: string): number | null => {
 };
 
 const isAppSaleOrigin = (origin: SaleOrigin): boolean =>
-  origin === 'IFOOD' || origin === 'APP99';
+  origin === 'IFOOD' || origin === 'APP99' || origin === 'KEETA';
 
 const isSameSaleOrigin = (left: SaleOrigin, right: SaleOrigin): boolean => left === right;
 
 const getSaleOriginLabel = (origin: SaleOrigin): string => {
   if (origin === 'IFOOD') return 'iFood';
   if (origin === 'APP99') return '99';
+  if (origin === 'KEETA') return 'Keeta';
   return 'Balcão';
 };
 
@@ -558,9 +559,11 @@ const App: React.FC = () => {
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<SalePaymentMethod>('PIX');
   const [saleOrigin, setSaleOrigin] = useState<SaleOrigin>('LOCAL');
+  const [paymentOriginFxTick, setPaymentOriginFxTick] = useState(-1);
   const [appOrderTotalInput, setAppOrderTotalInput] = useState('');
   const [cashReceivedInput, setCashReceivedInput] = useState('');
   const cartEntryFxTimeoutRef = useRef<number | null>(null);
+  const appOrderTotalInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     isCashHistoryLegacyModeRef.current = isCashHistoryLegacyMode;
@@ -1196,6 +1199,7 @@ const App: React.FC = () => {
     }
 
     setPaymentMethod(activeDraft.payment.method || 'PIX');
+    setPaymentOriginFxTick(-1);
     const nextOrigin = activeDraft.saleOrigin || 'LOCAL';
     setSaleOrigin(nextOrigin);
     setAppOrderTotalInput(
@@ -1214,10 +1218,11 @@ const App: React.FC = () => {
   const closeAppSaleOriginPanel = useCallback(() => {
     setSaleOrigin('LOCAL');
     setAppOrderTotalInput('');
+    setPaymentOriginFxTick((tick) => tick + 1);
   }, []);
 
   const handleToggleAppSaleOrigin = useCallback(
-    (origin: Extract<SaleOrigin, 'IFOOD' | 'APP99'>) => {
+    (origin: Extract<SaleOrigin, 'IFOOD' | 'APP99' | 'KEETA'>) => {
       if (!activeDraft) return;
 
       if (isSameSaleOrigin(saleOrigin, origin)) {
@@ -1233,6 +1238,7 @@ const App: React.FC = () => {
       const fallbackValue = typedValue && typedValue > 0 ? typedValue : activeDraft.total;
       setSaleOrigin(origin);
       setAppOrderTotalInput(String(persistedOriginValue ?? fallbackValue));
+      setPaymentOriginFxTick((tick) => tick + 1);
     },
     [activeDraft, appOrderTotalInput, closeAppSaleOriginPanel, saleOrigin]
   );
@@ -1861,6 +1867,42 @@ const App: React.FC = () => {
     return paymentCashReceived - effectivePaymentTotal;
   }, [activeDraft, effectivePaymentTotal, paymentCashReceived, paymentMethod]);
   const isAppSaleOriginActive = isAppSaleOrigin(saleOrigin);
+  const paymentOriginMorphClass =
+    paymentOriginFxTick >= 0
+      ? paymentOriginFxTick % 2 === 0
+        ? 'qb-payment-origin-morph-a'
+        : 'qb-payment-origin-morph-b'
+      : '';
+  const paymentOriginIconClass =
+    paymentOriginFxTick >= 0
+      ? paymentOriginFxTick % 2 === 0
+        ? 'qb-payment-origin-icon-pop-a'
+        : 'qb-payment-origin-icon-pop-b'
+      : '';
+  const paymentOriginShortLabel =
+    saleOrigin === 'IFOOD' ? 'IF' : saleOrigin === 'APP99' ? '99' : saleOrigin === 'KEETA' ? 'KT' : 'LC';
+  const paymentOriginNameLabel =
+    saleOrigin === 'IFOOD'
+      ? 'iFood'
+      : saleOrigin === 'APP99'
+        ? '99'
+        : saleOrigin === 'KEETA'
+          ? 'Keeta'
+          : 'Balcão';
+  const paymentOriginToneClass =
+    saleOrigin === 'IFOOD'
+      ? 'border-red-700 bg-red-600 text-white shadow-red-200'
+      : saleOrigin === 'APP99'
+        ? 'border-yellow-500 bg-yellow-400 text-slate-900 shadow-yellow-200'
+        : 'border-emerald-600 bg-emerald-500 text-white shadow-emerald-200';
+  const paymentOriginFieldClass =
+    saleOrigin === 'IFOOD'
+      ? 'border-red-200 bg-gradient-to-r from-red-50 via-white to-red-50 shadow-red-100'
+      : saleOrigin === 'APP99'
+        ? 'border-yellow-300 bg-gradient-to-r from-amber-50 via-white to-yellow-50 shadow-yellow-100'
+        : 'border-emerald-300 bg-gradient-to-r from-emerald-50 via-white to-teal-50 shadow-emerald-100';
+  const paymentOriginBarClass =
+    saleOrigin === 'IFOOD' ? 'bg-red-500' : saleOrigin === 'APP99' ? 'bg-yellow-500' : 'bg-emerald-500';
   const isCashPaymentInsufficient =
     paymentMethod === 'DINHEIRO' &&
     (paymentCashReceived === null || (paymentCashDelta !== null && paymentCashDelta < 0));
@@ -1873,6 +1915,15 @@ const App: React.FC = () => {
     isCashPaymentInsufficient ||
     (isAppSaleOriginActive && isAppOrderTotalInvalid) ||
     isPaymentActionBlocked;
+
+  useEffect(() => {
+    if (!isPaymentOpen || !isAppSaleOriginActive) return;
+    const timeoutId = window.setTimeout(() => {
+      appOrderTotalInputRef.current?.focus();
+      appOrderTotalInputRef.current?.select();
+    }, 40);
+    return () => window.clearTimeout(timeoutId);
+  }, [isAppSaleOriginActive, isPaymentOpen, paymentOriginFxTick, saleOrigin]);
 
   useEffect(() => {
     if (!isUndoHistoryOpen) return;
@@ -2198,6 +2249,8 @@ const App: React.FC = () => {
                         ? 'text-red-700 bg-red-100 border-red-300'
                         : activeDraft.saleOrigin === 'APP99'
                           ? 'text-amber-700 bg-amber-100 border-amber-300'
+                          : activeDraft.saleOrigin === 'KEETA'
+                            ? 'text-emerald-700 bg-emerald-100 border-emerald-300'
                           : 'text-slate-500 bg-slate-100 border-slate-200'
                     }`}
                   >
@@ -2333,40 +2386,67 @@ const App: React.FC = () => {
                     <button
                       type="button"
                       onClick={closeAppSaleOriginPanel}
-                      className="qb-btn-touch group relative"
+                      className={`qb-btn-touch group relative inline-flex h-11 items-center gap-2 rounded-full border-2 px-3 shadow-lg transition-all hover:scale-[1.03] ${paymentOriginToneClass} ${paymentOriginIconClass}`}
                       title="Remover canal de app e voltar para balcão"
                     >
-                      <span
-                        className={`inline-flex h-10 w-10 items-center justify-center rounded-full border-2 text-[10px] font-black uppercase tracking-widest shadow-lg transition-transform group-hover:scale-105 ${
-                          saleOrigin === 'IFOOD'
-                            ? 'border-red-700 bg-red-600 text-white shadow-red-200'
-                            : 'border-yellow-500 bg-yellow-400 text-slate-900 shadow-yellow-200'
-                        }`}
-                      >
-                        {saleOrigin === 'IFOOD' ? 'IF' : '99'}
+                      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-black/10 text-[10px] font-black uppercase tracking-widest">
+                        {paymentOriginShortLabel}
+                      </span>
+                      <span className="text-[10px] font-black uppercase tracking-widest">
+                        {paymentOriginNameLabel}
                       </span>
                       <span className="absolute -top-1 -right-1 inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 text-[10px] font-black">
                         X
                       </span>
                     </button>
                   )}
-                  {isAppSaleOriginActive ? (
-                    <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
-                      <span className="text-2xl font-black text-red-600 leading-none">R$</span>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={appOrderTotalInput}
-                        onChange={(e) => setAppOrderTotalInput(e.target.value)}
-                        className="w-40 bg-transparent text-3xl font-black text-red-600 leading-none focus:outline-none"
-                        placeholder={formatMoney(activeDraft.total)}
-                        aria-label="Valor real cobrado no app"
-                      />
+                  <div
+                    className={`relative flex-1 overflow-hidden rounded-2xl border-2 px-3 py-2 transition-all duration-300 ${
+                      isAppSaleOriginActive
+                        ? `shadow-lg ${paymentOriginFieldClass}`
+                        : 'border-slate-200 bg-slate-50'
+                    } ${paymentOriginMorphClass}`}
+                  >
+                    <span
+                      className={`pointer-events-none absolute left-0 top-0 h-full w-1.5 rounded-full transition-all duration-300 ${
+                        isAppSaleOriginActive ? paymentOriginBarClass : 'bg-slate-200'
+                      }`}
+                    />
+                    <div className="relative h-12 pl-3">
+                      <div
+                        className={`absolute inset-0 flex items-center gap-2 transition-all duration-300 ${
+                          isAppSaleOriginActive
+                            ? 'translate-y-3 scale-95 opacity-0'
+                            : 'translate-y-0 scale-100 opacity-100'
+                        }`}
+                      >
+                        <span className="text-2xl font-black text-red-600 leading-none">R$</span>
+                        <p className="text-3xl font-black text-red-600 leading-none">
+                          {formatMoney(effectivePaymentTotal)}
+                        </p>
+                      </div>
+                      <div
+                        className={`absolute inset-0 flex items-center gap-2 transition-all duration-300 ${
+                          isAppSaleOriginActive
+                            ? 'translate-y-0 scale-100 opacity-100'
+                            : '-translate-y-3 scale-95 opacity-0 pointer-events-none'
+                        }`}
+                      >
+                        <span className="text-2xl font-black text-red-600 leading-none">R$</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={appOrderTotalInput}
+                          onChange={(e) => setAppOrderTotalInput(e.target.value)}
+                          ref={appOrderTotalInputRef}
+                          className="w-40 bg-transparent text-3xl font-black text-red-600 leading-none focus:outline-none"
+                          placeholder={formatMoney(activeDraft.total)}
+                          aria-label="Valor real cobrado no app"
+                        />
+                      </div>
                     </div>
-                  ) : (
-                    <p className="text-3xl font-black text-red-600">R$ {formatMoney(effectivePaymentTotal)}</p>
-                  )}
+                  </div>
                 </div>
                 {isAppOrderTotalInvalid && (
                   <p className="text-[10px] font-black uppercase tracking-widest text-red-700">
@@ -2399,7 +2479,7 @@ const App: React.FC = () => {
                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">
                   Canal da venda
                 </label>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <button
                     type="button"
                     onClick={() => handleToggleAppSaleOrigin('IFOOD')}
@@ -2423,6 +2503,18 @@ const App: React.FC = () => {
                     title="Venda pelo 99"
                   >
                     99
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleAppSaleOrigin('KEETA')}
+                    className={`qb-btn-touch h-12 rounded-full border px-3 font-black text-[9px] uppercase tracking-tight transition-all ${
+                      saleOrigin === 'KEETA'
+                        ? 'bg-emerald-500 text-white border-emerald-600 shadow-lg shadow-emerald-200'
+                        : 'bg-white text-emerald-700 border-emerald-300 hover:border-emerald-500'
+                    }`}
+                    title="Venda pelo Keeta"
+                  >
+                    Keeta
                   </button>
                 </div>
               </div>

@@ -51,12 +51,14 @@ const saleOriginLabels: Record<SaleOrigin, string> = {
   LOCAL: 'Balcão',
   IFOOD: 'iFood',
   APP99: '99',
+  KEETA: 'Keeta',
 };
 
 const saleOriginBadgeClasses: Record<SaleOrigin, string> = {
   LOCAL: 'bg-slate-100 text-slate-700 border-slate-200',
   IFOOD: 'bg-red-100 text-red-700 border-red-200',
   APP99: 'bg-amber-100 text-amber-700 border-amber-200',
+  KEETA: 'bg-emerald-100 text-emerald-700 border-emerald-200',
 };
 
 const renderPaymentMethodBadge = (sale: Sale) => {
@@ -624,7 +626,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   Canais de App
                 </h3>
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
-                  iFood e 99 consolidados por pedido
+                  iFood, 99 e Keeta consolidados por pedido
                 </p>
               </div>
               <div className="bg-slate-100 px-3 py-2 rounded-xl">
@@ -662,7 +664,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {APP_ORIGINS.map((origin) => {
                 const originSummary = appChannelSummary.byOrigin[origin];
                 const originName = saleOriginLabels[origin];
@@ -1228,7 +1230,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                         <td className="px-4 py-3 text-xs font-black text-slate-800">
                                           <div className="space-y-1">
                                             {renderSaleOriginBadge(sale)}
-                                            {(sale.saleOrigin === 'IFOOD' || sale.saleOrigin === 'APP99') &&
+                                            {(sale.saleOrigin === 'IFOOD' ||
+                                              sale.saleOrigin === 'APP99' ||
+                                              sale.saleOrigin === 'KEETA') &&
                                               Number.isFinite(Number(sale.appOrderTotal)) && (
                                                 <p className="text-[9px] font-black uppercase tracking-widest text-amber-700">
                                                   App: R$ {(Number(sale.appOrderTotal) || 0).toFixed(2)}

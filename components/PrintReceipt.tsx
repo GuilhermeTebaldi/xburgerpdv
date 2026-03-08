@@ -111,17 +111,19 @@ const formatPaymentMethod = (method: SalePaymentMethod | null | undefined): stri
 };
 
 const isAppSaleOrigin = (origin: SaleOrigin): boolean =>
-  origin === 'IFOOD' || origin === 'APP99';
+  origin === 'IFOOD' || origin === 'APP99' || origin === 'KEETA';
 
 const formatSaleOrigin = (origin: SaleOrigin | null | undefined): string => {
   if (origin === 'IFOOD') return 'IFOOD';
   if (origin === 'APP99') return '99';
+  if (origin === 'KEETA') return 'KEETA';
   return 'BALCAO';
 };
 
 const formatSaleOriginShort = (origin: SaleOrigin | null | undefined): string | null => {
   if (origin === 'IFOOD') return 'IF';
   if (origin === 'APP99') return '99';
+  if (origin === 'KEETA') return 'KT';
   return null;
 };
 

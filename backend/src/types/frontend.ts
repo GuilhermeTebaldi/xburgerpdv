@@ -58,7 +58,7 @@ export interface FrontComboItem {
 export type FrontSaleStatus = 'DRAFT' | 'PENDING_PAYMENT' | 'PAID' | 'CANCELLED';
 export type FrontSalePaymentMethod = 'PIX' | 'DEBITO' | 'CREDITO' | 'DINHEIRO';
 export type FrontSaleCustomerType = 'BALCAO' | 'ENTREGA';
-export type FrontSaleOrigin = 'LOCAL' | 'IFOOD' | 'APP99';
+export type FrontSaleOrigin = 'LOCAL' | 'IFOOD' | 'APP99' | 'KEETA';
 
 export interface FrontSalePayment {
   method: FrontSalePaymentMethod | null;
