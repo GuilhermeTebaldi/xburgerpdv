@@ -20,6 +20,15 @@ interface ManagedUser {
   createdAt: string;
 }
 
+interface CompanyUsersGroup {
+  key: string;
+  companyName: string;
+  stateOwnerUserId: string | null;
+  manager: ManagedUser | null;
+  operator: ManagedUser | null;
+  latestCreatedAtMs: number;
+}
+
 const ADMIN_GERAL_TOKEN_KEY = 'xburger_admingeral_token';
 const DEFAULT_API_BASE_URL = 'https://xburger-saas-backend.onrender.com';
 
@@ -98,6 +107,51 @@ const AdminGeralPage: React.FC = () => {
   const [createSuccess, setCreateSuccess] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+
+  const groupedCompanies = useMemo<CompanyUsersGroup[]>(() => {
+    const groups = new Map<string, CompanyUsersGroup>();
+
+    users.forEach((user) => {
+      const key =
+        user.stateOwnerUserId?.trim() ||
+        user.companyName?.trim().toLowerCase() ||
+        user.id;
+
+      const existing = groups.get(key);
+      const createdAtMs = Number.isFinite(Date.parse(user.createdAt))
+        ? Date.parse(user.createdAt)
+        : 0;
+
+      const group: CompanyUsersGroup = existing || {
+        key,
+        companyName: user.companyName?.trim() || 'Empresa sem nome',
+        stateOwnerUserId: user.stateOwnerUserId,
+        manager: null,
+        operator: null,
+        latestCreatedAtMs: createdAtMs,
+      };
+
+      if (!group.companyName || group.companyName === 'Empresa sem nome') {
+        group.companyName = user.companyName?.trim() || group.companyName;
+      }
+      if (!group.stateOwnerUserId && user.stateOwnerUserId) {
+        group.stateOwnerUserId = user.stateOwnerUserId;
+      }
+      if (createdAtMs > group.latestCreatedAtMs) {
+        group.latestCreatedAtMs = createdAtMs;
+      }
+
+      if (user.role === 'ADMIN') {
+        group.manager = user;
+      } else if (user.role === 'OPERATOR') {
+        group.operator = user;
+      }
+
+      groups.set(key, group);
+    });
+
+    return Array.from(groups.values()).sort((a, b) => b.latestCreatedAtMs - a.latestCreatedAtMs);
+  }, [users]);
 
   const resetMessages = () => {
     setLoginError('');
@@ -453,30 +507,46 @@ const AdminGeralPage: React.FC = () => {
                     <thead>
                       <tr className="text-left text-slate-500 border-b border-slate-200">
                         <th className="py-2 pr-3">Empresa</th>
-                        <th className="py-2 pr-3">Nome</th>
-                        <th className="py-2 pr-3">E-mail</th>
-                        <th className="py-2 pr-3">Role</th>
+                        <th className="py-2 pr-3">ADMGERENTE</th>
+                        <th className="py-2 pr-3">OPERADOR</th>
                         <th className="py-2 pr-3">Vínculo</th>
                         <th className="py-2 pr-3">Status</th>
                         <th className="py-2 pr-3">Criado em</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {users.map((user) => (
-                        <tr key={user.id} className="border-b border-slate-100">
-                          <td className="py-2 pr-3">{user.companyName || '-'}</td>
-                          <td className="py-2 pr-3">{user.name || '-'}</td>
-                          <td className="py-2 pr-3">{user.email}</td>
-                          <td className="py-2 pr-3">{formatRoleLabel(user.role)}</td>
-                          <td className="py-2 pr-3">
-                            {user.stateOwnerUserId ? user.stateOwnerUserId.slice(0, 8) : '-'}
-                          </td>
-                          <td className="py-2 pr-3">{user.isActive ? 'Ativo' : 'Inativo'}</td>
-                          <td className="py-2 pr-3">
-                            {new Date(user.createdAt).toLocaleString('pt-BR')}
-                          </td>
-                        </tr>
-                      ))}
+                      {groupedCompanies.map((group) => {
+                        const managerLabel = group.manager
+                          ? `${group.manager.name || '-'} (${group.manager.email})`
+                          : 'Não cadastrado';
+                        const operatorLabel = group.operator
+                          ? `${group.operator.name || '-'} (${group.operator.email})`
+                          : 'Não cadastrado';
+
+                        const statusLabel =
+                          group.manager && group.operator
+                            ? group.manager.isActive && group.operator.isActive
+                              ? 'Ativos'
+                              : 'Parcial'
+                            : 'Incompleto';
+
+                        return (
+                          <tr key={group.key} className="border-b border-slate-100">
+                            <td className="py-2 pr-3 font-semibold">{group.companyName}</td>
+                            <td className="py-2 pr-3">{managerLabel}</td>
+                            <td className="py-2 pr-3">{operatorLabel}</td>
+                            <td className="py-2 pr-3">
+                              {group.stateOwnerUserId ? group.stateOwnerUserId.slice(0, 8) : '-'}
+                            </td>
+                            <td className="py-2 pr-3">{statusLabel}</td>
+                            <td className="py-2 pr-3">
+                              {group.latestCreatedAtMs
+                                ? new Date(group.latestCreatedAtMs).toLocaleString('pt-BR')
+                                : '-'}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
