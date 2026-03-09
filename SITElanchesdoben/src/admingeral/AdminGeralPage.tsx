@@ -112,6 +112,12 @@ const AdminGeralPage: React.FC = () => {
   const [companyActionError, setCompanyActionError] = useState('');
   const [companyActionSuccess, setCompanyActionSuccess] = useState('');
   const [pendingCompanyKey, setPendingCompanyKey] = useState<string | null>(null);
+  const [linkCompanyName, setLinkCompanyName] = useState('');
+  const [linkManagerEmail, setLinkManagerEmail] = useState('');
+  const [linkOperatorEmail, setLinkOperatorEmail] = useState('');
+  const [isLinkingCompany, setIsLinkingCompany] = useState(false);
+  const [linkCompanyError, setLinkCompanyError] = useState('');
+  const [linkCompanySuccess, setLinkCompanySuccess] = useState('');
 
   const groupedCompanies = useMemo<CompanyUsersGroup[]>(() => {
     const groups = new Map<string, CompanyUsersGroup>();
@@ -164,6 +170,8 @@ const AdminGeralPage: React.FC = () => {
     setCreateSuccess('');
     setCompanyActionError('');
     setCompanyActionSuccess('');
+    setLinkCompanyError('');
+    setLinkCompanySuccess('');
   };
 
   const loadSession = async (activeToken: string): Promise<boolean> => {
@@ -403,6 +411,45 @@ const AdminGeralPage: React.FC = () => {
     }
   };
 
+  const handleLinkExistingCompanyUsers = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!token || isLinkingCompany) return;
+    setIsLinkingCompany(true);
+    setLinkCompanyError('');
+    setLinkCompanySuccess('');
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/v1/users/company/link`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          companyName: linkCompanyName.trim(),
+          managerEmail: linkManagerEmail.trim().toLowerCase(),
+          operatorEmail: linkOperatorEmail.trim().toLowerCase(),
+        }),
+      });
+
+      if (!response.ok) {
+        const apiError = await extractApiError(response);
+        setLinkCompanyError(apiError || 'Falha ao vincular usuários existentes.');
+        return;
+      }
+
+      setLinkCompanySuccess('Usuários existentes vinculados com sucesso na mesma empresa.');
+      setLinkCompanyName('');
+      setLinkManagerEmail('');
+      setLinkOperatorEmail('');
+      await loadUsers(token);
+    } catch {
+      setLinkCompanyError('Falha de conexão com o backend.');
+    } finally {
+      setIsLinkingCompany(false);
+    }
+  };
+
   const handleLogout = () => {
     clearStoredToken();
     setToken('');
@@ -568,6 +615,57 @@ const AdminGeralPage: React.FC = () => {
                   </button>
                   {createSuccess && <p className="text-sm font-semibold text-emerald-700">{createSuccess}</p>}
                   {createError && <p className="text-sm font-semibold text-red-600">{createError}</p>}
+                </div>
+              </form>
+            </section>
+
+            <section className="bg-white border border-slate-200 rounded-3xl p-6">
+              <h2 className="text-xl font-black mb-2">Vincular usuários já existentes</h2>
+              <p className="text-sm text-slate-500 mb-4">
+                Use este bloco para unir dois cadastros antigos (ADMGERENTE + OPERADOR) na mesma empresa.
+              </p>
+              <form className="grid grid-cols-1 md:grid-cols-2 gap-4" onSubmit={handleLinkExistingCompanyUsers}>
+                <input
+                  type="text"
+                  required
+                  autoComplete="organization"
+                  value={linkCompanyName}
+                  onChange={(e) => setLinkCompanyName(e.target.value)}
+                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 md:col-span-2"
+                  placeholder="Nome da empresa"
+                />
+                <input
+                  type="email"
+                  required
+                  autoComplete="email"
+                  value={linkManagerEmail}
+                  onChange={(e) => setLinkManagerEmail(e.target.value)}
+                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50"
+                  placeholder="E-mail do ADMGERENTE"
+                />
+                <input
+                  type="email"
+                  required
+                  autoComplete="email"
+                  value={linkOperatorEmail}
+                  onChange={(e) => setLinkOperatorEmail(e.target.value)}
+                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50"
+                  placeholder="E-mail do OPERADOR"
+                />
+                <div className="md:col-span-2 flex items-center gap-3">
+                  <button
+                    type="submit"
+                    disabled={isLinkingCompany}
+                    className="px-6 py-3 rounded-2xl bg-slate-900 text-white font-bold disabled:opacity-60"
+                  >
+                    {isLinkingCompany ? 'Vinculando...' : 'Vincular existentes'}
+                  </button>
+                  {linkCompanySuccess && (
+                    <p className="text-sm font-semibold text-emerald-700">{linkCompanySuccess}</p>
+                  )}
+                  {linkCompanyError && (
+                    <p className="text-sm font-semibold text-red-600">{linkCompanyError}</p>
+                  )}
                 </div>
               </form>
             </section>

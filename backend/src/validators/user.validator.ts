@@ -33,6 +33,22 @@ export const companyUsersCreateSchema = z
     }
   });
 
+export const companyUsersLinkSchema = z
+  .object({
+    companyName: z.string().trim().min(2).max(120),
+    managerEmail: z.string().email().max(255),
+    operatorEmail: z.string().email().max(255),
+  })
+  .superRefine((value, ctx) => {
+    if (value.managerEmail.trim().toLowerCase() === value.operatorEmail.trim().toLowerCase()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['operatorEmail'],
+        message: 'E-mail do operador deve ser diferente do ADMGERENTE.',
+      });
+    }
+  });
+
 export const companyBillingSchema = z.object({
   blocked: z.boolean(),
 });

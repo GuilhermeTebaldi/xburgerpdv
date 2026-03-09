@@ -4,6 +4,7 @@ import { UserRole } from '@prisma/client';
 import { UserService } from '../services/user.service.js';
 import {
   companyBillingSchema,
+  companyUsersLinkSchema,
   companyStatusSchema,
   companyUsersCreateSchema,
   userCreateSchema,
@@ -105,5 +106,22 @@ export const userController = {
     });
 
     res.status(204).send();
+  },
+
+  linkExistingCompanyUsers: async (req: Request, res: Response) => {
+    const actorUserId = req.authUserId;
+    if (!actorUserId) {
+      res.status(401).json({ error: 'Usuário não autenticado.' });
+      return;
+    }
+
+    const payload = companyUsersLinkSchema.parse(req.body);
+    const result = await userService.linkExistingCompanyUsers(actorUserId, {
+      companyName: payload.companyName,
+      managerEmail: payload.managerEmail,
+      operatorEmail: payload.operatorEmail,
+    });
+
+    res.status(200).json(result);
   },
 };

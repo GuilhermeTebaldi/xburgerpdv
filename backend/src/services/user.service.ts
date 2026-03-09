@@ -35,6 +35,12 @@ interface SetCompanyStatusInput {
   isActive: boolean;
 }
 
+interface LinkExistingCompanyUsersInput {
+  companyName: string;
+  managerEmail: string;
+  operatorEmail: string;
+}
+
 const EMPTY_APP_STATE = {
   ingredients: [],
   products: [],
@@ -285,6 +291,97 @@ export class UserService {
     });
 
     return result;
+  }
+
+  async linkExistingCompanyUsers(actorUserId: string, input: LinkExistingCompanyUsersInput) {
+    await assertAdminActor(actorUserId);
+
+    const companyName = input.companyName.trim();
+    const managerEmail = input.managerEmail.trim().toLowerCase();
+    const operatorEmail = input.operatorEmail.trim().toLowerCase();
+
+    if (managerEmail === operatorEmail) {
+      throw new HttpError(409, 'E-mail do operador deve ser diferente do ADMGERENTE.');
+    }
+
+    return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const [manager, operator] = await Promise.all([
+        tx.user.findUnique({
+          where: { email: managerEmail },
+          select: { id: true, email: true, name: true, role: true, isActive: true, billingBlocked: true, createdAt: true, updatedAt: true },
+        }),
+        tx.user.findUnique({
+          where: { email: operatorEmail },
+          select: { id: true, email: true, name: true, role: true, isActive: true, billingBlocked: true, createdAt: true, updatedAt: true },
+        }),
+      ]);
+
+      if (!manager) {
+        throw new HttpError(404, 'ADMGERENTE não encontrado para o e-mail informado.');
+      }
+      if (!operator) {
+        throw new HttpError(404, 'OPERADOR não encontrado para o e-mail informado.');
+      }
+
+      const touchesAdminGeral = [manager, operator].some(
+        (user) => user.email.trim().toLowerCase() === ADMIN_GERAL_EMAIL
+      );
+      if (touchesAdminGeral) {
+        throw new HttpError(403, 'Conta de gestão não pode ser vinculada como empresa cliente.');
+      }
+
+      const managerState = await tx.appState.findUnique({
+        where: { ownerUserId: manager.id },
+        select: { ownerUserId: true, updatedAt: true },
+      });
+      const operatorState = await tx.appState.findUnique({
+        where: { ownerUserId: operator.id },
+        select: { ownerUserId: true, updatedAt: true },
+      });
+
+      const sharedOwnerId =
+        managerState && operatorState
+          ? managerState.updatedAt >= operatorState.updatedAt
+            ? manager.id
+            : operator.id
+          : managerState
+            ? manager.id
+            : operatorState
+              ? operator.id
+              : manager.id;
+
+      await tx.user.update({
+        where: { id: manager.id },
+        data: {
+          companyName,
+          role: UserRole.ADMIN,
+          stateOwnerUserId: sharedOwnerId,
+        },
+      });
+      await tx.user.update({
+        where: { id: operator.id },
+        data: {
+          companyName,
+          role: UserRole.OPERATOR,
+          stateOwnerUserId: sharedOwnerId,
+        },
+      });
+
+      await tx.appState.upsert({
+        where: { ownerUserId: sharedOwnerId },
+        create: {
+          ownerUserId: sharedOwnerId,
+          stateJson: EMPTY_APP_STATE as Prisma.InputJsonValue,
+        },
+        update: {},
+      });
+
+      return {
+        managerEmail,
+        operatorEmail,
+        sharedOwnerId,
+      };
+    });
   }
 
   private async resolveCompanyUsers(stateOwnerUserId: string) {
