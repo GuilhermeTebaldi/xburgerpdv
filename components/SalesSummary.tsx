@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { DailySalesHistoryEntry, Ingredient, Sale, SaleOrigin, StockEntry } from '../types';
+import { APP_ORIGINS, AppOrigin, buildAppChannelSummary } from '../utils/appChannelSummary';
 import { formatStockQuantityByUnit, getRecipeQuantityUnitLabel } from '../utils/recipe';
 
 interface SalesSummaryProps {
@@ -44,6 +45,17 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethodSummaryKey, string> = {
   DEBITO: 'Débito',
   CREDITO: 'Crédito',
   DINHEIRO: 'Dinheiro',
+};
+const APP_ORIGIN_STYLE: Record<AppOrigin, { card: string }> = {
+  IFOOD: {
+    card: 'bg-red-600 text-white',
+  },
+  APP99: {
+    card: 'bg-amber-600 text-white',
+  },
+  KEETA: {
+    card: 'bg-emerald-600 text-white',
+  },
 };
 
 const getSaleOriginLabel = (origin: SaleOrigin | null | undefined): string => {
@@ -135,6 +147,78 @@ const escapeHtml = (value: string): string =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+
+const THERMAL_REPORT_COLUMNS = 48;
+const THERMAL_REPORT_WIDTH_MM = 72;
+const THERMAL_REPORT_SEPARATOR = '-'.repeat(THERMAL_REPORT_COLUMNS);
+
+const normalizeThermalText = (value: string): string => value.replace(/\s+/g, ' ').trim();
+
+const formatThermalCurrency = (value: number): string =>
+  `R$ ${(Number.isFinite(value) ? value : 0).toFixed(2).replace('.', ',')}`;
+
+const fitThermalText = (value: string, width: number): string => {
+  const normalized = normalizeThermalText(value);
+  if (normalized.length <= width) return normalized;
+  if (width <= 1) return normalized.slice(0, width);
+  return normalized.slice(0, width);
+};
+
+const alignThermalPair = (left: string, right: string, width = THERMAL_REPORT_COLUMNS): string => {
+  const leftText = normalizeThermalText(left);
+  const rightText = normalizeThermalText(right);
+  if (!rightText) return fitThermalText(leftText, width);
+
+  const maxLeft = width - rightText.length - 1;
+  if (maxLeft <= 0) return fitThermalText(rightText, width);
+
+  const fittedLeft = fitThermalText(leftText, maxLeft);
+  const spaces = Math.max(1, width - fittedLeft.length - rightText.length);
+  return `${fittedLeft}${' '.repeat(spaces)}${rightText}`;
+};
+
+const centerThermalText = (value: string, width = THERMAL_REPORT_COLUMNS): string => {
+  const fitted = fitThermalText(value, width);
+  const remaining = width - fitted.length;
+  if (remaining <= 0) return fitted;
+  const leftPad = Math.floor(remaining / 2);
+  const rightPad = remaining - leftPad;
+  return `${' '.repeat(leftPad)}${fitted}${' '.repeat(rightPad)}`;
+};
+
+const wrapThermalText = (value: string, width = THERMAL_REPORT_COLUMNS): string[] => {
+  const normalized = normalizeThermalText(value);
+  if (!normalized) return [''];
+
+  const words = normalized.split(' ');
+  const lines: string[] = [];
+  let current = '';
+
+  words.forEach((word) => {
+    if (word.length > width) {
+      if (current) {
+        lines.push(current);
+        current = '';
+      }
+      for (let i = 0; i < word.length; i += width) {
+        lines.push(word.slice(i, i + width));
+      }
+      return;
+    }
+
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length <= width) {
+      current = candidate;
+      return;
+    }
+
+    if (current) lines.push(current);
+    current = word;
+  });
+
+  if (current) lines.push(current);
+  return lines;
+};
 
 const summarizePaymentMethods = (
   reportSales: Sale[]
@@ -256,6 +340,20 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
     [stockEntries]
   );
   const totalProfit = useMemo(() => totalRevenue - totalCost, [totalRevenue, totalCost]);
+  const appChannelSummary = useMemo(() => buildAppChannelSummary(sales), [sales]);
+  const appOriginRows = useMemo(
+    () =>
+      APP_ORIGINS.map((origin) => {
+        const summary = appChannelSummary.byOrigin[origin];
+        return {
+          origin,
+          label: getSaleOriginLabel(origin),
+          orders: summary.orders,
+          revenue: summary.revenue,
+        };
+      }).filter((row) => row.orders > 0),
+    [appChannelSummary]
+  );
   const selectedCashPurchaseIngredient = useMemo(
     () =>
       cashPurchaseType !== 'INGREDIENT'
@@ -397,211 +495,199 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
   }, [archiveSalesByDay, mergedDailySalesHistory]);
 
   const printReport = useCallback(
-    (report: DailySalesHistoryEntry, reportSales: Sale[] = []) => {
-    const printWindow = window.open('', '_blank', 'width=900,height=980');
-    if (!printWindow) return false;
+    (
+      report: DailySalesHistoryEntry,
+      reportSales: Sale[] = [],
+      existingWindow?: Window | null
+    ) => {
+      const printWindow =
+        existingWindow && !existingWindow.closed
+          ? existingWindow
+          : window.open('', '_blank', 'width=420,height=980');
+      if (!printWindow) return false;
 
-    const closedAt = toDate(report.closedAt);
-    const cashExpenses = roundMoney(Math.max(0, Number(report.cashExpenses) || 0));
-    const estimatedCash =
-      report.openingCash + report.totalRevenue - report.totalPurchases - cashExpenses;
-    const orderedSales = [...reportSales].sort(
-      (a, b) => toDate(a.timestamp).getTime() - toDate(b.timestamp).getTime()
-    );
-    const paymentSummary = summarizePaymentMethods(orderedSales);
-    const paymentRows = paymentSummary.rows
-      .map(
-        (row) => `<tr>
-          <td>${escapeHtml(row.label)}</td>
-          <td>R$ ${row.value.toFixed(2)}</td>
-        </tr>`
-      )
-      .join('');
-    const paymentUnclassifiedRow =
-      paymentSummary.unclassifiedValue > 0
-        ? `<tr>
-          <td>Não informado</td>
-          <td>R$ ${paymentSummary.unclassifiedValue.toFixed(2)}</td>
-        </tr>`
-        : '';
-    const paymentSummarySection =
-      orderedSales.length > 0
-        ? `<section class="section">
-    <h2>Fechamento por Forma de Pagamento</h2>
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Forma</th>
-          <th>Valor</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${paymentRows}
-        ${paymentUnclassifiedRow}
-      </tbody>
-    </table>
-  </section>`
-        : `<section class="section">
-    <h2>Fechamento por Forma de Pagamento</h2>
-    <p class="muted">Sem detalhamento de vendas para calcular por método.</p>
-  </section>`;
-    const productSummary = orderedSales.reduce<
-      Record<string, { qty: number; revenue: number; cost: number }>
-    >((acc, sale) => {
-      const key = sale.productName || 'Sem nome';
-      if (!acc[key]) {
-        acc[key] = { qty: 0, revenue: 0, cost: 0 };
+      const closedAt = toDate(report.closedAt);
+      const cashExpenses = roundMoney(Math.max(0, Number(report.cashExpenses) || 0));
+      const estimatedCash = report.openingCash + report.totalRevenue - report.totalPurchases - cashExpenses;
+      const orderedSales = [...reportSales].sort(
+        (a, b) => toDate(a.timestamp).getTime() - toDate(b.timestamp).getTime()
+      );
+      const paymentSummary = summarizePaymentMethods(orderedSales);
+
+      const productSummary = orderedSales.reduce<Record<string, { qty: number; revenue: number; cost: number }>>(
+        (acc, sale) => {
+          const key = sale.productName || 'Sem nome';
+          if (!acc[key]) {
+            acc[key] = { qty: 0, revenue: 0, cost: 0 };
+          }
+          acc[key].qty += 1;
+          acc[key].revenue += Number(sale.total) || 0;
+          acc[key].cost += Number(sale.totalCost) || 0;
+          return acc;
+        },
+        {}
+      );
+
+      const reportLines: string[] = [];
+      const closedDate = closedAt.toLocaleDateString('pt-BR');
+      const closedTime = closedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+      reportLines.push(centerThermalText('RELATORIO DIARIO DE VENDAS'));
+      reportLines.push(alignThermalPair(`Data: ${closedDate}`, `Hora: ${closedTime}`));
+      reportLines.push(THERMAL_REPORT_SEPARATOR);
+      reportLines.push(alignThermalPair('Caixa Inicial:', formatThermalCurrency(report.openingCash)));
+      reportLines.push(alignThermalPair('Faturamento:', formatThermalCurrency(report.totalRevenue)));
+      reportLines.push(alignThermalPair('Compras (Insumos):', formatThermalCurrency(report.totalPurchases)));
+      reportLines.push(alignThermalPair('Lucro:', formatThermalCurrency(report.totalProfit)));
+      reportLines.push(alignThermalPair('Pedidos:', String(report.saleCount)));
+      reportLines.push(alignThermalPair('Saida de Caixa:', formatThermalCurrency(cashExpenses)));
+      reportLines.push(alignThermalPair('Caixa Estimado:', formatThermalCurrency(estimatedCash)));
+      reportLines.push(THERMAL_REPORT_SEPARATOR);
+      reportLines.push(centerThermalText('FORMA PAGAMENTO'));
+
+      if (orderedSales.length > 0) {
+        paymentSummary.rows.forEach((row) => {
+          reportLines.push(alignThermalPair(row.label, formatThermalCurrency(row.value)));
+        });
+        if (paymentSummary.unclassifiedValue > 0) {
+          reportLines.push(
+            alignThermalPair('Nao informado', formatThermalCurrency(paymentSummary.unclassifiedValue))
+          );
+        }
+      } else {
+        reportLines.push('Sem detalhamento de vendas para pagamento.');
       }
-      acc[key].qty += 1;
-      acc[key].revenue += sale.total || 0;
-      acc[key].cost += sale.totalCost || 0;
-      return acc;
-    }, {});
-    const summaryRows = Object.entries(productSummary)
-      .sort((a, b) => b[1].qty - a[1].qty)
-      .map(([productName, row]) => {
-        const profit = row.revenue - row.cost;
-        return `<tr>
-          <td>${escapeHtml(productName)}</td>
-          <td>${row.qty}</td>
-          <td>R$ ${row.revenue.toFixed(2)}</td>
-          <td>R$ ${row.cost.toFixed(2)}</td>
-          <td>R$ ${profit.toFixed(2)}</td>
-        </tr>`;
-      })
-      .join('');
-    const salesRows = orderedSales
-      .map((sale, index) => {
-        const saleProfit = (sale.total || 0) - (sale.totalCost || 0);
-        const paymentMethod = sale.payment?.method || '--';
-        const saleOrigin = getSaleOriginLabel(sale.saleOrigin);
-        const appValue =
-          isAppSaleOrigin(sale.saleOrigin) && Number.isFinite(Number(sale.appOrderTotal))
-            ? `R$ ${(Number(sale.appOrderTotal) || 0).toFixed(2)}`
-            : '--';
-        return `<tr>
-          <td>${index + 1}</td>
-          <td>${toDate(sale.timestamp).toLocaleString('pt-BR')}</td>
-          <td>${escapeHtml(sale.productName || 'Sem nome')}</td>
-          <td>${escapeHtml(paymentMethod)}</td>
-          <td>${escapeHtml(saleOrigin)}</td>
-          <td>${appValue}</td>
-          <td>R$ ${(sale.total || 0).toFixed(2)}</td>
-          <td>R$ ${(sale.totalCost || 0).toFixed(2)}</td>
-          <td>R$ ${saleProfit.toFixed(2)}</td>
-        </tr>`;
-      })
-      .join('');
-    const detailsSection =
-      orderedSales.length > 0
-        ? `<section class="section">
-    <h2>Resumo por Produto</h2>
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Produto</th>
-          <th>Qtd</th>
-          <th>Faturamento</th>
-          <th>Compras</th>
-          <th>Lucro</th>
-        </tr>
-      </thead>
-      <tbody>${summaryRows}</tbody>
-    </table>
-  </section>
-  <section class="section">
-    <h2>Vendas Registradas</h2>
-    <table class="table">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Horário</th>
-          <th>Produto</th>
-          <th>Pagamento</th>
-          <th>Canal</th>
-          <th>Valor App</th>
-          <th>Faturamento</th>
-          <th>Compras</th>
-          <th>Lucro</th>
-        </tr>
-      </thead>
-      <tbody>${salesRows}</tbody>
-    </table>
-  </section>`
-        : `<section class="section">
-    <h2>Detalhamento de Vendas</h2>
-    <p class="muted">Este relatório não possui a lista de vendas detalhada.</p>
-  </section>`;
 
-    const html = `<!doctype html>
+      reportLines.push(THERMAL_REPORT_SEPARATOR);
+
+      if (orderedSales.length > 0) {
+        reportLines.push(centerThermalText('RESUMO POR PRODUTO'));
+        reportLines.push(THERMAL_REPORT_SEPARATOR);
+        Object.entries(productSummary)
+          .sort((a, b) => b[1].qty - a[1].qty || b[1].revenue - a[1].revenue)
+          .forEach(([productName, row]) => {
+            const profit = row.revenue - row.cost;
+            wrapThermalText(productName).forEach((line) => {
+              reportLines.push(line);
+            });
+            reportLines.push(alignThermalPair(`Qtd: ${row.qty}`, `Fat: ${formatThermalCurrency(row.revenue)}`));
+            reportLines.push(alignThermalPair(`Cmp: ${formatThermalCurrency(row.cost)}`, `Luc: ${formatThermalCurrency(profit)}`));
+            reportLines.push(THERMAL_REPORT_SEPARATOR);
+          });
+
+        reportLines.push(centerThermalText('VENDAS REGISTRADAS'));
+        reportLines.push(THERMAL_REPORT_SEPARATOR);
+
+        orderedSales.forEach((sale, index) => {
+          const saleDate = toDate(sale.timestamp);
+          const saleHour = saleDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+          const saleTotal = Number(sale.total) || 0;
+          const saleCost = Number(sale.totalCost) || 0;
+          const saleProfit = saleTotal - saleCost;
+          const paymentMethod = (sale.payment?.method || 'NAO INFORMADO').toUpperCase();
+          const saleOrigin = getSaleOriginLabel(sale.saleOrigin).toUpperCase();
+          const appOrderValue = Number(sale.appOrderTotal);
+          const appOrderLabel =
+            isAppSaleOrigin(sale.saleOrigin) && Number.isFinite(appOrderValue) && appOrderValue > 0
+              ? formatThermalCurrency(appOrderValue)
+              : '';
+
+          reportLines.push(alignThermalPair(`#${String(index + 1).padStart(3, '0')} ${saleHour}`, paymentMethod));
+          wrapThermalText(sale.productName || 'Sem nome').forEach((line) => {
+            reportLines.push(line);
+          });
+          reportLines.push(alignThermalPair(`Canal: ${saleOrigin}`, appOrderLabel ? `App: ${appOrderLabel}` : ''));
+          reportLines.push(alignThermalPair(`Fat: ${formatThermalCurrency(saleTotal)}`, `Cmp: ${formatThermalCurrency(saleCost)}`));
+          reportLines.push(alignThermalPair('Lucro:', formatThermalCurrency(saleProfit)));
+          reportLines.push(THERMAL_REPORT_SEPARATOR);
+        });
+      } else {
+        reportLines.push(centerThermalText('DETALHAMENTO DE VENDAS'));
+        reportLines.push(THERMAL_REPORT_SEPARATOR);
+        reportLines.push('Este relatorio nao possui vendas detalhadas.');
+        reportLines.push(THERMAL_REPORT_SEPARATOR);
+      }
+
+      reportLines.push('');
+      reportLines.push(centerThermalText('FIM DO RELATORIO'));
+      reportLines.push('');
+
+      const html = `<!doctype html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
   <title>Relatório Diário</title>
   <style>
-    body, body * { font-weight: 700; }
-    body { font-family: Arial, sans-serif; padding: 24px; color: #0f172a; }
-    h1 { margin: 0 0 6px; font-size: 18px; font-weight: 800; }
-    h2 { margin: 0 0 10px; font-size: 14px; font-weight: 800; }
-    p { margin: 0 0 10px; font-size: 12px; font-weight: 700; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
-    .card { border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; background: #f8fafc; }
-    .label { font-size: 10px; text-transform: uppercase; color: #475569; font-weight: 800; letter-spacing: .08em; }
-    .value { font-size: 16px; font-weight: 900; margin-top: 6px; line-height: 1.25; }
-    .section { margin-top: 22px; }
-    .muted { color: #64748b; font-size: 12px; font-weight: 700; }
-    .table { width: 100%; border-collapse: collapse; font-size: 11px; }
-    .table th, .table td { border: 1px solid #cbd5e1; padding: 7px; text-align: left; font-weight: 700; }
-    .table th { background: #f1f5f9; text-transform: uppercase; letter-spacing: .04em; font-size: 9px; font-weight: 800; }
-    @media print {
-      @page { margin: 3mm; }
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #fff;
+    }
+    body {
+      width: ${THERMAL_REPORT_WIDTH_MM}mm;
+      max-width: ${THERMAL_REPORT_WIDTH_MM}mm;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 12px;
+      line-height: 1.35;
+      font-weight: 800;
+      color: #000;
+      text-rendering: geometricPrecision;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .report {
+      width: ${THERMAL_REPORT_WIDTH_MM}mm;
+      max-width: ${THERMAL_REPORT_WIDTH_MM}mm;
+      padding: 2mm;
+    }
+    pre {
+      margin: 0;
+      font-family: inherit;
+      font-size: inherit;
+      line-height: inherit;
+      font-weight: inherit;
+      white-space: pre;
+      letter-spacing: 0;
+    }
+    @page {
+      size: 80mm auto;
+      margin: 0;
+    }
+    @media screen {
       body {
-        padding: 0;
-        width: 100%;
-        max-width: 72mm;
-        margin: 0 auto;
+        margin: 10px auto;
+        box-shadow: 0 0 0 1px #e2e8f0;
       }
-      h1 { font-size: 14px; }
-      h2 { font-size: 11px; }
-      p { font-size: 10px; }
-      .grid {
-        grid-template-columns: 1fr;
-        gap: 6px;
+    }
+    @media print {
+      html, body {
+        width: ${THERMAL_REPORT_WIDTH_MM}mm;
+        max-width: ${THERMAL_REPORT_WIDTH_MM}mm;
       }
-      .card { padding: 8px; border-radius: 8px; }
-      .label { font-size: 8px; }
-      .value { font-size: 12px; }
-      .section { margin-top: 12px; }
-      .table { font-size: 9px; }
-      .table th, .table td { padding: 4px; }
-      .table th { font-size: 8px; }
     }
   </style>
 </head>
 <body>
-  <h1>Relatório Diário de Vendas</h1>
-  <p>Fechado em: ${closedAt.toLocaleString('pt-BR')}</p>
-  <div class="grid">
-    <div class="card"><div class="label">Caixa Informado</div><div class="value">R$ ${report.openingCash.toFixed(2)}</div></div>
-    <div class="card"><div class="label">Faturamento</div><div class="value">R$ ${report.totalRevenue.toFixed(2)}</div></div>
-    <div class="card"><div class="label">Compras (Custos)</div><div class="value">R$ ${report.totalPurchases.toFixed(2)}</div></div>
-    <div class="card"><div class="label">Lucro</div><div class="value">R$ ${report.totalProfit.toFixed(2)}</div></div>
-    <div class="card"><div class="label">Pedidos</div><div class="value">${report.saleCount}</div></div>
-    <div class="card"><div class="label">Saída de Caixa</div><div class="value">R$ ${cashExpenses.toFixed(2)}</div></div>
-    <div class="card"><div class="label">Caixa Estimado</div><div class="value">R$ ${estimatedCash.toFixed(2)}</div></div>
+  <div class="report">
+    <pre>${escapeHtml(reportLines.join('\n'))}</pre>
   </div>
-  ${paymentSummarySection}
-  ${detailsSection}
 </body>
 </html>`;
 
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
-    return true;
-  }, []);
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
+      window.setTimeout(() => {
+        if (printWindow.closed) return;
+        printWindow.focus();
+        printWindow.print();
+      }, 120);
+      return true;
+    },
+    []
+  );
 
   const handleSaleClick = (e: React.MouseEvent<HTMLButtonElement>, saleId: string) => {
     if (selectedSaleId === saleId) {
@@ -695,20 +781,24 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
   const handleRestart = async () => {
     if (isClosing) return;
     if (!confirm('Deseja realmente encerrar o dia? O caixa será zerado para uma nova sessão.')) return;
-
-    const shouldPrint = confirm(
-      'Deseja imprimir o relatório do dia antes de fechar?'
-    );
-
-    if (shouldPrint) {
-      printReport(currentDayReport, sales);
-    }
+    const reportSnapshot: DailySalesHistoryEntry = {
+      ...currentDayReport,
+      closedAt: new Date(),
+    };
+    const salesSnapshot = [...sales];
+    const deferredPrintWindow = window.open('', '_blank', 'width=420,height=980');
 
     setIsClosing(true);
     try {
       const closed = await onCloseDay?.();
-      if (closed === false) return;
+      if (closed === false) {
+        if (deferredPrintWindow && !deferredPrintWindow.closed) {
+          deferredPrintWindow.close();
+        }
+        return;
+      }
       setSelectedSaleId(null);
+      printReport(reportSnapshot, salesSnapshot, deferredPrintWindow);
     } finally {
       setIsClosing(false);
     }
@@ -1055,24 +1145,47 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
 
       {activeTab === 'REPORT' && (
         <>
-          <div className="qb-sales-stats grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-red-600 text-white p-6 rounded-3xl shadow-lg">
+          <div className="qb-sales-stats flex flex-nowrap gap-4 overflow-x-auto pb-1">
+            <div className="qb-sales-stat-card bg-red-600 text-white p-6 rounded-3xl shadow-lg">
               <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-1">Faturamento</p>
               <h4 className="text-3xl font-black">{formatCurrency(totalRevenue)}</h4>
             </div>
-            <div className="bg-slate-800 text-white p-6 rounded-3xl shadow-lg">
+            <div className="qb-sales-stat-card bg-slate-800 text-white p-6 rounded-3xl shadow-lg">
               <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-1">Compras (Insumos)</p>
               <h4 className="text-3xl font-black">{formatCurrency(totalCost)}</h4>
             </div>
-            <div className="bg-green-600 text-white p-6 rounded-3xl shadow-lg">
+            <div className="qb-sales-stat-card bg-green-600 text-white p-6 rounded-3xl shadow-lg">
               <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-1">Lucro</p>
               <h4 className="text-3xl font-black">{formatCurrency(totalProfit)}</h4>
             </div>
-            <div className="bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">
+            <div className="qb-sales-stat-card bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">
               <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Pedidos</p>
               <h4 className="text-3xl font-black text-slate-800">{sales.length}</h4>
             </div>
           </div>
+          {appOriginRows.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                Canais de App com venda
+              </p>
+              <div className="qb-sales-stats qb-sales-app-stats flex flex-nowrap gap-4 overflow-x-auto pb-1">
+                {appOriginRows.map((row) => {
+                  const style = APP_ORIGIN_STYLE[row.origin];
+                  return (
+                    <div
+                      key={row.origin}
+                      className={`qb-sales-stat-card qb-sales-app-card ${
+                        appOriginRows.length === 1 ? 'qb-sales-app-card-single' : ''
+                      } p-6 rounded-3xl shadow-lg ${style.card}`}
+                    >
+                      <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-1">{row.label}</p>
+                      <h4 className="text-3xl font-black">{formatCurrency(row.revenue)}</h4>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div className="qb-sales-main grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
             <div className="qb-sales-chart-card bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">

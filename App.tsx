@@ -2359,12 +2359,12 @@ const App: React.FC = () => {
       )}
 
       {isPaymentOpen && activeDraft && (
-        <div className="fixed inset-0 z-[225] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-white rounded-[36px] border-2 border-slate-100 shadow-2xl overflow-hidden">
-            <div className="p-5 bg-slate-900 text-white flex items-center justify-between">
+        <div className="qb-payment-overlay fixed inset-0 z-[225] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="qb-payment-modal w-full max-w-lg bg-white rounded-[34px] border-2 border-slate-100 shadow-2xl overflow-hidden flex flex-col">
+            <div className="qb-payment-head p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
               <div>
-                <h3 className="text-xl font-black uppercase tracking-tight">Pagamento</h3>
-                <p className="text-[10px] uppercase tracking-widest text-slate-300">
+                <h3 className="text-lg font-black uppercase tracking-tight">Pagamento</h3>
+                <p className="text-[9px] uppercase tracking-widest text-slate-300">
                   Pagamento na maquininha. Confirme no sistema só após pago.
                 </p>
               </div>
@@ -2376,8 +2376,8 @@ const App: React.FC = () => {
               </button>
             </div>
 
-            <div className="p-5 bg-slate-50 space-y-4">
-              <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+            <div className="qb-payment-body grid grid-cols-1 gap-3 p-3 bg-slate-50 overflow-y-auto">
+              <div className="qb-payment-card qb-payment-section-total bg-white border border-slate-200 rounded-2xl p-3 space-y-2">
                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
                   Total dos itens
                 </p>
@@ -2412,7 +2412,7 @@ const App: React.FC = () => {
                         isAppSaleOriginActive ? paymentOriginBarClass : 'bg-slate-200'
                       }`}
                     />
-                    <div className="relative h-12 pl-3">
+                    <div className="relative h-11 pl-2.5">
                       <div
                         className={`absolute inset-0 flex items-center gap-2 transition-all duration-300 ${
                           isAppSaleOriginActive
@@ -2420,8 +2420,8 @@ const App: React.FC = () => {
                             : 'translate-y-0 scale-100 opacity-100'
                         }`}
                       >
-                        <span className="text-2xl font-black text-red-600 leading-none">R$</span>
-                        <p className="text-3xl font-black text-red-600 leading-none">
+                        <span className="qb-payment-total-currency text-2xl font-black text-red-600 leading-none">R$</span>
+                        <p className="qb-payment-total-value text-2xl font-black text-red-600 leading-none">
                           {formatMoney(effectivePaymentTotal)}
                         </p>
                       </div>
@@ -2432,7 +2432,7 @@ const App: React.FC = () => {
                             : '-translate-y-3 scale-95 opacity-0 pointer-events-none'
                         }`}
                       >
-                        <span className="text-2xl font-black text-red-600 leading-none">R$</span>
+                        <span className="qb-payment-total-currency text-2xl font-black text-red-600 leading-none">R$</span>
                         <input
                           type="number"
                           min="0"
@@ -2440,7 +2440,7 @@ const App: React.FC = () => {
                           value={appOrderTotalInput}
                           onChange={(e) => setAppOrderTotalInput(e.target.value)}
                           ref={appOrderTotalInputRef}
-                          className="w-40 bg-transparent text-3xl font-black text-red-600 leading-none focus:outline-none"
+                          className="qb-payment-total-input w-36 bg-transparent text-2xl font-black text-red-600 leading-none focus:outline-none"
                           placeholder={formatMoney(activeDraft.total)}
                           aria-label="Valor real cobrado no app"
                         />
@@ -2455,12 +2455,13 @@ const App: React.FC = () => {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="qb-payment-card qb-payment-section-methods bg-white border border-slate-200 rounded-2xl p-2">
+                <div className="qb-payment-method-grid grid grid-cols-2 gap-1.5">
                 {(['PIX', 'DEBITO', 'CREDITO', 'DINHEIRO'] as SalePaymentMethod[]).map((method) => (
                   <button
                     key={method}
                     onClick={() => setPaymentMethod(method)}
-                    className={`qb-btn-touch px-3 py-3 rounded-2xl font-black text-xs uppercase tracking-widest border transition-all ${
+                    className={`qb-btn-touch qb-payment-method-btn px-2 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-wide border transition-all ${
                       paymentMethod === method
                         ? 'bg-red-600 border-red-700 text-white'
                         : 'bg-white border-slate-200 text-slate-700 hover:border-red-300'
@@ -2473,9 +2474,10 @@ const App: React.FC = () => {
                         : method}
                   </button>
                 ))}
+                </div>
               </div>
 
-              <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+              <div className="qb-payment-card qb-payment-section-origin bg-white border border-slate-200 rounded-2xl p-3 space-y-2">
                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">
                   Canal da venda
                 </label>
@@ -2483,7 +2485,7 @@ const App: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => handleToggleAppSaleOrigin('IFOOD')}
-                    className={`qb-btn-touch w-12 h-12 rounded-full border font-black text-[9px] uppercase tracking-tight transition-all ${
+                    className={`qb-btn-touch qb-payment-origin-btn qb-payment-origin-circle w-12 h-12 rounded-full border font-black text-[9px] uppercase tracking-tight transition-all ${
                       saleOrigin === 'IFOOD'
                         ? 'bg-red-600 text-white border-red-700 shadow-lg shadow-red-200'
                         : 'bg-white text-red-600 border-red-200 hover:border-red-400'
@@ -2495,7 +2497,7 @@ const App: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => handleToggleAppSaleOrigin('APP99')}
-                    className={`qb-btn-touch w-12 h-12 rounded-full border font-black text-lg leading-none transition-all ${
+                    className={`qb-btn-touch qb-payment-origin-btn qb-payment-origin-circle w-12 h-12 rounded-full border font-black text-lg leading-none transition-all ${
                       saleOrigin === 'APP99'
                         ? 'bg-yellow-400 text-slate-900 border-yellow-500 shadow-lg shadow-yellow-200'
                         : 'bg-white text-yellow-600 border-yellow-300 hover:border-yellow-500'
@@ -2507,7 +2509,7 @@ const App: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => handleToggleAppSaleOrigin('KEETA')}
-                    className={`qb-btn-touch h-12 rounded-full border px-3 font-black text-[9px] uppercase tracking-tight transition-all ${
+                    className={`qb-btn-touch qb-payment-origin-btn qb-payment-origin-pill h-12 rounded-full border px-3 font-black text-[9px] uppercase tracking-tight transition-all ${
                       saleOrigin === 'KEETA'
                         ? 'bg-emerald-500 text-white border-emerald-600 shadow-lg shadow-emerald-200'
                         : 'bg-white text-emerald-700 border-emerald-300 hover:border-emerald-500'
@@ -2520,7 +2522,7 @@ const App: React.FC = () => {
               </div>
 
               {paymentMethod === 'DINHEIRO' ? (
-                <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2">
+                <div className="qb-payment-card qb-payment-cash-card qb-payment-section-detail qb-payment-method-detail bg-white border border-slate-200 rounded-2xl p-3 flex flex-col gap-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">
                     Valor recebido
                   </label>
@@ -2530,35 +2532,35 @@ const App: React.FC = () => {
                     step="0.01"
                     value={cashReceivedInput}
                     onChange={(e) => setCashReceivedInput(e.target.value)}
-                    className="w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-2 font-black text-slate-800"
+                    className="qb-payment-cash-input w-full bg-slate-100 border border-slate-200 rounded-xl px-3 py-1.5 font-black text-sm leading-tight text-slate-800"
                     placeholder="0,00"
                   />
                   {paymentCashDelta !== null ? (
                     paymentCashDelta >= 0 ? (
-                      <p className="text-xs font-black uppercase tracking-widest text-green-700">
+                      <p className="qb-payment-cash-status text-[11px] font-black text-green-700">
                         Troco: R$ {formatMoney(paymentCashDelta)}
                       </p>
                     ) : (
-                      <p className="text-xs font-black uppercase tracking-widest text-red-700">
+                      <p className="qb-payment-cash-status text-[11px] font-black text-red-700">
                         Faltam: R$ {formatMoney(Math.abs(paymentCashDelta))}
                       </p>
                     )
                   ) : (
-                    <p className="text-xs font-black uppercase tracking-widest text-slate-500">
+                    <p className="qb-payment-cash-status text-[10px] font-bold text-slate-500">
                       Informe o valor recebido para calcular troco.
                     </p>
                   )}
                 </div>
               ) : (
-                <div className="bg-white border border-slate-200 rounded-2xl p-4">
-                  <p className="text-xs font-black uppercase tracking-widest text-slate-600">
+                <div className="qb-payment-card qb-payment-section-detail qb-payment-method-detail bg-white border border-slate-200 rounded-2xl p-3">
+                  <p className="text-[11px] font-black uppercase tracking-widest text-slate-600">
                     Receba na maquininha e depois clique em confirmar pago.
                   </p>
                 </div>
               )}
             </div>
 
-            <div className="p-4 bg-white border-t border-slate-100 flex flex-wrap items-center justify-end gap-2">
+            <div className="qb-payment-footer p-3 bg-white border-t border-slate-100 flex flex-wrap items-center justify-end gap-2 shrink-0">
               <button
                 onClick={() => {
                   setIsPaymentOpen(false);
