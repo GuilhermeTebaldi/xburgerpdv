@@ -15,6 +15,7 @@ interface ManagedUser {
   name: string | null;
   companyName: string | null;
   stateOwnerUserId: string | null;
+  billingBlocked: boolean;
   role: UserRole;
   isActive: boolean;
   createdAt: string;
@@ -108,6 +109,9 @@ const AdminGeralPage: React.FC = () => {
   const [createSuccess, setCreateSuccess] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [companyActionError, setCompanyActionError] = useState('');
+  const [companyActionSuccess, setCompanyActionSuccess] = useState('');
+  const [pendingCompanyKey, setPendingCompanyKey] = useState<string | null>(null);
 
   const groupedCompanies = useMemo<CompanyUsersGroup[]>(() => {
     const groups = new Map<string, CompanyUsersGroup>();
@@ -158,6 +162,8 @@ const AdminGeralPage: React.FC = () => {
     setLoginError('');
     setCreateError('');
     setCreateSuccess('');
+    setCompanyActionError('');
+    setCompanyActionSuccess('');
   };
 
   const loadSession = async (activeToken: string): Promise<boolean> => {
@@ -322,6 +328,78 @@ const AdminGeralPage: React.FC = () => {
       setCreateError('Falha de conexão com o backend.');
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const updateCompanyBilling = async (stateOwnerUserId: string, blocked: boolean) => {
+    if (!token || !stateOwnerUserId || pendingCompanyKey) return;
+    setPendingCompanyKey(stateOwnerUserId);
+    setCompanyActionError('');
+    setCompanyActionSuccess('');
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/v1/users/company/${encodeURIComponent(stateOwnerUserId)}/billing`,
+        {
+          method: 'PATCH',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ blocked }),
+        }
+      );
+
+      if (!response.ok) {
+        const apiError = await extractApiError(response);
+        setCompanyActionError(apiError || 'Falha ao atualizar bloqueio financeiro.');
+        return;
+      }
+
+      setCompanyActionSuccess(
+        blocked ? 'Empresa bloqueada por inadimplência.' : 'Empresa liberada após regularização.'
+      );
+      await loadUsers(token);
+    } catch {
+      setCompanyActionError('Falha de conexão com o backend.');
+    } finally {
+      setPendingCompanyKey(null);
+    }
+  };
+
+  const updateCompanyStatus = async (stateOwnerUserId: string, isActive: boolean) => {
+    if (!token || !stateOwnerUserId || pendingCompanyKey) return;
+    setPendingCompanyKey(stateOwnerUserId);
+    setCompanyActionError('');
+    setCompanyActionSuccess('');
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/v1/users/company/${encodeURIComponent(stateOwnerUserId)}/status`,
+        {
+          method: 'PATCH',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ isActive }),
+        }
+      );
+
+      if (!response.ok) {
+        const apiError = await extractApiError(response);
+        setCompanyActionError(apiError || 'Falha ao atualizar status da empresa.');
+        return;
+      }
+
+      setCompanyActionSuccess(
+        isActive ? 'Empresa reativada com sucesso.' : 'Empresa excluída (desativada) com sucesso.'
+      );
+      await loadUsers(token);
+    } catch {
+      setCompanyActionError('Falha de conexão com o backend.');
+    } finally {
+      setPendingCompanyKey(null);
     }
   };
 
@@ -518,23 +596,36 @@ const AdminGeralPage: React.FC = () => {
                         <th className="py-2 pr-3">OPERADOR</th>
                         <th className="py-2 pr-3">Vínculo</th>
                         <th className="py-2 pr-3">Status</th>
+                        <th className="py-2 pr-3">Cobrança</th>
                         <th className="py-2 pr-3">Criado em</th>
+                        <th className="py-2 pr-3">Ações</th>
                       </tr>
                     </thead>
                     <tbody>
                       {groupedCompanies.map((group) => {
+                        const ownerKey =
+                          group.stateOwnerUserId || group.manager?.id || group.operator?.id || null;
                         const managerLabel = group.manager
                           ? `${group.manager.name || '-'} (${group.manager.email})`
                           : 'Não cadastrado';
                         const operatorLabel = group.operator
                           ? `${group.operator.name || '-'} (${group.operator.email})`
                           : 'Não cadastrado';
+                        const managerActive = group.manager?.isActive ?? false;
+                        const operatorActive = group.operator?.isActive ?? false;
+                        const isBillingBlocked =
+                          (group.manager?.billingBlocked ?? false) || (group.operator?.billingBlocked ?? false);
+                        const isCompanyDisabled =
+                          !managerActive && !operatorActive && (group.manager !== null || group.operator !== null);
+                        const isBusy = Boolean(ownerKey && pendingCompanyKey === ownerKey);
 
                         const statusLabel =
                           group.manager && group.operator
-                            ? group.manager.isActive && group.operator.isActive
+                            ? managerActive && operatorActive
                               ? 'Ativos'
-                              : 'Parcial'
+                              : isCompanyDisabled
+                                ? 'Inativos'
+                                : 'Parcial'
                             : 'Incompleto';
 
                         return (
@@ -547,9 +638,38 @@ const AdminGeralPage: React.FC = () => {
                             </td>
                             <td className="py-2 pr-3">{statusLabel}</td>
                             <td className="py-2 pr-3">
+                              {isBillingBlocked ? 'Bloqueada' : 'Em dia'}
+                            </td>
+                            <td className="py-2 pr-3">
                               {group.latestCreatedAtMs
                                 ? new Date(group.latestCreatedAtMs).toLocaleString('pt-BR')
                                 : '-'}
+                            </td>
+                            <td className="py-2 pr-3">
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  disabled={!ownerKey || isBusy}
+                                  onClick={() => {
+                                    if (!ownerKey) return;
+                                    void updateCompanyBilling(ownerKey, !isBillingBlocked);
+                                  }}
+                                  className="px-3 py-1 rounded-lg border border-slate-300 text-xs font-semibold disabled:opacity-50"
+                                >
+                                  {isBillingBlocked ? 'Liberar' : 'Bloquear'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={!ownerKey || isBusy}
+                                  onClick={() => {
+                                    if (!ownerKey) return;
+                                    void updateCompanyStatus(ownerKey, isCompanyDisabled);
+                                  }}
+                                  className="px-3 py-1 rounded-lg border border-red-300 text-red-700 text-xs font-semibold disabled:opacity-50"
+                                >
+                                  {isCompanyDisabled ? 'Reativar' : 'Excluir'}
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -557,6 +677,12 @@ const AdminGeralPage: React.FC = () => {
                     </tbody>
                   </table>
                 </div>
+              )}
+              {companyActionSuccess && (
+                <p className="text-sm font-semibold text-emerald-700 mt-3">{companyActionSuccess}</p>
+              )}
+              {companyActionError && (
+                <p className="text-sm font-semibold text-red-600 mt-3">{companyActionError}</p>
               )}
             </section>
           </>

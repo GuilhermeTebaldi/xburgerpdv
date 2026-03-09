@@ -78,6 +78,7 @@ const normalizeStatePayloadSafe = (value: unknown): FrontAppState => {
 };
 
 const toVersionTag = (value: Date): string => value.toISOString();
+const ADMIN_GERAL_EMAIL = 'xburger.admin@geral.com';
 
 interface HotStatePatch {
   ingredients: FrontAppState['ingredients'];
@@ -129,13 +130,19 @@ export class StateService {
       where: { id: actorId },
       select: {
         id: true,
+        email: true,
         isActive: true,
+        billingBlocked: true,
         stateOwnerUserId: true,
       },
     });
 
     if (!actor || !actor.isActive) {
       throw new HttpError(401, 'Usuário autenticado não encontrado para acessar o estado.');
+    }
+    const isAdminGeral = actor.email.trim().toLowerCase() === ADMIN_GERAL_EMAIL;
+    if (actor.billingBlocked && !isAdminGeral) {
+      throw new HttpError(402, 'Empresa bloqueada por inadimplência. Regularize o pagamento para liberar o acesso.');
     }
 
     const ownerUserId = actor.stateOwnerUserId?.trim() || actor.id;

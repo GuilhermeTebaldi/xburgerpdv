@@ -32,3 +32,11 @@ export const companyUsersCreateSchema = z
       });
     }
   });
+
+export const companyBillingSchema = z.object({
+  blocked: z.boolean(),
+});
+
+export const companyStatusSchema = z.object({
+  isActive: z.boolean(),
+});

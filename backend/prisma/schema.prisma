@@ -91,6 +91,7 @@ model User {
   name         String?  @db.VarChar(120)
   companyName  String?  @map("company_name") @db.VarChar(120)
   stateOwnerUserId String? @map("state_owner_user_id") @db.Uuid
+  billingBlocked Boolean @default(false) @map("billing_blocked")
   role         UserRole @default(ADMIN)
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at")

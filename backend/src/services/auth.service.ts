@@ -6,6 +6,8 @@ import { getAuthEnv } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../utils/http-error.js';
 
+const ADMIN_GERAL_EMAIL = 'xburger.admin@geral.com';
+
 export class AuthService {
   async login(email: string, password: string) {
     const authEnv = getAuthEnv();
@@ -14,6 +16,10 @@ export class AuthService {
     const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
     if (!user || !user.isActive) {
       throw new HttpError(401, 'Credenciais inválidas.');
+    }
+    const isAdminGeral = user.email.trim().toLowerCase() === ADMIN_GERAL_EMAIL;
+    if (user.billingBlocked && !isAdminGeral) {
+      throw new HttpError(402, 'Empresa bloqueada por inadimplência. Regularize o pagamento para liberar o acesso.');
     }
 
     const passwordMatches = await bcrypt.compare(password, user.passwordHash);
@@ -49,11 +55,16 @@ export class AuthService {
         name: true,
         role: true,
         isActive: true,
+        billingBlocked: true,
       },
     });
 
     if (!user || !user.isActive) {
       throw new HttpError(401, 'Usuário autenticado não encontrado.');
+    }
+    const isAdminGeral = user.email.trim().toLowerCase() === ADMIN_GERAL_EMAIL;
+    if (user.billingBlocked && !isAdminGeral) {
+      throw new HttpError(402, 'Empresa bloqueada por inadimplência. Regularize o pagamento para liberar o acesso.');
     }
 
     return user;

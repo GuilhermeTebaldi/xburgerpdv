@@ -25,6 +25,16 @@ interface CreateCompanyUsersInput {
   isActive: boolean;
 }
 
+interface SetCompanyBillingInput {
+  stateOwnerUserId: string;
+  blocked: boolean;
+}
+
+interface SetCompanyStatusInput {
+  stateOwnerUserId: string;
+  isActive: boolean;
+}
+
 const EMPTY_APP_STATE = {
   ingredients: [],
   products: [],
@@ -40,6 +50,8 @@ const EMPTY_APP_STATE = {
   cashRegisterAmount: 0,
   dailySalesHistory: [],
 } satisfies Record<string, unknown>;
+
+const ADMIN_GERAL_EMAIL = 'xburger.admin@geral.com';
 
 const assertAdminActor = async (actorUserId: string) => {
   const actor = await prisma.user.findUnique({
@@ -73,6 +85,7 @@ export class UserService {
         name: true,
         companyName: true,
         stateOwnerUserId: true,
+        billingBlocked: true,
         role: true,
         isActive: true,
         createdAt: true,
@@ -112,6 +125,7 @@ export class UserService {
         name: true,
         companyName: true,
         stateOwnerUserId: true,
+        billingBlocked: true,
         role: true,
         isActive: true,
         createdAt: true,
@@ -179,6 +193,7 @@ export class UserService {
           name: true,
           companyName: true,
           stateOwnerUserId: true,
+          billingBlocked: true,
           role: true,
           isActive: true,
           createdAt: true,
@@ -211,6 +226,7 @@ export class UserService {
           name: true,
           companyName: true,
           stateOwnerUserId: true,
+          billingBlocked: true,
           role: true,
           isActive: true,
           createdAt: true,
@@ -269,5 +285,58 @@ export class UserService {
     });
 
     return result;
+  }
+
+  private async resolveCompanyUsers(stateOwnerUserId: string) {
+    const ownerId = stateOwnerUserId.trim();
+    if (!ownerId) {
+      throw new HttpError(400, 'Vínculo da empresa inválido.');
+    }
+
+    const users = await prisma.user.findMany({
+      where: {
+        OR: [
+          { stateOwnerUserId: ownerId },
+          { id: ownerId },
+        ],
+      },
+      select: {
+        id: true,
+        email: true,
+      },
+    });
+
+    if (users.length === 0) {
+      throw new HttpError(404, 'Empresa não encontrada para o vínculo informado.');
+    }
+
+    const touchesAdminGeral = users.some(
+      (user) => user.email.trim().toLowerCase() === ADMIN_GERAL_EMAIL
+    );
+    if (touchesAdminGeral) {
+      throw new HttpError(403, 'Conta de gestão não pode ser alterada por estas ações.');
+    }
+
+    return users.map((user) => user.id);
+  }
+
+  async setCompanyBilling(actorUserId: string, input: SetCompanyBillingInput) {
+    await assertAdminActor(actorUserId);
+    const targetUserIds = await this.resolveCompanyUsers(input.stateOwnerUserId);
+
+    await prisma.user.updateMany({
+      where: { id: { in: targetUserIds } },
+      data: { billingBlocked: input.blocked },
+    });
+  }
+
+  async setCompanyStatus(actorUserId: string, input: SetCompanyStatusInput) {
+    await assertAdminActor(actorUserId);
+    const targetUserIds = await this.resolveCompanyUsers(input.stateOwnerUserId);
+
+    await prisma.user.updateMany({
+      where: { id: { in: targetUserIds } },
+      data: { isActive: input.isActive },
+    });
   }
 }

@@ -2,7 +2,12 @@ import type { Request, Response } from 'express';
 import { UserRole } from '@prisma/client';
 
 import { UserService } from '../services/user.service.js';
-import { companyUsersCreateSchema, userCreateSchema } from '../validators/user.validator.js';
+import {
+  companyBillingSchema,
+  companyStatusSchema,
+  companyUsersCreateSchema,
+  userCreateSchema,
+} from '../validators/user.validator.js';
 
 const userService = new UserService();
 
@@ -68,5 +73,37 @@ export const userController = {
     });
 
     res.status(201).json(created);
+  },
+
+  setCompanyBilling: async (req: Request, res: Response) => {
+    const actorUserId = req.authUserId;
+    if (!actorUserId) {
+      res.status(401).json({ error: 'Usuário não autenticado.' });
+      return;
+    }
+
+    const payload = companyBillingSchema.parse(req.body);
+    await userService.setCompanyBilling(actorUserId, {
+      stateOwnerUserId: req.params.stateOwnerUserId,
+      blocked: payload.blocked,
+    });
+
+    res.status(204).send();
+  },
+
+  setCompanyStatus: async (req: Request, res: Response) => {
+    const actorUserId = req.authUserId;
+    if (!actorUserId) {
+      res.status(401).json({ error: 'Usuário não autenticado.' });
+      return;
+    }
+
+    const payload = companyStatusSchema.parse(req.body);
+    await userService.setCompanyStatus(actorUserId, {
+      stateOwnerUserId: req.params.stateOwnerUserId,
+      isActive: payload.isActive,
+    });
+
+    res.status(204).send();
   },
 };
