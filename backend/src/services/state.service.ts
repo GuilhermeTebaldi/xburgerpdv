@@ -291,7 +291,6 @@ export class StateService {
         toVersionTag(saved.updatedAt),
         operationNow
       );
-      await this.pruneExpiredBackupsTx(tx, operationNow);
 
       await new AuditService(tx).log(
         {
@@ -365,7 +364,6 @@ export class StateService {
         toVersionTag(saved.updatedAt),
         operationNow
       );
-      await this.pruneExpiredBackupsTx(tx, operationNow);
 
       await new AuditService(tx).log(
         {
@@ -460,36 +458,34 @@ export class StateService {
     referenceDate: Date
   ): Promise<boolean> {
     const backupDay = toBackupDay(referenceDate, env.DEFAULT_TIMEZONE);
-    const existing = await tx.appStateBackup.findUnique({
-      where: {
-        backupDay_kind: {
-          backupDay,
-          kind: AppStateBackupKind.DAILY,
-        },
-      },
-      select: { id: true },
-    });
-
-    await tx.appStateBackup.upsert({
-      where: {
-        backupDay_kind: {
-          backupDay,
-          kind: AppStateBackupKind.DAILY,
-        },
-      },
-      update: {
-        sourceVersion,
-        stateJson: stateJson as unknown as Prisma.InputJsonValue,
-      },
-      create: {
+    const created = await tx.appStateBackup.createMany({
+      data: {
         kind: AppStateBackupKind.DAILY,
         backupDay,
         sourceVersion,
         stateJson: stateJson as unknown as Prisma.InputJsonValue,
       },
+      skipDuplicates: true,
     });
 
-    return !existing;
+    if (created.count > 0) {
+      return true;
+    }
+
+    await tx.appStateBackup.update({
+      where: {
+        backupDay_kind: {
+          backupDay,
+          kind: AppStateBackupKind.DAILY,
+        },
+      },
+      data: {
+        sourceVersion,
+        stateJson: stateJson as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    return false;
   }
 
   private async pruneExpiredBackupsTx(
