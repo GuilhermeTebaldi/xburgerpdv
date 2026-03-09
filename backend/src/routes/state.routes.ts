@@ -6,6 +6,7 @@ import { asyncHandler } from '../utils/async-handler.js';
 
 export const appStateRouter = Router();
 
+appStateRouter.head('/', stateReadAuth, asyncHandler(stateController.headState));
 appStateRouter.get('/', stateReadAuth, asyncHandler(stateController.getState));
 appStateRouter.put('/', stateWriteAuth, asyncHandler(stateController.putState));
 appStateRouter.delete('/', stateWriteAuth, asyncHandler(stateController.clearState));

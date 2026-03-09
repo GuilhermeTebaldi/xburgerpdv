@@ -35,6 +35,12 @@ const setStateHeaders = (req: Request, res: Response, version: string): void => 
 };
 
 export const stateController = {
+  headState: async (req: Request, res: Response) => {
+    const version = await stateService.getAppStateVersion();
+    setStateHeaders(req, res, version);
+    res.status(204).end();
+  },
+
   getState: async (req: Request, res: Response) => {
     const snapshot = await stateService.getAppState();
     setStateHeaders(req, res, snapshot.version);

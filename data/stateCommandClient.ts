@@ -253,6 +253,14 @@ const readContextFromResponse = (response: Response): StateWriteContext => {
   return { version, token, expiresAtMs: readJwtExpirationMs(token) };
 };
 
+const tryReadContextFromResponse = (response: Response): StateWriteContext | null => {
+  try {
+    return readContextFromResponse(response);
+  } catch {
+    return null;
+  }
+};
+
 const toArray = <T>(value: unknown, fallback: T[]): T[] => (Array.isArray(value) ? (value as T[]) : [...fallback]);
 
 const reviveTimestamp = <T extends { timestamp?: unknown }>(item: T): T => {
@@ -396,18 +404,32 @@ const withCommandId = (command: StateCommand): StateCommand => {
 };
 
 const refreshWriteContext = async (): Promise<void> => {
-  const response = await fetchWithTimeout(getStateApiUrl(), {
+  const headResponse = await fetchWithTimeout(getStateApiUrl(), {
+    method: 'HEAD',
+  });
+
+  if (headResponse.ok) {
+    const headContext = tryReadContextFromResponse(headResponse);
+    if (headContext) {
+      writeContext = headContext;
+      return;
+    }
+  } else if (headResponse.status !== 404 && headResponse.status !== 405) {
+    throw await toApiError(headResponse);
+  }
+
+  const getResponse = await fetchWithTimeout(getStateApiUrl(), {
     method: 'GET',
     headers: {
       Accept: 'application/json',
     },
   });
 
-  if (!response.ok) {
-    throw await toApiError(response);
+  if (!getResponse.ok) {
+    throw await toApiError(getResponse);
   }
 
-  writeContext = readContextFromResponse(response);
+  writeContext = readContextFromResponse(getResponse);
 };
 
 export const runStateCommand = async (command: StateCommand): Promise<AppState> => {

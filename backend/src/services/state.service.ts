@@ -123,6 +123,27 @@ export class StateService {
     return this.persistSnapshot(rebuilt, 'APP_STATE_BOOTSTRAPPED');
   }
 
+  async getAppStateVersion(): Promise<string> {
+    try {
+      const snapshot = await prisma.appState.findUnique({
+        where: { id: 1 },
+        select: { updatedAt: true },
+      });
+      if (snapshot) {
+        return toVersionTag(snapshot.updatedAt);
+      }
+    } catch (error) {
+      if (!this.isMissingAppStateTableError(error)) {
+        throw error;
+      }
+      await this.bootstrapAppStateTables();
+    }
+
+    const rebuilt = await this.buildStateFromDomain();
+    const persisted = await this.persistSnapshot(rebuilt, 'APP_STATE_BOOTSTRAPPED');
+    return persisted.version;
+  }
+
   async saveAppState(
     state: unknown,
     expectedVersion: string,
@@ -341,7 +362,6 @@ export class StateService {
       this.assertExpectedVersion(expectedVersion, currentVersion);
 
       const currentState = current ? normalizeStatePayloadSafe(current.stateJson) : EMPTY_APP_STATE;
-      await this.ensurePreWriteBackupTx(tx, current);
       const nextState = applyStateCommand(currentState, command);
 
       const saved = current
