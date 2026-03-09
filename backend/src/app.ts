@@ -28,7 +28,12 @@ app.use(
         return;
       }
 
-      if (env.corsOrigins.length === 0 || env.corsOrigins.includes(origin)) {
+      if (env.corsOrigins.length === 0) {
+        callback(null, env.NODE_ENV !== 'production');
+        return;
+      }
+
+      if (env.corsOrigins.includes(origin)) {
         callback(null, true);
         return;
       }

@@ -6,9 +6,9 @@ import { asyncHandler } from '../utils/async-handler.js';
 
 export const ingredientRouter = Router();
 
-ingredientRouter.get('/', asyncHandler(ingredientController.list));
-ingredientRouter.get('/movements', asyncHandler(ingredientController.listMovements));
-ingredientRouter.get('/:id', asyncHandler(ingredientController.getById));
+ingredientRouter.get('/', authRequired, asyncHandler(ingredientController.list));
+ingredientRouter.get('/movements', authRequired, asyncHandler(ingredientController.listMovements));
+ingredientRouter.get('/:id', authRequired, asyncHandler(ingredientController.getById));
 ingredientRouter.post('/', authRequired, asyncHandler(ingredientController.create));
 ingredientRouter.patch('/:id', authRequired, asyncHandler(ingredientController.update));
 ingredientRouter.delete('/:id', authRequired, asyncHandler(ingredientController.remove));

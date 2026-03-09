@@ -9,18 +9,18 @@ import {
   RefreshCw,
 } from 'lucide-react';
 
-const DEFAULT_API_BASE_URL = 'https://xburger-backend.onrender.com';
+const DEFAULT_API_BASE_URL = 'http://127.0.0.1:4000';
 const REQUEST_TIMEOUT_MS = 12000;
 
-const DEV_EMAIL = ((import.meta.env.VITE_DEV_CONSOLE_EMAIL as string | undefined) || 'gui@admin.com')
+const DEV_EMAIL = ((import.meta.env.VITE_DEV_CONSOLE_EMAIL as string | undefined) || 'dev@xburgerpdv.com.br')
   .trim()
   .toLowerCase();
-const DEV_PASSWORD = (import.meta.env.VITE_DEV_CONSOLE_PASSWORD as string | undefined) || '16046421';
+const DEV_PASSWORD = (import.meta.env.VITE_DEV_CONSOLE_PASSWORD as string | undefined) || 'change-me-now';
 
-const DEV_ACCESS_SESSION_KEY = 'lanchesdoben_dev_access_session';
-const DEV_ACCESS_LOCAL_KEY = 'lanchesdoben_dev_access_local';
-const DEV_REMEMBER_ACCESS_KEY = 'lanchesdoben_dev_access_remember';
-const DEV_SAVED_EMAIL_KEY = 'lanchesdoben_dev_saved_email';
+const DEV_ACCESS_SESSION_KEY = 'xburger_dev_access_session';
+const DEV_ACCESS_LOCAL_KEY = 'xburger_dev_access_local';
+const DEV_REMEMBER_ACCESS_KEY = 'xburger_dev_access_remember';
+const DEV_SAVED_EMAIL_KEY = 'xburger_dev_saved_email';
 
 interface DeveloperRecipeItem {
   ingredientId: string;
@@ -727,7 +727,7 @@ const DeveloperPortal: React.FC = () => {
                   setEmail(event.target.value);
                   if (loginError) setLoginError('');
                 }}
-                placeholder="gui@admin.com"
+                placeholder="dev@xburgerpdv.com.br"
                 autoComplete="username"
                 className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 outline-none focus:border-brand-red"
                 required

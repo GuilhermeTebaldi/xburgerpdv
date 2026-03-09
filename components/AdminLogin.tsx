@@ -1,23 +1,81 @@
 
 import React, { useState } from 'react';
+import { persistAdminAuthToken } from '../data/adminAuthToken';
 
 interface AdminLoginProps {
-  onLogin: (success: boolean) => void;
+  onLogin: (result: { success: boolean; token?: string }) => void;
 }
+
+const DEFAULT_API_BASE_URL = 'http://127.0.0.1:4000';
+
+const resolveApiBaseUrl = (): string => {
+  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
+  const normalized = raw ? raw.replace(/\/+$/, '') : '';
+  return normalized || DEFAULT_API_BASE_URL;
+};
+
+const extractApiError = async (response: Response): Promise<string | null> => {
+  try {
+    const payload = (await response.json()) as unknown;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+    const record = payload as Record<string, unknown>;
+    if (typeof record.error === 'string' && record.error.trim()) return record.error.trim();
+    if (typeof record.message === 'string' && record.message.trim()) return record.message.trim();
+    return null;
+  } catch {
+    return null;
+  }
+};
 
 const AdminLogin: React.FC<AdminLoginProps> = ({ onLogin }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (email === 'meu@admin.com' && password === 'admin123') {
-      onLogin(true);
-    } else {
-      setError('Credenciais inválidas. Tente novamente.');
+
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    setError('');
+
+    try {
+      const response = await fetch(`${resolveApiBaseUrl()}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          password,
+        }),
+      });
+
+      if (response.ok) {
+        const payload = (await response.json()) as { token?: unknown };
+        const token = typeof payload?.token === 'string' ? payload.token.trim() : '';
+        if (!token) {
+          setError('Resposta inválida do servidor de autenticação.');
+          setTimeout(() => setError(''), 3000);
+          return;
+        }
+        persistAdminAuthToken(token, false);
+        onLogin({ success: true, token });
+        setPassword('');
+        return;
+      }
+
+      const apiError = await extractApiError(response);
+      setError(apiError || 'Credenciais inválidas. Tente novamente.');
       setTimeout(() => setError(''), 3000);
+    } catch {
+      setError('Falha ao conectar com o servidor de autenticação.');
+      setTimeout(() => setError(''), 3000);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -75,9 +133,10 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onLogin }) => {
 
           <button 
             type="submit"
+            disabled={isSubmitting}
             className="qb-btn-touch w-full bg-slate-900 hover:bg-black text-yellow-400 py-5 rounded-[24px] font-black uppercase tracking-tighter text-xl shadow-2xl transition-all active:scale-95 flex items-center justify-center gap-3 mt-4"
           >
-            ACESSAR SISTEMA
+            {isSubmitting ? 'VALIDANDO...' : 'ACESSAR SISTEMA'}
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
           </button>
         </form>

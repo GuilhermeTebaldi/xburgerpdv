@@ -6,5 +6,5 @@ import { asyncHandler } from '../utils/async-handler.js';
 
 export const sessionRouter = Router();
 
-sessionRouter.get('/current', asyncHandler(sessionController.current));
+sessionRouter.get('/current', authRequired, asyncHandler(sessionController.current));
 sessionRouter.post('/current/close', authRequired, asyncHandler(sessionController.closeCurrent));

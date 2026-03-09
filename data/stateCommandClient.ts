@@ -11,9 +11,10 @@ import type {
   StockEntry,
 } from '../types';
 import { DEFAULT_APP_STATE, type AppState } from './appStorage';
+import { readAdminAuthToken } from './adminAuthToken';
 
 const API_TIMEOUT_MS = 12000;
-const DEFAULT_API_BASE_URL = 'https://xburger-backend.onrender.com';
+const DEFAULT_API_BASE_URL = 'http://127.0.0.1:4000';
 
 type BaseCommand = {
   commandId?: string;
@@ -154,6 +155,17 @@ const getStateApiUrl = (): string => {
 };
 
 const getStateCommandsApiUrl = (): string => `${getStateApiUrl()}/commands`;
+
+const getAuthorizationHeader = (): string => {
+  const token = readAdminAuthToken();
+  if (!token) {
+    throw new StateCommandSyncError('Sessão expirada. Faça login novamente para continuar.', {
+      statusCode: 401,
+      retryable: false,
+    });
+  }
+  return `Bearer ${token}`;
+};
 
 const isRetryableHttpStatus = (statusCode: number): boolean =>
   statusCode === 408 || statusCode === 425 || statusCode === 429 || statusCode >= 500;
@@ -405,8 +417,13 @@ const withCommandId = (command: StateCommand): StateCommand => {
 };
 
 const refreshWriteContext = async (): Promise<void> => {
+  const authorization = getAuthorizationHeader();
+
   const headResponse = await fetchWithTimeout(getStateApiUrl(), {
     method: 'HEAD',
+    headers: {
+      Authorization: authorization,
+    },
   });
 
   if (headResponse.ok) {
@@ -423,6 +440,7 @@ const refreshWriteContext = async (): Promise<void> => {
     method: 'GET',
     headers: {
       Accept: 'application/json',
+      Authorization: authorization,
     },
   });
 
@@ -473,6 +491,7 @@ export const runStateCommand = async (command: StateCommand): Promise<AppState> 
         'Content-Type': 'application/json',
         'If-Match': `"${context.version}"`,
         'X-State-Token': context.token,
+        Authorization: getAuthorizationHeader(),
       },
       body: JSON.stringify(payloadCommand),
     });

@@ -6,9 +6,9 @@ import { asyncHandler } from '../utils/async-handler.js';
 
 export const cleaningMaterialRouter = Router();
 
-cleaningMaterialRouter.get('/', asyncHandler(cleaningMaterialController.list));
-cleaningMaterialRouter.get('/movements', asyncHandler(cleaningMaterialController.listMovements));
-cleaningMaterialRouter.get('/:id', asyncHandler(cleaningMaterialController.getById));
+cleaningMaterialRouter.get('/', authRequired, asyncHandler(cleaningMaterialController.list));
+cleaningMaterialRouter.get('/movements', authRequired, asyncHandler(cleaningMaterialController.listMovements));
+cleaningMaterialRouter.get('/:id', authRequired, asyncHandler(cleaningMaterialController.getById));
 cleaningMaterialRouter.post('/', authRequired, asyncHandler(cleaningMaterialController.create));
 cleaningMaterialRouter.patch('/:id', authRequired, asyncHandler(cleaningMaterialController.update));
 cleaningMaterialRouter.delete('/:id', authRequired, asyncHandler(cleaningMaterialController.remove));

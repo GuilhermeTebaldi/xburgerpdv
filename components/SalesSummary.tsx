@@ -87,7 +87,7 @@ const toDate = (value: Date | string): Date => {
 const getDayKey = (value: Date | string): string => toDate(value).toLocaleDateString('pt-BR');
 
 const roundMoney = (value: number): number => Number(value.toFixed(2));
-const LOCAL_DAILY_HISTORY_KEY = 'qb_daily_sales_history_local_v1';
+const LOCAL_DAILY_HISTORY_KEY = 'xburger_daily_sales_history_local_v1';
 
 const normalizeDailyHistoryEntry = (value: unknown): DailySalesHistoryEntry | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;

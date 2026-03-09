@@ -1,6 +1,6 @@
 const API_TIMEOUT_MS = 4000;
-const DEFAULT_API_BASE_URL = 'https://xburger-backend.onrender.com';
-const CACHED_PUBLIC_PRODUCTS_KEY = 'lanchesdoben_public_products_v1';
+const DEFAULT_API_BASE_URL = 'http://127.0.0.1:4000';
+const CACHED_PUBLIC_PRODUCTS_KEY = 'xburger_public_products_v2';
 
 export interface PublicProduct {
   id: string;
@@ -146,7 +146,7 @@ const loadProductsFromEndpoint = async (url: string): Promise<PublicProduct[]> =
 
 export const fetchPublicProducts = async (): Promise<PublicProduct[]> => {
   const apiBaseUrl = resolveApiBaseUrl();
-  const endpoints = [`${apiBaseUrl}/api/v1/products`, `${apiBaseUrl}/api/v1/state`];
+  const endpoints = [`${apiBaseUrl}/api/v1/products/public`];
   let lastError: Error | null = null;
   let emptyResult: PublicProduct[] | null = null;
 

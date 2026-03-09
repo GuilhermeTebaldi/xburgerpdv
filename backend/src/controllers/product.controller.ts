@@ -8,6 +8,14 @@ import { productCreateSchema, productUpdateSchema } from '../validators/product.
 
 const productService = new ProductService();
 
+const toPublicFrontProduct = (product: ReturnType<typeof toFrontProduct>) => ({
+  id: product.id,
+  name: product.name,
+  price: product.price,
+  imageUrl: product.imageUrl,
+  category: product.category,
+});
+
 const toCategory = (category: 'SNACK' | 'DRINK' | 'SIDE') => {
   if (category === 'SNACK') return ProductCategory.SNACK;
   if (category === 'DRINK') return ProductCategory.DRINK;
@@ -15,6 +23,11 @@ const toCategory = (category: 'SNACK' | 'DRINK' | 'SIDE') => {
 };
 
 export const productController = {
+  listPublic: async (_req: Request, res: Response) => {
+    const products = await productService.list(false);
+    res.status(200).json(products.map(toFrontProduct).map(toPublicFrontProduct));
+  },
+
   list: async (req: Request, res: Response) => {
     const includeInactive = req.query.includeInactive === 'true';
     const products = await productService.list(includeInactive);

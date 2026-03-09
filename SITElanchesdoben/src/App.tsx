@@ -1,916 +1,600 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
-import React, { startTransition, useEffect, useState } from 'react';
-import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence, useScroll, useTransform } from 'framer-motion';
 import { 
-  Menu as MenuIcon, 
+  LayoutDashboard, 
+  Package, 
+  TrendingUp, 
+  ShoppingCart, 
+  Users, 
+  ChevronRight, 
+  Menu, 
   X, 
-  ShoppingBag, 
-  Instagram, 
-  Facebook, 
-  MapPin, 
-  Phone, 
+  ArrowRight,
+  BarChart3,
+  Calendar,
   Clock,
-  Star,
-  Lock,
-  Eye,
-  EyeOff
+  ShieldCheck,
+  Smartphone,
+  Monitor,
+  Zap
 } from 'lucide-react';
-import {
-  fetchPublicProducts,
-  readCachedPublicProducts,
-  type PublicProduct,
-} from './services/publicCatalog';
-import DeveloperPortal from './developer/DeveloperPortal';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer, 
+  LineChart, 
+  Line,
+  AreaChart,
+  Area
+} from 'recharts';
+import heroMainImage from '../34256273-84a8-40b6-acaf-01d17bbc945a-2.png';
+// Mock data for the dashboard preview
+const weeklyData = [
+  { name: 'Dom', vendas: 25 },
+  { name: 'Seg', vendas: 70 },
+  { name: 'Ter', vendas: 10 },
+  { name: 'Qua', vendas: 15 },
+  { name: 'Qui', vendas: 18 },
+  { name: 'Sex', vendas: 20 },
+  { name: 'Sab', vendas: 22 },
+];
 
-const ADMIN_EMAIL = 'meu@admin.com';
-const ADMIN_PASSWORD = 'ben123';
-const PRODUCTION_FALLBACK_ORIGIN = 'https://lanchesdoben.com.br';
-const ADMIN_GATE_KEY = 'lanchesdoben_admin_gate';
-const ADMIN_REMEMBER_ACCESS_KEY = 'lanchesdoben_admin_remember_access';
-const ADMIN_SAVED_EMAIL_KEY = 'lanchesdoben_admin_saved_email';
-let hasPlayedHeroCtaIntro = false;
+const hourlyData = [
+  { time: '00', val: 18 },
+  { time: '02', val: 38 },
+  { time: '04', val: 15 },
+  { time: '06', val: 0 },
+  { time: '08', val: 0 },
+  { time: '10', val: 0 },
+  { time: '12', val: 0 },
+  { time: '14', val: 0 },
+  { time: '16', val: 0 },
+  { time: '18', val: 0 },
+  { time: '20', val: 0 },
+  { time: '22', val: 12 },
+];
 
-const normalizePath = (value: string) => {
-  const trimmed = value.trim();
-  if (!trimmed) return '/';
-  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
-};
+const products = [
+  { id: 1, name: 'X JUNIOR', price: 7.50, img: 'https://i.pinimg.com/736x/67/54/2d/67542d5f476d6504046007f1d5637b74.jpg' },
+  { id: 2, name: 'X SALADA', price: 10.00, img: 'https://i.pinimg.com/1200x/f5/4f/a5/f54fa5870b64bd23ecb51f3496c68c7c.jpg' },
+  { id: 3, name: 'X EGG', price: 12.00, img: 'https://i.pinimg.com/736x/26/04/b9/2604b97e2529953e481f9f627cc9c93d.jpg' },
+  { id: 4, name: 'COMBO 1', price: 12.00, img: 'https://i.pinimg.com/736x/5d/45/c6/5d45c6588040f0a4d5f2adeee27e86ae.jpg' },
+  { id: 5, name: 'COMBO 2', price: 30.00, img: 'https://i.pinimg.com/736x/ea/67/65/ea6765461880b0f9738358db9e3a65bc.jpg' },
+  { id: 6, name: 'X DUPLO', price: 20.00, img: 'https://i.pinimg.com/736x/2d/c8/b5/2dc8b56f3c06f6201cc118d95cce56cd.jpg' },
+];
 
-const withPath = (origin: string, path: string) => {
-  const normalizedPath = normalizePath(path);
-  if (normalizedPath === '/') return origin;
-  return `${origin}${normalizedPath}`;
-};
-
-const resolveAdminSystemUrl = () => {
-  const systemPath = normalizePath(
-    (import.meta.env.VITE_ADMIN_SYSTEM_PATH as string | undefined) || '/sistema/'
-  );
-
-  if (typeof window !== 'undefined') {
-    return withPath(window.location.origin, systemPath);
-  }
-
-  return withPath(PRODUCTION_FALLBACK_ORIGIN, systemPath);
-};
-
-const PRODUCT_CATEGORY_LABELS: Record<string, string> = {
-  Snack: 'Lanche',
-  Drink: 'Bebida',
-  Side: 'Acompanhamento',
-  Combo: 'Combo',
-};
-
-const BRL_CURRENCY_FORMATTER = new Intl.NumberFormat('pt-BR', {
-  style: 'currency',
-  currency: 'BRL',
-});
-
-const resolveProductCategoryLabel = (category: string) =>
-  PRODUCT_CATEGORY_LABELS[category] || category;
-
-const readRememberAdminAccess = (): boolean => {
-  if (typeof window === 'undefined') return true;
-  try {
-    return window.localStorage.getItem(ADMIN_REMEMBER_ACCESS_KEY) !== '0';
-  } catch {
-    return true;
-  }
-};
-
-const persistRememberAdminAccess = (value: boolean): void => {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(ADMIN_REMEMBER_ACCESS_KEY, value ? '1' : '0');
-  } catch {
-    // ignore storage write failures
-  }
-};
-
-const readSavedAdminEmail = (): string => {
-  if (typeof window === 'undefined') return '';
-  try {
-    return (window.localStorage.getItem(ADMIN_SAVED_EMAIL_KEY) || '').trim().toLowerCase();
-  } catch {
-    return '';
-  }
-};
-
-const persistSavedAdminEmail = (email: string): void => {
-  if (typeof window === 'undefined') return;
-  const normalizedEmail = email.trim().toLowerCase();
-  try {
-    if (!normalizedEmail) {
-      window.localStorage.removeItem(ADMIN_SAVED_EMAIL_KEY);
-      return;
-    }
-    window.localStorage.setItem(ADMIN_SAVED_EMAIL_KEY, normalizedEmail);
-  } catch {
-    // ignore storage write failures
-  }
-};
-
-const areProductsEqual = (current: PublicProduct[], next: PublicProduct[]): boolean => {
-  if (current.length !== next.length) return false;
-
-  for (let index = 0; index < current.length; index += 1) {
-    const currentProduct = current[index];
-    const nextProduct = next[index];
-    if (
-      currentProduct.id !== nextProduct.id ||
-      currentProduct.name !== nextProduct.name ||
-      currentProduct.price !== nextProduct.price ||
-      currentProduct.imageUrl !== nextProduct.imageUrl ||
-      currentProduct.category !== nextProduct.category
-    ) {
-      return false;
-    }
-  }
-
-  return true;
-};
-
-const isDeveloperRoute = (): boolean => {
-  if (typeof window === 'undefined') return false;
-  return window.location.pathname.startsWith('/desenvolvedor');
-};
-
-function MainSiteApp() {
-  const prefersReducedMotion = useReducedMotion();
+export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
-  const [isHoursOpen, setIsHoursOpen] = useState(false);
-  const [playHeroCtaIntro, setPlayHeroCtaIntro] = useState(() => {
-    if (prefersReducedMotion) return false;
-    if (hasPlayedHeroCtaIntro) return false;
-    hasPlayedHeroCtaIntro = true;
-    return true;
-  });
-  const [isAdminPasswordVisible, setIsAdminPasswordVisible] = useState(false);
-  const [rememberAdminAccess, setRememberAdminAccess] = useState(readRememberAdminAccess);
-  const [adminEmail, setAdminEmail] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
-  const [adminError, setAdminError] = useState('');
-  const [isAdminRedirecting, setIsAdminRedirecting] = useState(false);
-  const [publicProducts, setPublicProducts] = useState<PublicProduct[]>([]);
-  const [isProductsLoading, setIsProductsLoading] = useState(true);
-  const [productsError, setProductsError] = useState('');
-
-  useEffect(() => {
-    if (!isMenuOpen) {
-      return;
-    }
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setIsMenuOpen(false);
-      }
-    };
-
-    window.addEventListener('keydown', handleEscape);
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', handleEscape);
-    };
-  }, [isMenuOpen]);
-
-  useEffect(() => {
-    let isActive = true;
-    let isRefreshing = false;
-
-    const loadProducts = async (isInitialLoad: boolean) => {
-      if (isRefreshing) return;
-      isRefreshing = true;
-
-      if (isInitialLoad && isActive) {
-        setIsProductsLoading(true);
-      }
-
-      try {
-        const loadedProducts = await fetchPublicProducts();
-        if (!isActive) return;
-        startTransition(() => {
-          setPublicProducts((currentProducts) =>
-            areProductsEqual(currentProducts, loadedProducts) ? currentProducts : loadedProducts
-          );
-          setProductsError('');
-        });
-      } catch {
-        if (!isActive) return;
-        setProductsError('Cardápio indisponível no momento. Tente novamente em instantes.');
-      } finally {
-        isRefreshing = false;
-        if (isInitialLoad && isActive) {
-          setIsProductsLoading(false);
-        }
-      }
-    };
-
-    const cachedProducts = readCachedPublicProducts();
-    if (cachedProducts.length > 0) {
-      setPublicProducts(cachedProducts);
-      setIsProductsLoading(false);
-    }
-
-    void loadProducts(cachedProducts.length === 0);
-
-    // Mantém o cardápio sincronizado com as alterações do sistema sem forçar recarregamento manual.
-    const refreshIntervalId = window.setInterval(() => {
-      if (document.hidden) return;
-      void loadProducts(false);
-    }, 45000);
-
-    const refreshOnFocus = () => {
-      void loadProducts(false);
-    };
-    const refreshOnVisibility = () => {
-      if (!document.hidden) {
-        void loadProducts(false);
-      }
-    };
-
-    window.addEventListener('focus', refreshOnFocus);
-    document.addEventListener('visibilitychange', refreshOnVisibility);
-
-    return () => {
-      isActive = false;
-      window.clearInterval(refreshIntervalId);
-      window.removeEventListener('focus', refreshOnFocus);
-      document.removeEventListener('visibilitychange', refreshOnVisibility);
-    };
-  }, []);
-
-  const openAdminModal = () => {
-    if (typeof window !== 'undefined') {
-      try {
-        const hasRememberedAccess = window.localStorage.getItem(ADMIN_GATE_KEY) === 'authenticated';
-        if (hasRememberedAccess) {
-          window.sessionStorage.setItem(ADMIN_GATE_KEY, 'authenticated');
-          window.location.href = resolveAdminSystemUrl();
-          return;
-        }
-      } catch {
-        // ignore storage read failures and continue with manual login
-      }
-    }
-
-    setAdminEmail(readSavedAdminEmail());
-    setAdminPassword('');
-    setIsAdminPasswordVisible(false);
-    setAdminError('');
-    setIsAdminModalOpen(true);
-  };
-
-  const closeAdminModal = () => {
-    setIsAdminModalOpen(false);
-    setAdminPassword('');
-    setIsAdminPasswordVisible(false);
-    setAdminError('');
-    setIsAdminRedirecting(false);
-  };
-
-  const handleAdminLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (isAdminRedirecting) return;
-
-    const normalizedEmail = adminEmail.trim().toLowerCase();
-
-    if (normalizedEmail === ADMIN_EMAIL && adminPassword === ADMIN_PASSWORD) {
-      setIsAdminRedirecting(true);
-      setAdminError('');
-      persistRememberAdminAccess(rememberAdminAccess);
-      if (rememberAdminAccess) {
-        persistSavedAdminEmail(normalizedEmail);
-      } else {
-        persistSavedAdminEmail('');
-      }
-      try {
-        window.sessionStorage.setItem(ADMIN_GATE_KEY, 'authenticated');
-      } catch {
-        // ignore storage write failures
-      }
-      try {
-        if (rememberAdminAccess) {
-          window.localStorage.setItem(ADMIN_GATE_KEY, 'authenticated');
-        } else {
-          window.localStorage.removeItem(ADMIN_GATE_KEY);
-        }
-      } catch {
-        // ignore storage write failures
-      }
-      const targetUrl = resolveAdminSystemUrl();
-      window.location.href = targetUrl;
-      setIsAdminRedirecting(false);
-      setIsAdminModalOpen(false);
-      return;
-    }
-
-    setAdminError('E-mail ou senha inválidos.');
-    setAdminPassword('');
-  };
-
-  const handleWhatsApp = () => {
-    const message = encodeURIComponent("Olá! Gostaria de fazer um pedido.");
-    window.open(`https://wa.me/5521983659826?text=${message}`, '_blank');
-  };
+  const [activeTab, setActiveTab] = useState('geral');
+  const { scrollYProgress } = useScroll();
+  const opacity = useTransform(scrollYProgress, [0, 0.05], [1, 0.8]);
+  const scale = useTransform(scrollYProgress, [0, 0.05], [1, 0.95]);
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen bg-[#F5F5F5] font-sans text-slate-900 overflow-x-hidden">
       {/* Navigation */}
-      <nav className="fixed w-full z-50 bg-brand-black/95 text-white border-b border-white/10">
+      <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-20">
-            <div className="flex items-center gap-3">
-              <img 
-                src="https://i.pinimg.com/736x/69/40/d9/6940d97853972edd36dd7e77a4a99bc9.jpg" 
-                alt="Logo LANCHESDOBEN" 
-                className="w-12 h-12 rounded-full object-cover border-2 border-brand-red"
-                loading="eager"
-                decoding="async"
-                fetchPriority="high"
-                referrerPolicy="no-referrer"
-              />
-              <span className="font-display text-3xl tracking-tighter text-brand-red">LANCHESDOBEN</span>
-            </div>
-            
-            <div className="hidden md:flex items-center space-x-8">
-              <a href="#home" className="hover:text-brand-red transition-colors">Início</a>
-              <div className="flex items-center gap-4 border-l border-white/20 pl-8">
-                <a 
-                  href="https://www.instagram.com/lanches.doben/" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="hover:text-brand-red transition-colors"
-                >
-                  <Instagram size={20} />
-                </a>
-                <a 
-                  href="https://www.facebook.com/lanches.dobem.2025?mibextid=wwXIfr&rdid=joCIhkS38u0Amnma&share_url=https%3A%2F%2Fwww.facebook.com%2Fshare%2F1C8gGroWcL%2F%3Fmibextid%3DwwXIfr%26ref%3D1#" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="hover:text-brand-red transition-colors"
-                >
-                  <Facebook size={20} />
-                </a>
+          <div className="flex justify-between items-center h-16">
+            <div className="flex items-center gap-2">
+              <div className="w-10 h-10 bg-red-600 rounded-lg flex items-center justify-center shadow-lg shadow-red-200">
+                <LayoutDashboard className="text-white w-6 h-6" />
               </div>
+              <span className="text-xl font-black tracking-tighter text-red-600">
+                XBURGER<span className="text-amber-500">PDV</span>
+              </span>
+            </div>
+
+            {/* Desktop Menu */}
+            <div className="hidden md:flex items-center gap-8">
+              <a href="#funcionalidades" className="text-sm font-medium hover:text-red-600 transition-colors">Funcionalidades</a>
+              <a href="#dashboard" className="text-sm font-medium hover:text-red-600 transition-colors">Relatórios</a>
+              <a href="#pdv" className="text-sm font-medium hover:text-red-600 transition-colors">PDV</a>
               <button 
-                onClick={openAdminModal}
-                className="hover:text-brand-red transition-colors flex items-center gap-2"
+                onClick={() => document.getElementById('login')?.scrollIntoView({ behavior: 'smooth' })}
+                className="bg-red-600 text-white px-6 py-2 rounded-full text-sm font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-200 active:scale-95"
               >
-                <Lock size={16} />
-                Admin
-              </button>
-              <button
-                onClick={handleWhatsApp}
-                className="bg-brand-red hover:bg-red-700 text-white px-6 py-2 rounded-full font-bold transition-all flex items-center gap-2"
-              >
-                <ShoppingBag size={20} />
-                Pedir Agora
+                ENTRAR NO SISTEMA
               </button>
             </div>
 
-            <div className="md:hidden flex items-center">
+            {/* Mobile Menu Button */}
+            <div className="md:hidden">
               <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="p-2">
-                {isMenuOpen ? <X size={28} /> : <MenuIcon size={28} />}
+                {isMenuOpen ? <X /> : <Menu />}
               </button>
             </div>
           </div>
         </div>
 
-      </nav>
-
-      {/* Mobile Side Menu */}
-      <AnimatePresence>
-        {isMenuOpen && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsMenuOpen(false)}
-              className="md:hidden fixed inset-0 z-[70] bg-brand-black/70 backdrop-blur-sm"
-              aria-hidden="true"
-            />
-            <motion.aside
-              initial={{ x: '100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ duration: 0.25, ease: 'easeOut' }}
-              className="md:hidden fixed top-0 right-0 z-[80] h-screen w-[85%] max-w-sm bg-brand-black border-l border-white/10 shadow-2xl"
-              role="dialog"
-              aria-modal="true"
-              aria-label="Menu mobile"
-            >
-              <div className="h-20 px-4 border-b border-white/10 flex items-center justify-between">
-                <span className="font-display text-3xl tracking-tighter text-brand-red">MENU</span>
-                <button
-                  onClick={() => setIsMenuOpen(false)}
-                  className="p-2 text-white hover:text-brand-red transition-colors"
-                  aria-label="Fechar menu"
-                >
-                  <X size={28} />
-                </button>
-              </div>
-
-              <div className="px-4 py-6 space-y-6">
-                <a
-                  href="#home"
-                  onClick={() => setIsMenuOpen(false)}
-                  className="block text-lg font-medium text-white hover:text-brand-red transition-colors"
-                >
-                  Início
-                </a>
-
-                <div className="flex items-center gap-6 py-2">
-                  <a
-                    href="https://www.instagram.com/lanches.doben/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-white hover:text-brand-red transition-colors"
-                  >
-                    <Instagram size={24} />
-                  </a>
-                  <a
-                    href="https://www.facebook.com/lanches.dobem.2025?mibextid=wwXIfr&rdid=joCIhkS38u0Amnma&share_url=https%3A%2F%2Fwww.facebook.com%2Fshare%2F1C8gGroWcL%2F%3Fmibextid%3DwwXIfr%26ref%3D1#"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-white hover:text-brand-red transition-colors"
-                  >
-                    <Facebook size={24} />
-                  </a>
-                </div>
-
-                <button
-                  onClick={() => {
-                    setIsMenuOpen(false);
-                    openAdminModal();
-                  }}
-                  className="text-lg font-medium w-full text-left text-white hover:text-brand-red transition-colors flex items-center gap-2"
-                >
-                  <Lock size={18} />
-                  Admin
-                </button>
-
-                <button
-                  onClick={() => {
-                    setIsMenuOpen(false);
-                    handleWhatsApp();
-                  }}
-                  className="w-full bg-brand-red text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2"
-                >
-                  <ShoppingBag size={20} />
-                  Pedir Agora
-                </button>
-              </div>
-            </motion.aside>
-          </>
-        )}
-      </AnimatePresence>
-
-      {/* Floating Hours Bar */}
-      <div className="fixed bottom-6 left-6 z-[60]">
-        <button 
-          onClick={() => setIsHoursOpen(!isHoursOpen)}
-          className="bg-brand-black text-white p-4 rounded-full shadow-2xl border border-white/10 flex items-center gap-3 hover:bg-brand-red transition-all group"
-        >
-          <Clock size={24} className="group-hover:rotate-12 transition-transform" />
-          <span className="font-bold pr-2">Horários</span>
-        </button>
-
+        {/* Mobile Menu */}
         <AnimatePresence>
-          {isHoursOpen && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.8, y: 20, x: -20 }}
-              animate={{ opacity: 1, scale: 1, y: 0, x: 0 }}
-              exit={{ opacity: 0, scale: 0.8, y: 20, x: -20 }}
-              className="absolute bottom-20 left-0 w-72 bg-white rounded-3xl shadow-2xl border border-gray-100 overflow-hidden"
+          {isMenuOpen && (
+            <motion.div 
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="md:hidden bg-white border-b border-slate-200 p-4 space-y-4"
             >
-              <div className="bg-brand-red p-4 text-white text-center">
-                <h4 className="font-display text-xl">HORÁRIO DE FUNCIONAMENTO</h4>
-              </div>
-              <div className="p-6 space-y-3 text-sm">
-                <div className="flex justify-between items-center pb-2 border-b border-gray-50">
-                  <span className="font-bold">Segunda a Quinta</span>
-                  <span className="text-gray-600">18:00 – 01:00</span>
-                </div>
-                <div className="flex justify-between items-center pb-2 border-b border-gray-50">
-                  <span className="font-bold text-brand-red">Sexta a Domingo</span>
-                  <span className="text-brand-red font-bold">18:00 – 02:00</span>
-                </div>
-                <div className="pt-2 text-center text-xs text-gray-400 italic">
-                  * Sujeito a alterações em feriados
-                </div>
-              </div>
+              <a href="#funcionalidades" className="block text-sm font-medium" onClick={() => setIsMenuOpen(false)}>Funcionalidades</a>
+              <a href="#dashboard" className="block text-sm font-medium" onClick={() => setIsMenuOpen(false)}>Relatórios</a>
+              <a href="#pdv" className="block text-sm font-medium" onClick={() => setIsMenuOpen(false)}>PDV</a>
+              <button className="w-full bg-red-600 text-white px-6 py-3 rounded-xl text-sm font-bold">ENTRAR NO SISTEMA</button>
             </motion.div>
           )}
         </AnimatePresence>
-      </div>
-
-      {/* Admin Login Modal */}
-      <AnimatePresence>
-        {isAdminModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={closeAdminModal}
-              className="absolute inset-0 bg-brand-black/80 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl"
-            >
-              <div className="bg-brand-red p-8 text-center text-white">
-                <div className="bg-white/20 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Lock size={32} />
-                </div>
-                <h2 className="font-display text-3xl">ÁREA DO ADMIN</h2>
-                <p className="text-white/80 text-sm">Acesse para gerenciar sua hamburgueria</p>
-              </div>
-              <div className="p-8">
-                <form className="space-y-6" onSubmit={handleAdminLogin} autoComplete="on">
-                  <div>
-                    <label className="block text-xs font-bold mb-2 uppercase tracking-widest text-gray-400">Usuário</label>
-                    <input 
-                      type="email"
-                      name="username"
-                      value={adminEmail}
-                      onChange={(e) => {
-                        setAdminEmail(e.target.value);
-                        if (adminError) setAdminError('');
-                      }}
-                      autoComplete="username"
-                      required
-                      className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 focus:ring-2 focus:ring-brand-red outline-none transition-all" 
-                      placeholder="meu@admin.com"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold mb-2 uppercase tracking-widest text-gray-400">Senha</label>
-                    <div className="relative">
-                      <input 
-                        type={isAdminPasswordVisible ? 'text' : 'password'}
-                        name="password"
-                        value={adminPassword}
-                        onChange={(e) => {
-                          setAdminPassword(e.target.value);
-                          if (adminError) setAdminError('');
-                        }}
-                        autoComplete="current-password"
-                        required
-                        className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 pr-12 focus:ring-2 focus:ring-brand-red outline-none transition-all" 
-                        placeholder="••••••••"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setIsAdminPasswordVisible((current) => !current)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-brand-black transition-colors"
-                        aria-label={isAdminPasswordVisible ? 'Ocultar senha' : 'Ver senha'}
-                      >
-                        {isAdminPasswordVisible ? <EyeOff size={18} /> : <Eye size={18} />}
-                      </button>
-                    </div>
-                  </div>
-                  <label className="flex items-center gap-3 text-sm text-gray-600 select-none">
-                    <input
-                      type="checkbox"
-                      checked={rememberAdminAccess}
-                      onChange={(event) => {
-                        const next = event.target.checked;
-                        setRememberAdminAccess(next);
-                        persistRememberAdminAccess(next);
-                        if (!next) {
-                          persistSavedAdminEmail('');
-                        }
-                      }}
-                      className="h-4 w-4 accent-brand-red"
-                    />
-                    Salvar senha e acesso neste navegador
-                  </label>
-                  <p className="-mt-4 text-xs text-gray-400">
-                    Ao entrar, seu navegador pode sugerir salvar a senha automaticamente.
-                  </p>
-                  {adminError && (
-                    <p className="text-sm font-semibold text-red-600 text-center">
-                      {adminError}
-                    </p>
-                  )}
-                  <button
-                    type="submit"
-                    disabled={isAdminRedirecting}
-                    className="w-full bg-brand-black text-white py-4 rounded-xl font-bold hover:bg-brand-red transition-all shadow-lg disabled:opacity-70 disabled:cursor-not-allowed"
-                  >
-                    {isAdminRedirecting ? 'Abrindo painel...' : 'Entrar no Painel'}
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={closeAdminModal}
-                    className="w-full text-gray-400 text-sm font-medium hover:text-brand-black transition-colors"
-                  >
-                    Voltar ao Site
-                  </button>
-                </form>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      </nav>
 
       {/* Hero Section */}
-      <section id="home" className="relative h-screen flex items-center justify-center overflow-hidden bg-brand-black pt-20">
-        <div className="absolute inset-0 z-0">
-          <img 
-            src="https://i.pinimg.com/736x/6b/f7/46/6bf7465d1a625ccc5c1e6d27e92e4936.jpg" 
-            alt="Hero Background" 
-            className="w-full h-full object-cover opacity-40"
-            loading="eager"
-            decoding="async"
-            fetchPriority="high"
-            referrerPolicy="no-referrer"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-brand-black via-transparent to-brand-black/50" />
+      <section className="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-full -z-10">
+          <div className="absolute top-0 left-1/4 w-96 h-96 bg-red-100 rounded-full blur-3xl opacity-50 animate-pulse" />
+          <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-amber-100 rounded-full blur-3xl opacity-50 animate-pulse delay-1000" />
         </div>
 
-        <div className="relative z-10 max-w-7xl mx-auto px-4 text-center">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8 }}
           >
-            
-            <h2 className="text-brand-red font-display text-2xl md:text-3xl mb-4 tracking-widest uppercase">O Melhor do Rio de Janeiro</h2>
-            <motion.h1
-              initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: 24 }}
-              animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
-              transition={
-                prefersReducedMotion
-                  ? { duration: 0.45, delay: 0.2 }
-                  : { duration: 0.75, delay: 0.2, ease: [0.22, 1, 0.36, 1] }
-              }
-              className="text-white font-display text-6xl md:text-9xl mb-8 leading-none tracking-tighter"
-            >
-              <motion.span
-                initial={prefersReducedMotion ? { opacity: 1 } : { opacity: 0, y: 18, letterSpacing: '0.12em' }}
-                animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, y: 0, letterSpacing: '0.02em' }}
-                transition={
-                  prefersReducedMotion
-                    ? { duration: 0 }
-                    : { duration: 0.65, delay: 0.35, ease: [0.22, 1, 0.36, 1] }
-                }
-                className="block"
-              >
-                SABOR QUE
-              </motion.span>
-              <motion.span
-                initial={prefersReducedMotion ? { opacity: 1 } : { opacity: 0, scale: 0.88 }}
-                animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, scale: 1 }}
-                transition={
-                  prefersReducedMotion
-                    ? { duration: 0 }
-                    : { duration: 0.7, delay: 0.5, ease: [0.22, 1, 0.36, 1] }
-                }
-                className="block hero-special-headline"
-              >
-                SURPREENDE
-              </motion.span>
-            </motion.h1>
-            <p className="text-white/80 text-lg md:text-xl max-w-2xl mx-auto mb-10 font-light">
-              Lanchonete e Hambúrgueria feitos com blends exclusivos, ingredientes frescos e aquele toque especial do Ben.
+            <span className="inline-block px-4 py-1.5 mb-6 text-xs font-bold tracking-widest text-red-600 uppercase bg-red-50 rounded-full border border-red-100">
+              O Sistema Mais Completo do Brasil
+            </span>
+            <h1 className="text-5xl md:text-7xl lg:text-8xl font-black tracking-tighter leading-[0.9] mb-8">
+              GESTÃO <span className="text-red-600">INTELIGENTE</span> <br />
+              PARA SUA <span className="text-amber-500 underline decoration-red-600/30">LANCHONETE</span>
+            </h1>
+            <p className="max-w-2xl mx-auto text-lg text-slate-600 mb-10 leading-relaxed">
+              Controle total de estoque, administração financeira detalhada e o PDV mais rápido do mercado. 
+              Tudo o que você precisa para escalar seu negócio de lanches.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <motion.button
-                initial={false}
-                animate={
-                  playHeroCtaIntro
-                    ? { opacity: 1, scale: [0.88, 1.08, 0.98, 1] }
-                    : { opacity: 1, scale: 1 }
-                }
-                transition={
-                  playHeroCtaIntro
-                    ? {
-                        duration: 0.9,
-                        delay: 0.2,
-                        times: [0, 0.55, 0.82, 1],
-                        ease: [0.22, 1, 0.36, 1],
-                      }
-                    : { duration: 0.2 }
-                }
-                onAnimationComplete={() => setPlayHeroCtaIntro(false)}
-                onClick={handleWhatsApp}
-                className="w-full sm:w-auto bg-brand-red hover:bg-red-700 text-white px-12 py-5 rounded-full font-bold text-xl transition-all transform hover:scale-105 shadow-2xl shadow-brand-red/40"
-              >
-                Pedir Agora
-              </motion.button>
-            </div>
-
-          </motion.div>
-        </div>
-
-        {/* Floating elements for visual interest */}
-        <motion.div 
-          animate={{ y: [0, -20, 0] }}
-          transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute bottom-20 left-10 hidden lg:block"
-        >
-          <div className="bg-white/5 backdrop-blur-md border border-white/10 p-4 rounded-2xl">
-            <div className="flex items-center gap-3">
-              <div className="bg-brand-red p-2 rounded-lg">
-                <Star className="text-white fill-white" size={20} />
-              </div>
-              <div>
-                <p className="text-white font-bold text-sm">4.9/5 Estrelas</p>
-                <p className="text-white/60 text-xs">No Google Reviews</p>
-              </div>
-            </div>
-          </div>
-        </motion.div>
-      </section>
-
-      {/* Products Section */}
-      <section className="relative py-20 bg-gradient-to-b from-brand-black to-slate-950 overflow-hidden">
-        <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-0 left-1/2 h-48 w-48 -translate-x-1/2 rounded-full bg-brand-red/20 blur-3xl" />
-          <div className="absolute bottom-0 right-0 h-56 w-56 rounded-full bg-red-900/20 blur-3xl" />
-        </div>
-        <div className="relative z-10 max-w-7xl mx-auto px-4">
-          <div className="max-w-6xl mx-auto">
-            <div className="inline-flex items-center rounded-t-2xl border border-b-0 border-white/20 bg-brand-red px-5 py-2 shadow-lg shadow-brand-red/30">
-              <p className="text-white text-xs md:text-sm font-black tracking-[0.16em] uppercase">
-                Aba de Produtos do Caixa
-              </p>
-            </div>
-            <div className="rounded-3xl rounded-tl-none border border-white/20 bg-brand-black/70 md:bg-brand-black/55 p-4 md:p-6">
-              {isProductsLoading ? (
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
-                  {Array.from({ length: 6 }).map((_, index) => (
-                    <div
-                      key={`product-skeleton-${index}`}
-                      className="h-56 rounded-2xl bg-white/10 animate-pulse border border-white/10"
-                    />
-                  ))}
-                </div>
-              ) : publicProducts.length > 0 ? (
-                <>
-                  {productsError && (
-                    <p className="mb-4 text-amber-300 text-sm font-semibold">{productsError}</p>
-                  )}
-                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 text-left">
-                    {publicProducts.map((product) => (
-                      <article
-                        key={product.id}
-                        className="group rounded-2xl overflow-hidden bg-white/95 border border-white/20 shadow-xl shadow-brand-black/30"
-                      >
-                        <div className="relative h-36 overflow-hidden bg-slate-100">
-                          {product.imageUrl ? (
-                            <img
-                              src={product.imageUrl}
-                              alt={`Produto ${product.name}`}
-                              className="w-full h-full object-cover"
-                              loading="eager"
-                              decoding="async"
-                              referrerPolicy="no-referrer"
-                            />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-white/80 text-sm font-semibold">
-                              Sem imagem
-                            </div>
-                          )}
-                          <span className="absolute top-3 left-3 bg-brand-black/80 text-white text-[10px] tracking-wider uppercase px-2.5 py-1 rounded-full border border-white/20">
-                            {resolveProductCategoryLabel(product.category)}
-                          </span>
-                        </div>
-                        <div className="p-4">
-                          <h3 className="text-lg font-black leading-tight text-brand-black">
-                            {product.name}
-                          </h3>
-                          <p className="mt-2 text-brand-red font-black text-xl">
-                            {BRL_CURRENCY_FORMATTER.format(product.price)}
-                          </p>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <p className="text-white/80">
-                  {productsError || 'Nenhum produto cadastrado no sistema no momento.'}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Contact Section */}
-      <section id="contact" className="py-24 bg-gray-50">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="max-w-2xl mx-auto text-center">
-            <h2 className="text-brand-red font-display text-2xl mb-4">Contato</h2>
-            <h3 className="font-display text-5xl mb-12">VEM PRO BEN!</h3>
-            
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
-              <a 
-                href="https://maps.app.goo.gl/NsRzHNobQ5ApwU7G7" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="flex flex-col items-center gap-4 p-6 bg-white rounded-3xl shadow-sm border border-gray-100 hover:border-brand-red transition-all group"
-              >
-                <div className="bg-gray-50 p-4 rounded-2xl group-hover:bg-brand-red/10 transition-colors">
-                  <MapPin className="text-brand-red" size={32} />
-                </div>
-                <div>
-                  <p className="font-bold text-lg">Endereço</p>
-                  <p className="text-gray-600">Clique para abrir o Mapa</p>
-                </div>
-              </a>
-              <a 
-                href="tel:+5521983659826"
-                className="flex flex-col items-center gap-4 p-6 bg-white rounded-3xl shadow-sm border border-gray-100 hover:border-brand-red transition-all group"
-              >
-                <div className="bg-gray-50 p-4 rounded-2xl group-hover:bg-brand-red/10 transition-colors">
-                  <Phone className="text-brand-red" size={32} />
-                </div>
-                <div>
-                  <p className="font-bold text-lg">Telefone</p>
-                  <p className="text-gray-600">(21) 98365-9826</p>
-                </div>
-              </a>
-              <button 
-                onClick={() => setIsHoursOpen(true)}
-                className="flex flex-col items-center gap-4 p-6 bg-white rounded-3xl shadow-sm border border-gray-100 hover:border-brand-red transition-all group"
-              >
-                <div className="bg-gray-50 p-4 rounded-2xl group-hover:bg-brand-red/10 transition-colors">
-                  <Clock className="text-brand-red" size={32} />
-                </div>
-                <div>
-                  <p className="font-bold text-lg">Horário</p>
-                  <p className="text-gray-600">Ver Funcionamento</p>
-                </div>
+              <button className="group relative bg-red-600 text-white px-8 py-4 rounded-2xl text-lg font-bold hover:bg-red-700 transition-all shadow-xl shadow-red-200 flex items-center gap-2 overflow-hidden">
+                <span className="relative z-10">Começar Agora</span>
+                <ArrowRight className="relative z-10 w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                <motion.div 
+                  className="absolute inset-0 bg-gradient-to-r from-red-500 to-red-700 opacity-0 group-hover:opacity-100 transition-opacity"
+                  initial={false}
+                />
+              </button>
+              <button className="bg-white text-slate-900 border border-slate-200 px-8 py-4 rounded-2xl text-lg font-bold hover:bg-slate-50 transition-all flex items-center gap-2">
+                Ver Demonstração
               </button>
             </div>
+          </motion.div>
 
-            <div className="flex justify-center gap-6">
-              <a 
-                href="https://www.instagram.com/lanches.doben/" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="bg-brand-black text-white p-4 rounded-full hover:bg-brand-red transition-all transform hover:scale-110 shadow-lg"
+          {/* 3D Floating Elements Mockup */}
+          <motion.div 
+            className="mt-20 relative max-w-5xl mx-auto"
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.4, duration: 1 }}
+          >
+            <div className="relative z-10">
+              <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden aspect-[16/9] flex items-center justify-center">
+                <img 
+                  src={heroMainImage} 
+                  alt="Dashboard Preview" 
+                  className="w-full h-full object-cover opacity-90"
+                  referrerPolicy="no-referrer"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-white/20 to-transparent" />
+              </div>
+              
+              {/* Floating 3D Cards */}
+              <motion.div 
+                className="absolute -top-6 -left-4 sm:-top-10 sm:-left-10 bg-white p-2 sm:p-4 rounded-xl sm:rounded-2xl shadow-2xl border border-slate-100 z-20"
+                animate={{ y: [0, -15, 0] }}
+                transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
               >
-                <Instagram size={28} />
-              </a>
-              <a 
-                href="https://www.facebook.com/lanches.dobem.2025?mibextid=wwXIfr&rdid=joCIhkS38u0Amnma&share_url=https%3A%2F%2Fwww.facebook.com%2Fshare%2F1C8gGroWcL%2F%3Fmibextid%3DwwXIfr%26ref%3D1#" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="bg-brand-black text-white p-4 rounded-full hover:bg-brand-red transition-all transform hover:scale-110 shadow-lg"
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 bg-green-100 rounded-full flex items-center justify-center">
+                    <TrendingUp className="text-green-600 w-4 h-4 sm:w-5 sm:h-5" />
+                  </div>
+                  <div>
+                    <p className="text-[8px] sm:text-[10px] uppercase font-bold text-slate-400 leading-none mb-1">Vendas Hoje</p>
+                    <p className="text-sm sm:text-xl font-black text-slate-900 leading-none">R$ 1.247,16</p>
+                  </div>
+                </div>
+              </motion.div>
+
+              <motion.div 
+                className="absolute -bottom-6 -right-4 sm:-bottom-10 sm:-right-10 bg-white p-2 sm:p-4 rounded-xl sm:rounded-2xl shadow-2xl border border-slate-100 z-20"
+                animate={{ y: [0, 15, 0] }}
+                transition={{ duration: 5, repeat: Infinity, ease: "easeInOut", delay: 1 }}
               >
-                <Facebook size={28} />
-              </a>
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 bg-amber-100 rounded-full flex items-center justify-center">
+                    <Package className="text-amber-600 w-4 h-4 sm:w-5 sm:h-5" />
+                  </div>
+                  <div>
+                    <p className="text-[8px] sm:text-[10px] uppercase font-bold text-slate-400 leading-none mb-1">Estoque Baixo</p>
+                    <p className="text-sm sm:text-xl font-black text-slate-900 leading-none">5 Itens</p>
+                  </div>
+                </div>
+              </motion.div>
             </div>
+            
+            {/* Decorative 3D Burger (CSS Art or Image) */}
+            <motion.div 
+              className="absolute -z-10 -top-20 -right-20 w-64 h-64 bg-amber-400/20 rounded-full blur-3xl"
+              animate={{ scale: [1, 1.2, 1] }}
+              transition={{ duration: 6, repeat: Infinity }}
+            />
+          </motion.div>
+        </div>
+      </section>
+      {/* Dashboard Preview Section */}
+      <section id="dashboard-preview" className="py-24 bg-white overflow-hidden">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid lg:grid-cols-2 gap-16 items-center">
+            <div>
+              <h2 className="text-4xl md:text-5xl font-black text-slate-900 mb-8 leading-tight uppercase">
+                DASHBOARD <span className="text-amber-500">PODEROSA</span> PARA DECISÕES RÁPIDAS.
+              </h2>
+              <div className="space-y-6">
+                {[
+                  { title: "Vendas por Hora", desc: "Identifique seus horários de pico e otimize sua equipe." },
+                  { title: "Produtos Líderes", desc: "Saiba quais itens trazem mais lucro para seu negócio." },
+                  { title: "Análise de Lucro", desc: "Cálculo automático descontando insumos e custos fixos." }
+                ].map((item, i) => (
+                  <div key={i} className="flex gap-4">
+                    <div className="bg-red-600/10 p-2 rounded-lg h-fit">
+                      <ChevronRight className="text-red-600" />
+                    </div>
+                    <div>
+                      <h4 className="text-lg font-bold text-slate-900">{item.title}</h4>
+                      <p className="text-slate-600">{item.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <motion.div 
+              initial={{ opacity: 0, x: 50 }}
+              whileInView={{ opacity: 1, x: 0 }}
+              viewport={{ once: true }}
+              className="bg-slate-900 p-8 rounded-[3rem] shadow-2xl border-8 border-slate-800 relative"
+            >
+              <div className="absolute -top-4 -left-4 bg-red-600 text-white px-6 py-2 rounded-full font-bold shadow-xl z-20">
+                LIVE PREVIEW
+              </div>
+              
+              <div className="space-y-8">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700">
+                    <p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Vendas Hoje</p>
+                    <p className="text-2xl font-black text-white">R$ 1.247,16</p>
+                    <div className="h-1 bg-red-600 w-2/3 mt-2 rounded-full" />
+                  </div>
+                  <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700">
+                    <p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Pedidos</p>
+                    <p className="text-2xl font-black text-white">35</p>
+                    <div className="h-1 bg-amber-500 w-1/2 mt-2 rounded-full" />
+                  </div>
+                </div>
+
+                <div className="bg-slate-800 p-6 rounded-3xl border border-slate-700 h-64">
+                  <p className="text-xs font-bold text-slate-400 mb-4 uppercase">Vendas por Dia da Semana</p>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={weeklyData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                      <XAxis dataKey="name" stroke="#666" fontSize={10} tickLine={false} axisLine={false} />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '12px', color: '#fff' }}
+                        itemStyle={{ color: '#fbbf24' }}
+                      />
+                      <Bar dataKey="vendas" fill="#e11d48" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="bg-slate-800 p-6 rounded-3xl border border-slate-700 h-48">
+                  <p className="text-xs font-bold text-slate-400 mb-4 uppercase">Vendas por Hora</p>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={hourlyData}>
+                      <defs>
+                        <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#fbbf24" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#fbbf24" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <Area type="monotone" dataKey="val" stroke="#fbbf24" fillOpacity={1} fill="url(#colorValue)" strokeWidth={3} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        </div>
+      </section>
+
+      {/* Features Grid */}
+      <section id="funcionalidades" className="py-24 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-5xl font-black tracking-tight mb-4">Tudo o que você precisa</h2>
+            <p className="text-slate-500 max-w-2xl mx-auto">Um ecossistema completo desenhado para a realidade das lanchonetes brasileiras.</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="group p-8 rounded-3xl bg-slate-50 border border-slate-100 hover:bg-white hover:shadow-2xl hover:shadow-red-100 transition-all duration-500">
+              <div className="w-14 h-14 bg-red-100 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                <Package className="text-red-600 w-7 h-7" />
+              </div>
+              <h3 className="text-xl font-bold mb-3">Controle de Estoque</h3>
+              <p className="text-slate-500 text-sm leading-relaxed">
+                Gestão automatizada de insumos. Saiba exatamente quando repor pães, carnes e bebidas com alertas inteligentes.
+              </p>
+            </div>
+
+            <div className="group p-8 rounded-3xl bg-slate-50 border border-slate-100 hover:bg-white hover:shadow-2xl hover:shadow-amber-100 transition-all duration-500">
+              <div className="w-14 h-14 bg-amber-100 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                <BarChart3 className="text-amber-600 w-7 h-7" />
+              </div>
+              <h3 className="text-xl font-bold mb-3">Adm. Financeira</h3>
+              <p className="text-slate-500 text-sm leading-relaxed">
+                Relatórios semanais, mensais e anuais. Controle de gastos, lucro real e fluxo de caixa em tempo real.
+              </p>
+            </div>
+
+            <div className="group p-8 rounded-3xl bg-slate-50 border border-slate-100 hover:bg-white hover:shadow-2xl hover:shadow-blue-100 transition-all duration-500">
+              <div className="w-14 h-14 bg-blue-100 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                <ShoppingCart className="text-blue-600 w-7 h-7" />
+              </div>
+              <h3 className="text-xl font-bold mb-3">PDV Ultra Rápido</h3>
+              <p className="text-slate-500 text-sm leading-relaxed">
+                Sistema de vendas otimizado para agilidade. Interface intuitiva que reduz o tempo de atendimento em até 40%.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* POS (PDV) Showcase */}
+      <section id="pdv" className="py-24 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-4xl md:text-5xl font-black tracking-tight mb-4">O PDV MAIS <span className="text-red-600">BONITO</span> DO MUNDO</h2>
+            <p className="text-slate-500 max-w-2xl mx-auto">Interface limpa, rápida e totalmente visual. Seus funcionários vão amar trabalhar com ele.</p>
+          </div>
+
+          <div className="relative bg-slate-900 rounded-[3rem] p-4 md:p-8 shadow-3xl overflow-hidden">
+            {/* Screen Header */}
+            <div className="flex items-center justify-between mb-8 px-4">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-red-600 rounded-xl flex items-center justify-center">
+                  <LayoutDashboard className="text-white" />
+                </div>
+                <h4 className="text-white font-black text-xl hidden sm:block">XBURGERPDV</h4>
+              </div>
+              <div className="flex gap-2">
+                <button className="bg-red-600 text-white px-4 py-2 rounded-lg text-xs font-bold">CAIXA</button>
+                <button className="bg-slate-800 text-white px-4 py-2 rounded-lg text-xs font-bold">ESTOQUE</button>
+                <button className="bg-slate-800 text-white px-4 py-2 rounded-lg text-xs font-bold">VENDAS</button>
+              </div>
+            </div>
+
+            {/* Product Grid Mockup */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+              {products.map((product) => (
+                <motion.div 
+                  key={product.id}
+                  className="bg-white rounded-2xl p-3 shadow-lg"
+                  whileHover={{ scale: 1.02 }}
+                >
+                  <div className="aspect-square rounded-xl overflow-hidden mb-3 bg-slate-100">
+                    <img src={product.img} alt={product.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  </div>
+                  <h5 className="font-black text-slate-900 text-sm mb-1">{product.name}</h5>
+                  <p className="text-red-600 font-black">R$ {product.price.toFixed(2)}</p>
+                  <div className="mt-2 flex justify-between items-center">
+                    <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded">DISP: 94</span>
+                    <button className="w-6 h-6 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 hover:bg-red-600 hover:text-white transition-colors">
+                      +
+                    </button>
+                  </div>
+                </motion.div>
+              ))}
+              {/* Cart Preview */}
+              <div className="col-span-2 lg:col-span-1 bg-slate-800 rounded-2xl p-6 flex flex-col justify-between">
+                <div>
+                  <h6 className="text-white font-black mb-4 flex items-center gap-2">
+                    <ShoppingCart className="w-4 h-4 text-red-500" /> CARRINHO
+                  </h6>
+                  <div className="space-y-3">
+                    <div className="flex justify-between text-xs text-slate-400">
+                      <span>1x X SALADA</span>
+                      <span className="text-white">R$ 10,00</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-slate-400">
+                      <span>1x COMBO 2</span>
+                      <span className="text-white">R$ 30,00</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-6 pt-6 border-t border-slate-700">
+                  <div className="flex justify-between items-end mb-4">
+                    <span className="text-slate-400 text-xs font-bold">TOTAL</span>
+                    <span className="text-2xl font-black text-white">R$ 40,00</span>
+                  </div>
+                  <button className="w-full bg-red-600 text-white py-3 rounded-xl font-black text-sm hover:bg-red-700 transition-colors shadow-lg shadow-red-900/20">
+                    FINALIZAR VENDA
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Responsive Section */}
+      <section className="py-24 bg-red-600 text-white overflow-hidden">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col lg:flex-row items-center gap-16">
+            <div className="flex-1">
+              <h2 className="text-4xl md:text-6xl font-black tracking-tight mb-8 leading-[0.9]">
+                SEU NEGÓCIO <br />
+                NA PALMA DA <span className="text-amber-400">MÃO</span>
+              </h2>
+              <p className="text-red-100 text-lg mb-10">
+                Acesse de qualquer lugar. Seja no tablet da lanchonete, no computador do escritório 
+                ou no seu celular enquanto descansa. O sistema se adapta perfeitamente a qualquer tela.
+              </p>
+              <div className="flex gap-6">
+                <div className="flex flex-col items-center gap-2">
+                  <div className="w-16 h-16 bg-white/10 rounded-2xl backdrop-blur-md flex items-center justify-center border border-white/20">
+                    <Smartphone className="w-8 h-8" />
+                  </div>
+                  <span className="text-xs font-bold uppercase tracking-widest">Mobile</span>
+                </div>
+                <div className="flex flex-col items-center gap-2">
+                  <div className="w-16 h-16 bg-white/10 rounded-2xl backdrop-blur-md flex items-center justify-center border border-white/20">
+                    <Monitor className="w-8 h-8" />
+                  </div>
+                  <span className="text-xs font-bold uppercase tracking-widest">Desktop</span>
+                </div>
+                <div className="flex flex-col items-center gap-2">
+                  <div className="w-16 h-16 bg-white/10 rounded-2xl backdrop-blur-md flex items-center justify-center border border-white/20">
+                    <Zap className="w-8 h-8" />
+                  </div>
+                  <span className="text-xs font-bold uppercase tracking-widest">Cloud</span>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex-1 relative">
+              <motion.div 
+                className="relative z-10"
+                animate={{ y: [0, -20, 0] }}
+                transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+              >
+                <div className="w-64 h-[500px] bg-slate-900 rounded-[3rem] border-[8px] border-slate-800 shadow-3xl overflow-hidden relative mx-auto">
+                  <div className="absolute top-0 left-1/2 -translate-x-1/2 w-24 h-6 bg-slate-800 rounded-b-2xl z-20" />
+                  <img src="https://picsum.photos/seed/mobile-app/400/800" alt="Mobile App" className="w-full h-full object-cover opacity-80" referrerPolicy="no-referrer" />
+                  <div className="absolute bottom-10 left-4 right-4 bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/20">
+                    <p className="text-[10px] font-bold uppercase text-white/60">Vendas de Hoje</p>
+                    <p className="text-xl font-black">R$ 906,98</p>
+                  </div>
+                </div>
+              </motion.div>
+              
+              {/* Decorative circles */}
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[120%] h-[120%] border border-white/10 rounded-full -z-10" />
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[150%] h-[150%] border border-white/5 rounded-full -z-10" />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Login Section */}
+      <section id="login" className="py-24 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="max-w-md mx-auto">
+            <div className="text-center mb-10">
+              <div className="w-20 h-20 bg-red-600 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-red-200">
+                <ShieldCheck className="text-white w-10 h-10" />
+              </div>
+              <h2 className="text-3xl font-black text-slate-900 mb-2">Acesse sua Conta</h2>
+              <p className="text-slate-500">Bem-vindo de volta ao xburgerpdv</p>
+            </div>
+
+            <form className="space-y-6" onSubmit={(e) => e.preventDefault()}>
+              <div>
+                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">E-mail ou Usuário</label>
+                <input 
+                  type="text" 
+                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-600/20 focus:border-red-600 transition-all font-medium"
+                  placeholder="seu@email.com"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Senha</label>
+                <input 
+                  type="password" 
+                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-600/20 focus:border-red-600 transition-all font-medium"
+                  placeholder="••••••••"
+                />
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <label className="flex items-center gap-2 cursor-pointer group">
+                  <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-red-600 focus:ring-red-600" />
+                  <span className="text-slate-500 group-hover:text-slate-900 transition-colors">Lembrar de mim</span>
+                </label>
+                <a href="#" className="text-red-600 font-bold hover:underline">Esqueceu a senha?</a>
+              </div>
+              <button className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg hover:bg-red-700 transition-all shadow-xl shadow-red-200 active:scale-95">
+                ENTRAR NO SISTEMA
+              </button>
+            </form>
+            
+            <p className="mt-8 text-center text-sm text-slate-500">
+              Ainda não tem o sistema? <a href="#" className="text-red-600 font-black hover:underline">Fale com um consultor</a>
+            </p>
           </div>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="bg-brand-black text-white py-12 border-t border-white/10">
-        <div className="max-w-7xl mx-auto px-4 text-center">
-          <img 
-            src="https://i.pinimg.com/736x/69/40/d9/6940d97853972edd36dd7e77a4a99bc9.jpg" 
-            alt="Logo Footer" 
-            className="w-20 h-20 rounded-full mx-auto mb-4 border-2 border-brand-red object-cover"
-            loading="lazy"
-            decoding="async"
-            referrerPolicy="no-referrer"
-          />
-          <span className="font-display text-4xl tracking-tighter text-brand-red mb-6 block">LANCHESDOBEN</span>
-          <p className="text-white/40 text-sm mb-8">
-            © {new Date().getFullYear()} LANCHESDOBEN.COM.BR Todos os direitos reservados.
-          </p>
-          <div className="flex justify-center gap-8 text-white/60 text-sm">
-            <a href="#" className="hover:text-white transition-colors">Privacidade</a>
-            <a href="#" className="hover:text-white transition-colors">Termos de Uso</a>
-            <a href="#" className="hover:text-white transition-colors">Cookies</a>
+      <footer className="bg-slate-900 text-white py-20">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-12 mb-16">
+            <div className="col-span-1 md:col-span-2">
+              <div className="flex items-center gap-2 mb-6">
+                <div className="w-10 h-10 bg-red-600 rounded-lg flex items-center justify-center">
+                  <LayoutDashboard className="text-white w-6 h-6" />
+                </div>
+                <span className="text-2xl font-black tracking-tighter">
+                  XBURGER<span className="text-amber-500">PDV</span>
+                </span>
+              </div>
+              <p className="text-slate-400 max-w-sm leading-relaxed mb-8">
+                Transformando a gestão de lanchonetes em todo o Brasil com tecnologia de ponta e design intuitivo.
+              </p>
+              <div className="flex gap-4">
+                {/* Social Icons Placeholder */}
+                <div className="w-10 h-10 bg-white/5 rounded-full flex items-center justify-center hover:bg-red-600 transition-colors cursor-pointer">
+                  <Users className="w-5 h-5" />
+                </div>
+                <div className="w-10 h-10 bg-white/5 rounded-full flex items-center justify-center hover:bg-red-600 transition-colors cursor-pointer">
+                  <TrendingUp className="w-5 h-5" />
+                </div>
+              </div>
+            </div>
+            
+            <div>
+              <h5 className="font-black text-sm uppercase tracking-widest mb-6">Produto</h5>
+              <ul className="space-y-4 text-slate-400 text-sm">
+                <li><a href="#" className="hover:text-white transition-colors">Funcionalidades</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">PDV</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">Estoque</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">Relatórios</a></li>
+              </ul>
+            </div>
+
+            <div>
+              <h5 className="font-black text-sm uppercase tracking-widest mb-6">Suporte</h5>
+              <ul className="space-y-4 text-slate-400 text-sm">
+                <li><a href="#" className="hover:text-white transition-colors">Central de Ajuda</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">Contato</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">Status do Sistema</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">Privacidade</a></li>
+              </ul>
+            </div>
+          </div>
+          
+          <div className="pt-8 border-t border-white/5 flex flex-col md:flex-row justify-between items-center gap-4 text-slate-500 text-xs font-bold uppercase tracking-widest">
+            <p>© 2026 XBURGERPDV - TODOS OS DIREITOS RESERVADOS</p>
+            <p>FEITO COM ❤️ PARA O BRASIL</p>
           </div>
         </div>
       </footer>
     </div>
   );
-}
-
-export default function App() {
-  if (isDeveloperRoute()) {
-    return <DeveloperPortal />;
-  }
-  return <MainSiteApp />;
 }

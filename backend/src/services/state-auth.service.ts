@@ -23,12 +23,17 @@ interface VerifyStateWriteTokenInput {
 
 export const issueStateWriteToken = (input: IssueStateWriteTokenInput): string => {
   const authEnv = getAuthEnv();
+  const payload: StateWriteTokenPayload = {
+    typ: 'state_write',
+    ver: input.version,
+  };
+
+  if (input.actorUserId) {
+    payload.sub = input.actorUserId;
+  }
+
   return jwt.sign(
-    {
-      typ: 'state_write',
-      ver: input.version,
-      sub: input.actorUserId,
-    } satisfies StateWriteTokenPayload,
+    payload,
     authEnv.JWT_SECRET as Secret,
     {
       expiresIn: STATE_TOKEN_EXPIRATION,

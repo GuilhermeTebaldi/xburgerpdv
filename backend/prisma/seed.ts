@@ -9,13 +9,13 @@ const prisma = new PrismaClient();
 const run = async () => {
   const envAdminEmail = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase();
   const envAdminPassword = process.env.SEED_ADMIN_PASSWORD?.trim();
-  const adminEmail = envAdminEmail || 'meu@admin.com';
-  const adminPassword = envAdminPassword || 'admin123';
+  const adminEmail = envAdminEmail || 'admin@xburgerpdv.com.br';
+  const adminPassword = envAdminPassword || 'Xburger@123456';
   const adminName = process.env.SEED_ADMIN_NAME?.trim() || 'Administrador';
 
   if (!envAdminEmail || !envAdminPassword) {
     console.warn(
-      '[seed] SEED_ADMIN_EMAIL/SEED_ADMIN_PASSWORD não definidos. Usando credenciais padrão do frontend.',
+      '[seed] SEED_ADMIN_EMAIL/SEED_ADMIN_PASSWORD não definidos. Usando credenciais padrão de bootstrap XBurger.',
     );
   }
 

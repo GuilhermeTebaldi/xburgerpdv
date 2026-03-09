@@ -29,6 +29,7 @@ import {
   RecipeItem,
 } from './types';
 import { DEFAULT_APP_STATE, loadAppState, type AppState } from './data/appStorage';
+import { hasAdminAuthToken, persistAdminAuthToken } from './data/adminAuthToken';
 import {
   runStateCommand,
   StateCommandSyncError,
@@ -36,13 +37,13 @@ import {
   type StateCommand,
 } from './data/stateCommandClient';
 
-const ADMIN_GATE_KEY = 'lanchesdoben_admin_gate';
-const ADMIN_SESSION_KEY = 'lanchesdoben_admin_session';
-const ADMIN_SESSION_BACKUP_KEY = 'lanchesdoben_admin_session_backup';
-const OFFLINE_SALE_QUEUE_KEY = 'qb_offline_sale_queue_v1';
-const CASH_HISTORY_LEGACY_MODE_KEY = 'qb_cash_history_legacy_mode_v1';
-const LOCAL_CASH_REGISTER_KEY = 'qb_cash_register_local_v1';
-const LOCAL_DAILY_HISTORY_KEY = 'qb_daily_sales_history_local_v1';
+const ADMIN_GATE_KEY = 'xburger_admin_gate';
+const ADMIN_SESSION_KEY = 'xburger_admin_session';
+const ADMIN_SESSION_BACKUP_KEY = 'xburger_admin_session_backup';
+const OFFLINE_SALE_QUEUE_KEY = 'xburger_offline_sale_queue_v1';
+const CASH_HISTORY_LEGACY_MODE_KEY = 'xburger_cash_history_legacy_mode_v1';
+const LOCAL_CASH_REGISTER_KEY = 'xburger_cash_register_local_v1';
+const LOCAL_DAILY_HISTORY_KEY = 'xburger_daily_sales_history_local_v1';
 
 type SaleRegisterCommand = Extract<StateCommand, { type: 'SALE_REGISTER' }>;
 
@@ -576,8 +577,10 @@ const App: React.FC = () => {
       return;
     }
 
-    const hasSessionPortalAccess = window.sessionStorage.getItem(ADMIN_GATE_KEY) === 'authenticated';
-    const hasPersistentPortalAccess = window.localStorage.getItem(ADMIN_GATE_KEY) === 'authenticated';
+    const hasSessionPortalAccess =
+      window.sessionStorage.getItem(ADMIN_GATE_KEY) === 'authenticated';
+    const hasPersistentPortalAccess =
+      window.localStorage.getItem(ADMIN_GATE_KEY) === 'authenticated';
 
     if (hasPersistentPortalAccess && !hasSessionPortalAccess) {
       window.sessionStorage.setItem(ADMIN_GATE_KEY, 'authenticated');
@@ -588,6 +591,13 @@ const App: React.FC = () => {
     }
 
     if (!hasSessionPortalAccess && !hasPersistentPortalAccess) {
+      window.location.replace(resolveSiteRootUrl());
+      return;
+    }
+
+    if (!hasAdminAuthToken()) {
+      window.sessionStorage.removeItem(ADMIN_GATE_KEY);
+      window.localStorage.removeItem(ADMIN_GATE_KEY);
       window.location.replace(resolveSiteRootUrl());
       return;
     }
@@ -942,8 +952,14 @@ const App: React.FC = () => {
         ? `Sem internet estável. ${pendingOfflineSales} venda(s) aguardando envio.`
         : 'Sistema sincronizado.';
 
-  const handleAdminLogin = useCallback((success: boolean) => {
-    if (!success) return;
+  const handleAdminLogin = useCallback((result: { success: boolean; token?: string }) => {
+    if (!result.success) return;
+    if (typeof result.token === 'string' && result.token.trim()) {
+      const keepPersistentAccess =
+        typeof window !== 'undefined' &&
+        window.localStorage.getItem(ADMIN_GATE_KEY) === 'authenticated';
+      persistAdminAuthToken(result.token, keepPersistentAccess);
+    }
     reinforceAdminSessionBarrier();
     setIsAdminAuthenticated(true);
   }, []);

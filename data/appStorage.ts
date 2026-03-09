@@ -9,6 +9,7 @@ import {
   StockEntry,
 } from '../types';
 import { clearStore } from './localDb';
+import { readAdminAuthToken } from './adminAuthToken';
 
 export interface AppState {
   ingredients: Ingredient[];
@@ -32,7 +33,7 @@ interface LocalMirrorSnapshot {
 }
 
 const API_TIMEOUT_MS = 12000;
-const DEFAULT_API_BASE_URL = 'https://xburger-backend.onrender.com';
+const DEFAULT_API_BASE_URL = 'http://127.0.0.1:4000';
 let hasRemoteHydratedState = false;
 let remoteStateVersion: string | null = null;
 let remoteStateToken: string | null = null;
@@ -40,19 +41,19 @@ let remoteSaveQueue: Promise<void> = Promise.resolve();
 let isDefaultFallbackBootstrap = false;
 
 const STORAGE_KEYS = {
-  ingredients: 'qb_ingredients',
-  products: 'qb_products',
-  sales: 'qb_session_sales',
-  stockEntries: 'qb_session_stock',
-  cleaningMaterials: 'qb_cleaning_materials',
-  cleaningStockEntries: 'qb_cleaning_stock',
-  globalSales: 'qb_global_sales',
-  globalCancelledSales: 'qb_global_cancelled',
-  globalStockEntries: 'qb_global_stock_entries',
-  globalCleaningStockEntries: 'qb_global_cleaning_stock_entries',
-  saleDrafts: 'qb_sale_drafts',
-  remoteStateMirror: 'qb_remote_state_mirror_v1',
-  metaVersion: 'qb_meta_version',
+  ingredients: 'xburger_ingredients',
+  products: 'xburger_products',
+  sales: 'xburger_session_sales',
+  stockEntries: 'xburger_session_stock',
+  cleaningMaterials: 'xburger_cleaning_materials',
+  cleaningStockEntries: 'xburger_cleaning_stock',
+  globalSales: 'xburger_global_sales',
+  globalCancelledSales: 'xburger_global_cancelled',
+  globalStockEntries: 'xburger_global_stock_entries',
+  globalCleaningStockEntries: 'xburger_global_cleaning_stock_entries',
+  saleDrafts: 'xburger_sale_drafts',
+  remoteStateMirror: 'xburger_remote_state_mirror_v1',
+  metaVersion: 'xburger_meta_version',
 };
 
 const LEGACY_INGREDIENT_IDS = new Set([
@@ -112,6 +113,12 @@ const getApiBaseUrl = (): string | null => {
 const getStateApiUrl = (): string | null => {
   const baseUrl = getApiBaseUrl();
   return baseUrl ? `${baseUrl}/api/v1/state` : null;
+};
+
+const getAuthorizationHeader = (): string | null => {
+  const token = readAdminAuthToken();
+  if (!token) return null;
+  return `Bearer ${token}`;
 };
 
 const delay = (ms: number): Promise<void> =>
@@ -245,12 +252,15 @@ const syncStateMetaFromResponse = (response: Response): void => {
 const tryLoadRemoteState = async (defaults: AppState): Promise<AppState | null> => {
   const apiUrl = getStateApiUrl();
   if (!apiUrl) return null;
+  const authorization = getAuthorizationHeader();
+  if (!authorization) return null;
 
   try {
     const response = await fetchWithTimeout(apiUrl, {
       method: 'GET',
       headers: {
         Accept: 'application/json',
+        Authorization: authorization,
       },
     });
     if (!response.ok) return null;
@@ -291,6 +301,8 @@ const trySaveRemoteState = async (state: AppState): Promise<boolean> => {
   const apiUrl = getStateApiUrl();
   if (!apiUrl) return false;
   if (!remoteStateVersion || !remoteStateToken) return false;
+  const authorization = getAuthorizationHeader();
+  if (!authorization) return false;
 
   try {
     const response = await fetchWithTimeout(apiUrl, {
@@ -299,6 +311,7 @@ const trySaveRemoteState = async (state: AppState): Promise<boolean> => {
         'Content-Type': 'application/json',
         'If-Match': `"${remoteStateVersion}"`,
         'X-State-Token': remoteStateToken,
+        Authorization: authorization,
       },
       body: JSON.stringify(state),
     });
@@ -321,6 +334,8 @@ const tryClearRemoteState = async (): Promise<boolean> => {
   const apiUrl = getStateApiUrl();
   if (!apiUrl) return false;
   if (!remoteStateVersion || !remoteStateToken) return false;
+  const authorization = getAuthorizationHeader();
+  if (!authorization) return false;
 
   try {
     const response = await fetchWithTimeout(apiUrl, {
@@ -328,6 +343,7 @@ const tryClearRemoteState = async (): Promise<boolean> => {
       headers: {
         'If-Match': `"${remoteStateVersion}"`,
         'X-State-Token': remoteStateToken,
+        Authorization: authorization,
       },
     });
     if (response.ok) {

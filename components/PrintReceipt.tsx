@@ -34,7 +34,7 @@ interface ReceiptViewModel {
   observations: string[];
 }
 
-const DEFAULT_RESTAURANT_NAME = 'LANCHESDOBEN';
+const DEFAULT_RESTAURANT_NAME = 'XBURGER PDV';
 const DEFAULT_RECEIPT_PAPER_WIDTH_MM = 58;
 const MIN_RECEIPT_PAPER_WIDTH_MM = 48;
 const MAX_RECEIPT_PAPER_WIDTH_MM = 80;
@@ -72,7 +72,7 @@ const normalizeText = (value: unknown): string | null => {
 
 const getRestaurantName = (): string => {
   if (typeof window === 'undefined') return DEFAULT_RESTAURANT_NAME;
-  const local = normalizeText(window.localStorage.getItem('qb_restaurant_name'));
+  const local = normalizeText(window.localStorage.getItem('xburger_restaurant_name'));
   return local || DEFAULT_RESTAURANT_NAME;
 };
 
@@ -82,7 +82,7 @@ const clampPaperWidthMm = (value: number): number =>
 const getReceiptPaperWidthMm = (): number => {
   if (typeof window === 'undefined') return DEFAULT_RECEIPT_PAPER_WIDTH_MM;
 
-  const raw = window.localStorage.getItem('qb_receipt_paper_width_mm');
+  const raw = window.localStorage.getItem('xburger_receipt_paper_width_mm');
   const parsed = raw ? Number(raw) : NaN;
   if (!Number.isFinite(parsed)) return DEFAULT_RECEIPT_PAPER_WIDTH_MM;
   return clampPaperWidthMm(parsed);

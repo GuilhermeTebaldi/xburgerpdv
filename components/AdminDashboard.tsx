@@ -61,6 +61,10 @@ const saleOriginBadgeClasses: Record<SaleOrigin, string> = {
   KEETA: 'bg-emerald-100 text-emerald-700 border-emerald-200',
 };
 
+const ADMIN_DANGER_ZONE_PASSWORD =
+  (import.meta.env.VITE_ADMIN_DANGER_ZONE_PASSWORD as string | undefined)?.trim() ||
+  'xburger-admin';
+
 const renderPaymentMethodBadge = (sale: Sale) => {
   const method = sale.payment?.method;
   if (!method) {
@@ -317,7 +321,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const handleUnlockConfig = (e: React.FormEvent) => {
     e.preventDefault();
-    if (configPass === 'admin123') {
+    if (configPass === ADMIN_DANGER_ZONE_PASSWORD) {
       setShowDangerZone(true);
       setConfigPass('');
       setShowConfigPass(false);

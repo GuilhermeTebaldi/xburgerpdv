@@ -6,8 +6,8 @@ import { asyncHandler } from '../utils/async-handler.js';
 
 export const saleRouter = Router();
 
-saleRouter.get('/', asyncHandler(saleController.list));
-saleRouter.get('/:id', asyncHandler(saleController.getById));
+saleRouter.get('/', authRequired, asyncHandler(saleController.list));
+saleRouter.get('/:id', authRequired, asyncHandler(saleController.getById));
 saleRouter.post('/', authRequired, asyncHandler(saleController.create));
 saleRouter.post('/undo-last', authRequired, asyncHandler(saleController.undoLast));
 saleRouter.post('/:id/refunds', authRequired, asyncHandler(saleController.refund));

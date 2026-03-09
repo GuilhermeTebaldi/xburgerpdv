@@ -1,5 +1,5 @@
 {
-  "name": "quickbite-pos-inventory",
+  "name": "xburger-pdv",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -14,9 +14,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "framer-motion": "^12.35.2",
+    "lucide-react": "^0.577.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "recharts": "^3.7.0"
+    "recharts": "^3.7.0",
+    "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

@@ -35,7 +35,7 @@ const Header: React.FC<HeaderProps> = ({ currentView, setView, dailyTotal }) => 
           <div className="bg-yellow-400 p-2 rounded-lg">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#b91c1c" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11V9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2"/><path d="M11 13h4"/><path d="M15 9h-4"/><path d="M15 17h-4"/><path d="M19 13h-4"/><path d="M19 9h-4"/><path d="M19 17h-4"/><rect x="3" y="11" width="4" height="6" rx="1"/></svg>
           </div>
-          <h1 className="text-2xl font-black tracking-tighter hidden sm:block">LANCHESDOBEN</h1>
+          <h1 className="text-2xl font-black tracking-tighter hidden sm:block">XBURGER PDV</h1>
         </div>
 
         <nav className="qb-header-nav hidden lg:flex items-center bg-red-700/50 rounded-full p-1 gap-1">

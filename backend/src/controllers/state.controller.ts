@@ -24,14 +24,16 @@ const readIfMatchVersion = (req: Request): string => {
 };
 
 const setStateHeaders = (req: Request, res: Response, version: string): void => {
-  const token = issueStateWriteToken({
-    version,
-    actorUserId: req.context.actorUserId,
-  });
-
   res.setHeader('ETag', `"${version}"`);
   res.setHeader('X-State-Version', version);
-  res.setHeader('X-State-Token', token);
+
+  if (req.context.actorUserId) {
+    const token = issueStateWriteToken({
+      version,
+      actorUserId: req.context.actorUserId,
+    });
+    res.setHeader('X-State-Token', token);
+  }
 };
 
 export const stateController = {
