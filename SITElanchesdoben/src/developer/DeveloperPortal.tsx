@@ -9,7 +9,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 
-const DEFAULT_API_BASE_URL = 'http://127.0.0.1:4000';
+const DEFAULT_API_BASE_URL = 'https://xburger-saas-backend.onrender.com';
 const REQUEST_TIMEOUT_MS = 12000;
 
 const DEV_EMAIL = ((import.meta.env.VITE_DEV_CONSOLE_EMAIL as string | undefined) || 'dev@xburgerpdv.com.br')

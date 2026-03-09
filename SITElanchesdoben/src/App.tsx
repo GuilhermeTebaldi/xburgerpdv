@@ -32,6 +32,23 @@ import {
   Area
 } from 'recharts';
 import heroMainImage from '../34256273-84a8-40b6-acaf-01d17bbc945a-2.png';
+
+const normalizeSystemPath = (value?: string): string => {
+  const trimmed = (value || '').trim();
+  if (!trimmed) return '/sistema/';
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+};
+
+const resolveSystemUrl = (): string => {
+  const explicitSystemUrl = (import.meta.env.VITE_ADMIN_SYSTEM_URL || '').trim();
+  if (explicitSystemUrl) {
+    return explicitSystemUrl;
+  }
+
+  const systemPath = normalizeSystemPath(import.meta.env.VITE_ADMIN_SYSTEM_PATH);
+  if (typeof window === 'undefined') return systemPath;
+  return new URL(systemPath, window.location.origin).toString();
+};
 // Mock data for the dashboard preview
 const weeklyData = [
   { name: 'Dom', vendas: 25 },
@@ -73,6 +90,12 @@ export default function App() {
   const { scrollYProgress } = useScroll();
   const opacity = useTransform(scrollYProgress, [0, 0.05], [1, 0.8]);
   const scale = useTransform(scrollYProgress, [0, 0.05], [1, 0.95]);
+  const systemUrl = resolveSystemUrl();
+  const redirectToSystem = () => {
+    if (typeof window !== 'undefined') {
+      window.location.assign(systemUrl);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#F5F5F5] font-sans text-slate-900 overflow-x-hidden">
@@ -92,10 +115,11 @@ export default function App() {
             {/* Desktop Menu */}
             <div className="hidden md:flex items-center gap-8">
               <a href="#funcionalidades" className="text-sm font-medium hover:text-red-600 transition-colors">Funcionalidades</a>
-              <a href="#dashboard" className="text-sm font-medium hover:text-red-600 transition-colors">Relatórios</a>
+             
               <a href="#pdv" className="text-sm font-medium hover:text-red-600 transition-colors">PDV</a>
               <button 
-                onClick={() => document.getElementById('login')?.scrollIntoView({ behavior: 'smooth' })}
+                type="button"
+                onClick={redirectToSystem}
                 className="bg-red-600 text-white px-6 py-2 rounded-full text-sm font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-200 active:scale-95"
               >
                 ENTRAR NO SISTEMA
@@ -123,7 +147,16 @@ export default function App() {
               <a href="#funcionalidades" className="block text-sm font-medium" onClick={() => setIsMenuOpen(false)}>Funcionalidades</a>
               <a href="#dashboard" className="block text-sm font-medium" onClick={() => setIsMenuOpen(false)}>Relatórios</a>
               <a href="#pdv" className="block text-sm font-medium" onClick={() => setIsMenuOpen(false)}>PDV</a>
-              <button className="w-full bg-red-600 text-white px-6 py-3 rounded-xl text-sm font-bold">ENTRAR NO SISTEMA</button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMenuOpen(false);
+                  redirectToSystem();
+                }}
+                className="w-full bg-red-600 text-white px-6 py-3 rounded-xl text-sm font-bold"
+              >
+                ENTRAR NO SISTEMA
+              </button>
             </motion.div>
           )}
         </AnimatePresence>
@@ -505,7 +538,13 @@ export default function App() {
               <p className="text-slate-500">Bem-vindo de volta ao xburgerpdv</p>
             </div>
 
-            <form className="space-y-6" onSubmit={(e) => e.preventDefault()}>
+            <form
+              className="space-y-6"
+              onSubmit={(e) => {
+                e.preventDefault();
+                redirectToSystem();
+              }}
+            >
               <div>
                 <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">E-mail ou Usuário</label>
                 <input 

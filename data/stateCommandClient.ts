@@ -14,7 +14,7 @@ import { DEFAULT_APP_STATE, type AppState } from './appStorage';
 import { readAdminAuthToken } from './adminAuthToken';
 
 const API_TIMEOUT_MS = 12000;
-const DEFAULT_API_BASE_URL = 'http://127.0.0.1:4000';
+const DEFAULT_API_BASE_URL = 'https://xburger-saas-backend.onrender.com';
 
 type BaseCommand = {
   commandId?: string;
@@ -137,6 +137,7 @@ interface StateWriteContext {
 
 let writeContext: StateWriteContext | null = null;
 let writeContextRefreshInFlight: Promise<void> | null = null;
+let activeWriteScope: string | null = null;
 
 const getApiBaseUrl = (): string | null => {
   const raw = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
@@ -158,6 +159,7 @@ const getStateCommandsApiUrl = (): string => `${getStateApiUrl()}/commands`;
 
 const getAuthorizationHeader = (): string => {
   const token = readAdminAuthToken();
+  syncWriteScopeWithToken(token);
   if (!token) {
     throw new StateCommandSyncError('Sessão expirada. Faça login novamente para continuar.', {
       statusCode: 401,
@@ -231,6 +233,32 @@ const decodeBase64Url = (value: string): string | null => {
   } catch {
     return null;
   }
+};
+
+const readTokenSubject = (token: string | null): string | null => {
+  if (!token) return null;
+  const parts = token.split('.');
+  if (parts.length < 2) return null;
+  const payloadRaw = decodeBase64Url(parts[1]);
+  if (!payloadRaw) return null;
+
+  try {
+    const payload = JSON.parse(payloadRaw) as { sub?: unknown };
+    return typeof payload.sub === 'string' && payload.sub.trim() ? payload.sub.trim() : null;
+  } catch {
+    return null;
+  }
+};
+
+const syncWriteScopeWithToken = (token: string | null): void => {
+  const nextScope = readTokenSubject(token);
+  if (nextScope === activeWriteScope) {
+    return;
+  }
+
+  activeWriteScope = nextScope;
+  writeContext = null;
+  writeContextRefreshInFlight = null;
 };
 
 const readJwtExpirationMs = (token: string): number | null => {

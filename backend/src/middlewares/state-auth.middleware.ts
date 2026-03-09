@@ -13,9 +13,11 @@ const attachAuthenticatedUser = (req: Request, userId: string) => {
 
 export const stateReadAuth = (req: Request, _res: Response, next: NextFunction) => {
   const userId = decodeBearerUserId(req.header('authorization'));
-  if (userId) {
-    attachAuthenticatedUser(req, userId);
+  if (!userId) {
+    throw new HttpError(401, 'Token de autenticação não informado.');
   }
+
+  attachAuthenticatedUser(req, userId);
   next();
 };
 

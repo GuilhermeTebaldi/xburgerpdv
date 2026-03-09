@@ -1,5 +1,5 @@
 const API_TIMEOUT_MS = 4000;
-const DEFAULT_API_BASE_URL = 'http://127.0.0.1:4000';
+const DEFAULT_API_BASE_URL = 'https://xburger-saas-backend.onrender.com';
 const CACHED_PUBLIC_PRODUCTS_KEY = 'xburger_public_products_v2';
 
 export interface PublicProduct {

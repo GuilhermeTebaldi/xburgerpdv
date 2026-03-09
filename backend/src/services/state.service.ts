@@ -1,4 +1,4 @@
-import { AppStateBackupKind, Prisma, SaleStatus, StockTargetType } from '@prisma/client';
+import { AppStateBackupKind, Prisma } from '@prisma/client';
 
 import { env } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
@@ -7,15 +7,6 @@ import type { RequestContext } from '../types/request-context.js';
 import { HttpError } from '../utils/http-error.js';
 import type { StateCommandInput } from '../validators/state-command.validator.js';
 import { AuditService } from './audit.service.js';
-import {
-  toFrontCleaningEntry,
-  toFrontCleaningMaterial,
-  toFrontIngredient,
-  toFrontIngredientEntry,
-  toFrontProduct,
-  toFrontSale,
-} from './mappers.service.js';
-import { SessionService } from './session.service.js';
 import { addDays, toBackupDay, toDateOnlyKey } from './state-backup.utils.js';
 import { applyStateCommand, commandTouchesArchiveState } from './state-command.service.js';
 
@@ -128,11 +119,18 @@ export interface DailyBackupResult {
 }
 
 export class StateService {
-  private readonly sessionService = new SessionService();
+  private ensureOwnerUserId(actorUserId: string | undefined): string {
+    const ownerUserId = actorUserId?.trim();
+    if (!ownerUserId) {
+      throw new HttpError(401, 'Usuário autenticado não encontrado para acessar o estado.');
+    }
+    return ownerUserId;
+  }
 
-  async getAppState(): Promise<AppStateSnapshot> {
+  async getAppState(actorUserId: string): Promise<AppStateSnapshot> {
+    const ownerUserId = this.ensureOwnerUserId(actorUserId);
     try {
-      const snapshot = await prisma.appState.findUnique({ where: { id: 1 } });
+      const snapshot = await prisma.appState.findUnique({ where: { ownerUserId } });
       if (snapshot) {
         return {
           state: normalizeStatePayloadSafe(snapshot.stateJson),
@@ -146,58 +144,50 @@ export class StateService {
       await this.bootstrapAppStateTables();
     }
 
-    const rebuilt = await this.buildStateFromDomain();
-    return this.persistSnapshot(rebuilt, 'APP_STATE_BOOTSTRAPPED');
+    return this.persistSnapshot(EMPTY_APP_STATE, 'APP_STATE_BOOTSTRAPPED', ownerUserId);
   }
 
-  async getAppStateVersion(): Promise<string> {
-    try {
-      const snapshot = await prisma.appState.findUnique({
-        where: { id: 1 },
-        select: { updatedAt: true },
-      });
-      if (snapshot) {
-        return toVersionTag(snapshot.updatedAt);
-      }
-    } catch (error) {
-      if (!this.isMissingAppStateTableError(error)) {
-        throw error;
-      }
-      await this.bootstrapAppStateTables();
-    }
-
-    const rebuilt = await this.buildStateFromDomain();
-    const persisted = await this.persistSnapshot(rebuilt, 'APP_STATE_BOOTSTRAPPED');
-    return persisted.version;
+  async getAppStateVersion(actorUserId: string): Promise<string> {
+    const snapshot = await this.getAppState(actorUserId);
+    return snapshot.version;
   }
 
   async saveAppState(
+    actorUserId: string,
     state: unknown,
     expectedVersion: string,
     context?: RequestContext
   ): Promise<AppStateSnapshot> {
+    const ownerUserId = this.ensureOwnerUserId(actorUserId);
     const normalized = normalizeStatePayload(state);
-    return this.persistSnapshot(normalized, 'APP_STATE_UPSERTED', context, expectedVersion);
+    return this.persistSnapshot(normalized, 'APP_STATE_UPSERTED', ownerUserId, context, expectedVersion);
   }
 
-  async clearAppState(expectedVersion: string, context?: RequestContext): Promise<AppStateSnapshot> {
-    return this.persistSnapshot(EMPTY_APP_STATE, 'APP_STATE_CLEARED', context, expectedVersion);
+  async clearAppState(
+    actorUserId: string,
+    expectedVersion: string,
+    context?: RequestContext
+  ): Promise<AppStateSnapshot> {
+    const ownerUserId = this.ensureOwnerUserId(actorUserId);
+    return this.persistSnapshot(EMPTY_APP_STATE, 'APP_STATE_CLEARED', ownerUserId, context, expectedVersion);
   }
 
   async applyCommand(
+    actorUserId: string,
     command: StateCommandInput,
     expectedVersion: string,
     context?: RequestContext
   ): Promise<AppStateSnapshot> {
+    const ownerUserId = this.ensureOwnerUserId(actorUserId);
     try {
-      return await this.applyCommandSnapshot(command, expectedVersion, context);
+      return await this.applyCommandSnapshot(ownerUserId, command, expectedVersion, context);
     } catch (error) {
       if (!this.isMissingAppStateTableError(error)) {
         throw error;
       }
 
       await this.bootstrapAppStateTables();
-      return this.applyCommandSnapshot(command, expectedVersion, context);
+      return this.applyCommandSnapshot(ownerUserId, command, expectedVersion, context);
     }
   }
 
@@ -216,24 +206,89 @@ export class StateService {
   }
 
   private isMissingAppStateTableError(error: unknown): boolean {
-    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2021';
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      (error.code === 'P2021' || error.code === 'P2022')
+    );
   }
 
   private async bootstrapAppStateTables(): Promise<void> {
     await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS app_state (
-        id integer PRIMARY KEY DEFAULT 1,
+        id integer PRIMARY KEY,
+        owner_user_id uuid,
         state_json jsonb NOT NULL DEFAULT '{}'::jsonb,
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now(),
-        CONSTRAINT app_state_singleton CHECK (id = 1)
+        CONSTRAINT app_state_owner_user_id_fkey
+          FOREIGN KEY (owner_user_id) REFERENCES users(id)
+          ON DELETE SET NULL ON UPDATE CASCADE
       )
     `);
 
     await prisma.$executeRawUnsafe(`
-      INSERT INTO app_state (id, state_json)
-      VALUES (1, '{}'::jsonb)
-      ON CONFLICT (id) DO NOTHING
+      ALTER TABLE app_state DROP CONSTRAINT IF EXISTS app_state_singleton
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE app_state ADD COLUMN IF NOT EXISTS owner_user_id uuid
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'app_state_owner_user_id_fkey'
+        ) THEN
+          ALTER TABLE app_state
+            ADD CONSTRAINT app_state_owner_user_id_fkey
+            FOREIGN KEY (owner_user_id) REFERENCES users(id)
+            ON DELETE SET NULL ON UPDATE CASCADE;
+        END IF;
+      END
+      $$;
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE app_state ALTER COLUMN id DROP DEFAULT
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_class
+          WHERE relname = 'app_state_id_seq'
+        ) THEN
+          CREATE SEQUENCE app_state_id_seq OWNED BY app_state.id;
+        END IF;
+      END
+      $$;
+    `);
+
+    await prisma.$queryRawUnsafe(`
+      SELECT setval(
+        'app_state_id_seq',
+        GREATEST(COALESCE((SELECT MAX(id) FROM app_state), 0), 1),
+        true
+      )
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE app_state ALTER COLUMN id SET DEFAULT nextval('app_state_id_seq')
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX IF NOT EXISTS app_state_owner_user_id_key
+      ON app_state (owner_user_id)
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS app_state_owner_user_id_idx
+      ON app_state (owner_user_id)
     `);
 
     await prisma.$executeRawUnsafe(`
@@ -249,22 +304,56 @@ export class StateService {
     await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS app_state_backups (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_user_id uuid,
         kind app_state_backup_kind NOT NULL,
         source_version varchar(80) NOT NULL,
         backup_day date,
         state_json jsonb NOT NULL,
-        created_at timestamptz NOT NULL DEFAULT now()
+        created_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT app_state_backups_owner_user_id_fkey
+          FOREIGN KEY (owner_user_id) REFERENCES users(id)
+          ON DELETE SET NULL ON UPDATE CASCADE
       )
     `);
 
     await prisma.$executeRawUnsafe(`
-      CREATE UNIQUE INDEX IF NOT EXISTS app_state_backups_backup_day_kind_key
-      ON app_state_backups (backup_day, kind)
+      ALTER TABLE app_state_backups ADD COLUMN IF NOT EXISTS owner_user_id uuid
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'app_state_backups_owner_user_id_fkey'
+        ) THEN
+          ALTER TABLE app_state_backups
+            ADD CONSTRAINT app_state_backups_owner_user_id_fkey
+            FOREIGN KEY (owner_user_id) REFERENCES users(id)
+            ON DELETE SET NULL ON UPDATE CASCADE;
+        END IF;
+      END
+      $$;
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      DROP INDEX IF EXISTS app_state_backups_backup_day_kind_key
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX IF NOT EXISTS app_state_backups_owner_user_id_backup_day_kind_key
+      ON app_state_backups (owner_user_id, backup_day, kind)
     `);
 
     await prisma.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS app_state_backups_kind_created_at_idx
       ON app_state_backups (kind, created_at)
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS app_state_backups_owner_kind_created_at_idx
+      ON app_state_backups (owner_user_id, kind, created_at)
     `);
 
     await prisma.$executeRawUnsafe(`
@@ -276,29 +365,31 @@ export class StateService {
   private async persistSnapshot(
     state: FrontAppState,
     action: 'APP_STATE_BOOTSTRAPPED' | 'APP_STATE_UPSERTED' | 'APP_STATE_CLEARED',
+    ownerUserId: string,
     context?: RequestContext,
     expectedVersion?: string
   ): Promise<AppStateSnapshot> {
     try {
-      return await this.upsertSnapshot(state, action, context, expectedVersion);
+      return await this.upsertSnapshot(state, action, ownerUserId, context, expectedVersion);
     } catch (error) {
       if (!this.isMissingAppStateTableError(error)) {
         throw error;
       }
 
       await this.bootstrapAppStateTables();
-      return this.upsertSnapshot(state, action, context, expectedVersion);
+      return this.upsertSnapshot(state, action, ownerUserId, context, expectedVersion);
     }
   }
 
   private async upsertSnapshot(
     state: FrontAppState,
     action: 'APP_STATE_BOOTSTRAPPED' | 'APP_STATE_UPSERTED' | 'APP_STATE_CLEARED',
+    ownerUserId: string,
     context?: RequestContext,
     expectedVersion?: string
   ): Promise<AppStateSnapshot> {
     return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const current = await tx.appState.findUnique({ where: { id: 1 } });
+      const current = await tx.appState.findUnique({ where: { ownerUserId } });
       const currentVersion = current ? toVersionTag(current.updatedAt) : null;
       const operationNow = new Date();
 
@@ -317,18 +408,18 @@ export class StateService {
         }
       }
 
-      await this.ensurePreWriteBackupTx(tx, current);
+      await this.ensurePreWriteBackupTx(tx, current, ownerUserId);
 
       const saved = current
         ? await tx.appState.update({
-            where: { id: 1 },
+            where: { ownerUserId },
             data: {
               stateJson: state as unknown as Prisma.InputJsonValue,
             },
           })
         : await tx.appState.create({
             data: {
-              id: 1,
+              ownerUserId,
               stateJson: state as unknown as Prisma.InputJsonValue,
             },
           });
@@ -337,13 +428,14 @@ export class StateService {
         tx,
         saved.stateJson as Prisma.JsonValue,
         toVersionTag(saved.updatedAt),
-        operationNow
+        operationNow,
+        ownerUserId
       );
 
       await new AuditService(tx).log(
         {
           entityName: 'app_state',
-          entityId: '1',
+          entityId: ownerUserId,
           action,
         },
         context
@@ -378,12 +470,13 @@ export class StateService {
   }
 
   private async applyCommandSnapshot(
+    ownerUserId: string,
     command: StateCommandInput,
     expectedVersion: string,
     context?: RequestContext
   ): Promise<AppStateSnapshot> {
     return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const current = await tx.appState.findUnique({ where: { id: 1 } });
+      const current = await tx.appState.findUnique({ where: { ownerUserId } });
       const currentVersion = current ? toVersionTag(current.updatedAt) : null;
       const operationNow = new Date();
       this.assertExpectedVersion(expectedVersion, currentVersion);
@@ -399,15 +492,15 @@ export class StateService {
       const saved: PersistedStateRow = current
         ? shouldUpdateArchive
           ? await tx.appState.update({
-              where: { id: 1 },
+              where: { ownerUserId },
               data: {
                 stateJson: nextState as unknown as Prisma.InputJsonValue,
               },
             })
-          : await this.updateHotStateTx(tx, nextState)
+          : await this.updateHotStateTx(tx, nextState, ownerUserId)
         : await tx.appState.create({
             data: {
-              id: 1,
+              ownerUserId,
               stateJson: nextState as unknown as Prisma.InputJsonValue,
             },
           });
@@ -416,13 +509,14 @@ export class StateService {
         tx,
         saved.stateJson as Prisma.JsonValue,
         toVersionTag(saved.updatedAt),
-        operationNow
+        operationNow,
+        ownerUserId
       );
 
       await new AuditService(tx).log(
         {
           entityName: 'app_state',
-          entityId: '1',
+          entityId: ownerUserId,
           action: 'APP_STATE_COMMAND_APPLIED',
           metadata: {
             commandType: command.type,
@@ -441,7 +535,8 @@ export class StateService {
 
   private async updateHotStateTx(
     tx: Prisma.TransactionClient,
-    state: FrontAppState
+    state: FrontAppState,
+    ownerUserId: string
   ): Promise<PersistedStateRow> {
     const patch = JSON.stringify(toHotStatePatch(state));
     const rows = await tx.$queryRaw<Array<{ state_json: Prisma.JsonValue; updated_at: Date }>>(
@@ -449,7 +544,7 @@ export class StateService {
         UPDATE app_state
         SET state_json = state_json || ${patch}::jsonb,
             updated_at = now()
-        WHERE id = 1
+        WHERE owner_user_id = ${ownerUserId}::uuid
         RETURNING state_json, updated_at
       `
     );
@@ -469,28 +564,48 @@ export class StateService {
     referenceDate: Date,
     context?: RequestContext
   ): Promise<DailyBackupResult> {
-    const snapshot = await this.getAppState();
     const backupDay = toBackupDay(referenceDate, env.DEFAULT_TIMEZONE);
     const backupDayKey = toDateOnlyKey(backupDay);
 
     return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const liveState = await tx.appState.findUnique({ where: { id: 1 } });
-      const sourceVersion = liveState ? toVersionTag(liveState.updatedAt) : snapshot.version;
-      const stateJson = (liveState?.stateJson ?? snapshot.state) as Prisma.JsonValue;
+      const snapshots = await tx.appState.findMany({
+        select: {
+          ownerUserId: true,
+          stateJson: true,
+          updatedAt: true,
+        },
+      });
 
-      const created = await this.ensureDailyBackupTx(tx, stateJson, sourceVersion, referenceDate);
+      let created = false;
+      let sourceVersion = 'none';
+
+      for (const snapshot of snapshots) {
+        sourceVersion = toVersionTag(snapshot.updatedAt);
+        const scopeCreated = await this.ensureDailyBackupTx(
+          tx,
+          snapshot.stateJson as Prisma.JsonValue,
+          sourceVersion,
+          referenceDate,
+          snapshot.ownerUserId ?? null
+        );
+        if (scopeCreated) {
+          created = true;
+        }
+      }
+
       const prunedCount = await this.pruneExpiredBackupsTx(tx, referenceDate);
 
       await new AuditService(tx).log(
         {
           entityName: 'app_state',
-          entityId: '1',
+          entityId: '*',
           action: 'APP_STATE_BACKUP_DAILY',
           metadata: {
             backupDay: backupDayKey,
             created,
             sourceVersion,
             prunedCount,
+            scopesProcessed: snapshots.length,
           },
         },
         context
@@ -507,13 +622,15 @@ export class StateService {
 
   private async ensurePreWriteBackupTx(
     tx: Prisma.TransactionClient,
-    current: { stateJson: Prisma.JsonValue; updatedAt: Date } | null
+    current: { stateJson: Prisma.JsonValue; updatedAt: Date } | null,
+    ownerUserId: string
   ): Promise<void> {
     if (!current) return;
 
     const sourceVersion = toVersionTag(current.updatedAt);
     const existing = await tx.appStateBackup.findFirst({
       where: {
+        ownerUserId,
         kind: AppStateBackupKind.PRE_WRITE,
         sourceVersion,
       },
@@ -524,6 +641,7 @@ export class StateService {
 
     await tx.appStateBackup.create({
       data: {
+        ownerUserId,
         kind: AppStateBackupKind.PRE_WRITE,
         sourceVersion,
         stateJson: current.stateJson as unknown as Prisma.InputJsonValue,
@@ -535,11 +653,46 @@ export class StateService {
     tx: Prisma.TransactionClient,
     stateJson: Prisma.JsonValue,
     sourceVersion: string,
-    referenceDate: Date
+    referenceDate: Date,
+    ownerUserId: string | null
   ): Promise<boolean> {
     const backupDay = toBackupDay(referenceDate, env.DEFAULT_TIMEZONE);
+    if (ownerUserId === null) {
+      const existing = await tx.appStateBackup.findFirst({
+        where: {
+          ownerUserId: null,
+          backupDay,
+          kind: AppStateBackupKind.DAILY,
+        },
+        select: { id: true },
+      });
+
+      if (!existing) {
+        await tx.appStateBackup.create({
+          data: {
+            ownerUserId: null,
+            kind: AppStateBackupKind.DAILY,
+            backupDay,
+            sourceVersion,
+            stateJson: stateJson as unknown as Prisma.InputJsonValue,
+          },
+        });
+        return true;
+      }
+
+      await tx.appStateBackup.update({
+        where: { id: existing.id },
+        data: {
+          sourceVersion,
+          stateJson: stateJson as unknown as Prisma.InputJsonValue,
+        },
+      });
+      return false;
+    }
+
     const created = await tx.appStateBackup.createMany({
       data: {
+        ownerUserId,
         kind: AppStateBackupKind.DAILY,
         backupDay,
         sourceVersion,
@@ -554,7 +707,8 @@ export class StateService {
 
     await tx.appStateBackup.update({
       where: {
-        backupDay_kind: {
+        ownerUserId_backupDay_kind: {
+          ownerUserId,
           backupDay,
           kind: AppStateBackupKind.DAILY,
         },
@@ -579,154 +733,5 @@ export class StateService {
       },
     });
     return deleted.count;
-  }
-
-  private async buildStateFromDomain(): Promise<FrontAppState> {
-    const currentSession = await this.sessionService.getCurrentSession();
-
-    const [
-      ingredients,
-      products,
-      sessionSales,
-      sessionStockMovements,
-      cleaningMaterials,
-      sessionCleaningMovements,
-      globalSales,
-      globalCancelledSales,
-      globalStockMovements,
-      globalCleaningMovements,
-    ] = await Promise.all([
-      prisma.ingredient.findMany({
-        where: { isActive: true },
-        orderBy: { name: 'asc' },
-      }),
-      prisma.product.findMany({
-        where: { isActive: true },
-        include: { recipeItems: true },
-        orderBy: { name: 'asc' },
-      }),
-      prisma.sale.findMany({
-        where: {
-          sessionId: currentSession.id,
-          status: { not: SaleStatus.REFUNDED },
-        },
-        include: {
-          items: {
-            include: { ingredients: true },
-            orderBy: { createdAt: 'asc' },
-          },
-          refunds: {
-            select: {
-              totalCostReversed: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'asc' },
-      }),
-      prisma.stockMovement.findMany({
-        where: {
-          sessionId: currentSession.id,
-          isManual: true,
-          targetType: StockTargetType.INGREDIENT,
-        },
-        include: {
-          ingredient: {
-            select: { id: true, name: true },
-          },
-        },
-        orderBy: { createdAt: 'asc' },
-      }),
-      prisma.cleaningMaterial.findMany({
-        where: { isActive: true },
-        orderBy: { name: 'asc' },
-      }),
-      prisma.stockMovement.findMany({
-        where: {
-          sessionId: currentSession.id,
-          isManual: true,
-          targetType: StockTargetType.CLEANING_MATERIAL,
-        },
-        include: {
-          cleaningMaterial: {
-            select: { id: true, name: true },
-          },
-        },
-        orderBy: { createdAt: 'asc' },
-      }),
-      prisma.sale.findMany({
-        where: {
-          status: { not: SaleStatus.REFUNDED },
-        },
-        include: {
-          items: {
-            include: { ingredients: true },
-            orderBy: { createdAt: 'asc' },
-          },
-          refunds: {
-            select: {
-              totalCostReversed: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'asc' },
-      }),
-      prisma.sale.findMany({
-        where: {
-          status: SaleStatus.REFUNDED,
-        },
-        include: {
-          items: {
-            include: { ingredients: true },
-            orderBy: { createdAt: 'asc' },
-          },
-          refunds: {
-            select: {
-              totalCostReversed: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'asc' },
-      }),
-      prisma.stockMovement.findMany({
-        where: {
-          isManual: true,
-          targetType: StockTargetType.INGREDIENT,
-        },
-        include: {
-          ingredient: {
-            select: { id: true, name: true },
-          },
-        },
-        orderBy: { createdAt: 'asc' },
-      }),
-      prisma.stockMovement.findMany({
-        where: {
-          isManual: true,
-          targetType: StockTargetType.CLEANING_MATERIAL,
-        },
-        include: {
-          cleaningMaterial: {
-            select: { id: true, name: true },
-          },
-        },
-        orderBy: { createdAt: 'asc' },
-      }),
-    ]);
-
-    return {
-      ingredients: ingredients.map(toFrontIngredient),
-      products: products.map(toFrontProduct),
-      sales: sessionSales.map(toFrontSale),
-      stockEntries: sessionStockMovements.map(toFrontIngredientEntry),
-      cleaningMaterials: cleaningMaterials.map(toFrontCleaningMaterial),
-      cleaningStockEntries: sessionCleaningMovements.map(toFrontCleaningEntry),
-      globalSales: globalSales.map(toFrontSale),
-      globalCancelledSales: globalCancelledSales.map(toFrontSale),
-      globalStockEntries: globalStockMovements.map(toFrontIngredientEntry),
-      globalCleaningStockEntries: globalCleaningMovements.map(toFrontCleaningEntry),
-      saleDrafts: [],
-      cashRegisterAmount: 0,
-      dailySalesHistory: [],
-    };
   }
 }

@@ -18,7 +18,7 @@ services:
       - key: JWT_EXPIRES_IN
         value: 12h
       - key: CORS_ORIGINS
-        value: https://xburgerpdv.com.br,https://www.xburgerpdv.com.br,https://app.xburgerpdv.com.br
+        value: https://xburgerpdv.com.br,https://www.xburgerpdv.com.br,https://app.xburgerpdv.com.br,https://*.xburgerpdv.com.br
       - key: SEED_ADMIN_EMAIL
         sync: false
       - key: SEED_ADMIN_PASSWORD

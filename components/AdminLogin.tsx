@@ -6,7 +6,7 @@ interface AdminLoginProps {
   onLogin: (result: { success: boolean; token?: string }) => void;
 }
 
-const DEFAULT_API_BASE_URL = 'http://127.0.0.1:4000';
+const DEFAULT_API_BASE_URL = 'https://xburger-saas-backend.onrender.com';
 
 const resolveApiBaseUrl = (): string => {
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();

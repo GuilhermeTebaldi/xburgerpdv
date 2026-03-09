@@ -12,6 +12,59 @@ import { apiRouter } from './routes/index.js';
 const app = express();
 const localhostOriginPattern = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
 
+const normalizeOrigin = (value: string): string => {
+  try {
+    const url = new URL(value);
+    const protocol = url.protocol.toLowerCase();
+    const hostname = url.hostname.toLowerCase();
+    const port = url.port ? `:${url.port}` : '';
+    return `${protocol}//${hostname}${port}`;
+  } catch {
+    return value.trim().toLowerCase();
+  }
+};
+
+const isWildcardOriginMatch = (origin: string, pattern: string): boolean => {
+  if (!pattern.includes('*')) {
+    return normalizeOrigin(origin) === normalizeOrigin(pattern);
+  }
+
+  try {
+    const originUrl = new URL(origin);
+    const patternUrl = new URL(pattern);
+
+    if (originUrl.protocol.toLowerCase() !== patternUrl.protocol.toLowerCase()) {
+      return false;
+    }
+
+    if (patternUrl.port && originUrl.port !== patternUrl.port) {
+      return false;
+    }
+
+    const wildcardHost = patternUrl.hostname.toLowerCase();
+    if (!wildcardHost.startsWith('*.')) {
+      return false;
+    }
+
+    const baseHost = wildcardHost.slice(2);
+    const candidateHost = originUrl.hostname.toLowerCase();
+    if (candidateHost === baseHost) {
+      return false;
+    }
+
+    return candidateHost.endsWith(`.${baseHost}`);
+  } catch {
+    return false;
+  }
+};
+
+const isOriginAllowed = (origin: string): boolean => {
+  const normalizedOrigin = normalizeOrigin(origin);
+  return env.corsOrigins.some((allowedOrigin) =>
+    isWildcardOriginMatch(normalizedOrigin, allowedOrigin)
+  );
+};
+
 app.set('trust proxy', 1);
 app.use(helmet());
 app.use(express.json({ limit: '2mb' }));
@@ -33,7 +86,7 @@ app.use(
         return;
       }
 
-      if (env.corsOrigins.includes(origin)) {
+      if (isOriginAllowed(origin)) {
         callback(null, true);
         return;
       }

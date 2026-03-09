@@ -38,13 +38,23 @@ const setStateHeaders = (req: Request, res: Response, version: string): void => 
 
 export const stateController = {
   headState: async (req: Request, res: Response) => {
-    const version = await stateService.getAppStateVersion();
+    const actorUserId = req.authUserId;
+    if (!actorUserId) {
+      throw new HttpError(401, 'Usuário não autenticado.');
+    }
+
+    const version = await stateService.getAppStateVersion(actorUserId);
     setStateHeaders(req, res, version);
     res.status(204).end();
   },
 
   getState: async (req: Request, res: Response) => {
-    const snapshot = await stateService.getAppState();
+    const actorUserId = req.authUserId;
+    if (!actorUserId) {
+      throw new HttpError(401, 'Usuário não autenticado.');
+    }
+
+    const snapshot = await stateService.getAppState(actorUserId);
     setStateHeaders(req, res, snapshot.version);
     res.status(200).json(snapshot.state);
   },
@@ -58,7 +68,12 @@ export const stateController = {
       });
     }
 
-    const snapshot = await stateService.saveAppState(req.body, expectedVersion, req.context);
+    const actorUserId = req.authUserId;
+    if (!actorUserId) {
+      throw new HttpError(401, 'Usuário não autenticado.');
+    }
+
+    const snapshot = await stateService.saveAppState(actorUserId, req.body, expectedVersion, req.context);
     setStateHeaders(req, res, snapshot.version);
     res.status(200).json(snapshot.state);
   },
@@ -72,7 +87,12 @@ export const stateController = {
       });
     }
 
-    const snapshot = await stateService.clearAppState(expectedVersion, req.context);
+    const actorUserId = req.authUserId;
+    if (!actorUserId) {
+      throw new HttpError(401, 'Usuário não autenticado.');
+    }
+
+    const snapshot = await stateService.clearAppState(actorUserId, expectedVersion, req.context);
     setStateHeaders(req, res, snapshot.version);
     res.status(200).json(snapshot.state);
   },
@@ -86,8 +106,13 @@ export const stateController = {
       });
     }
 
+    const actorUserId = req.authUserId;
+    if (!actorUserId) {
+      throw new HttpError(401, 'Usuário não autenticado.');
+    }
+
     const command = stateCommandSchema.parse(req.body);
-    const snapshot = await stateService.applyCommand(command, expectedVersion, req.context);
+    const snapshot = await stateService.applyCommand(actorUserId, command, expectedVersion, req.context);
     setStateHeaders(req, res, snapshot.version);
     res.status(200).json(snapshot.state);
   },

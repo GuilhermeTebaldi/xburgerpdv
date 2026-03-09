@@ -33,12 +33,13 @@ interface LocalMirrorSnapshot {
 }
 
 const API_TIMEOUT_MS = 12000;
-const DEFAULT_API_BASE_URL = 'http://127.0.0.1:4000';
+const DEFAULT_API_BASE_URL = 'https://xburger-saas-backend.onrender.com';
 let hasRemoteHydratedState = false;
 let remoteStateVersion: string | null = null;
 let remoteStateToken: string | null = null;
 let remoteSaveQueue: Promise<void> = Promise.resolve();
 let isDefaultFallbackBootstrap = false;
+let activeAuthSubject: string | null = null;
 
 const STORAGE_KEYS = {
   ingredients: 'xburger_ingredients',
@@ -119,6 +120,56 @@ const getAuthorizationHeader = (): string | null => {
   const token = readAdminAuthToken();
   if (!token) return null;
   return `Bearer ${token}`;
+};
+
+const decodeBase64Url = (value: string): string | null => {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padLength = (4 - (normalized.length % 4)) % 4;
+  const padded = `${normalized}${'='.repeat(padLength)}`;
+  try {
+    if (typeof atob === 'function') {
+      return atob(padded);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const readTokenSubject = (token: string | null): string | null => {
+  if (!token) return null;
+  const parts = token.split('.');
+  if (parts.length < 2) return null;
+
+  const payloadRaw = decodeBase64Url(parts[1]);
+  if (!payloadRaw) return null;
+
+  try {
+    const payload = JSON.parse(payloadRaw) as { sub?: unknown };
+    return typeof payload.sub === 'string' && payload.sub.trim() ? payload.sub.trim() : null;
+  } catch {
+    return null;
+  }
+};
+
+const ensureAuthScope = (): string | null => {
+  const currentToken = readAdminAuthToken();
+  const currentSubject = readTokenSubject(currentToken);
+  if (activeAuthSubject !== currentSubject) {
+    activeAuthSubject = currentSubject;
+    hasRemoteHydratedState = false;
+    remoteStateVersion = null;
+    remoteStateToken = null;
+    remoteSaveQueue = Promise.resolve();
+    isDefaultFallbackBootstrap = false;
+  }
+  return activeAuthSubject;
+};
+
+const getScopedStorageKey = (baseKey: string): string => {
+  const scope = ensureAuthScope();
+  if (!scope) return baseKey;
+  return `${baseKey}:${scope}`;
 };
 
 const delay = (ms: number): Promise<void> =>
@@ -396,7 +447,7 @@ const persistRemoteStateWithRetry = async (state: AppState): Promise<boolean> =>
 const loadLocalMirrorState = (defaults: AppState): LocalMirrorSnapshot | null => {
   if (typeof localStorage === 'undefined') return null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.remoteStateMirror);
+    const raw = localStorage.getItem(getScopedStorageKey(STORAGE_KEYS.remoteStateMirror));
     if (!raw) return null;
 
     const parsed = JSON.parse(raw) as unknown;
@@ -427,7 +478,7 @@ const saveLocalMirrorState = (state: AppState): void => {
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(
-      STORAGE_KEYS.remoteStateMirror,
+      getScopedStorageKey(STORAGE_KEYS.remoteStateMirror),
       JSON.stringify({
         savedAt: new Date().toISOString(),
         state,
@@ -459,10 +510,12 @@ const clearLegacyStorage = () => {
   if (typeof localStorage === 'undefined') return;
   DATA_KEYS.forEach((key) => localStorage.removeItem(key));
   localStorage.removeItem(STORAGE_KEYS.remoteStateMirror);
+  localStorage.removeItem(getScopedStorageKey(STORAGE_KEYS.remoteStateMirror));
   localStorage.removeItem(STORAGE_KEYS.metaVersion);
 };
 
 export const loadAppState = async (defaults: AppState = DEFAULT_APP_STATE): Promise<AppState> => {
+  ensureAuthScope();
   const remoteState = await tryLoadRemoteStateWithRetry(defaults);
   const localMirror = loadLocalMirrorState(defaults);
 
@@ -507,6 +560,7 @@ export const loadAppState = async (defaults: AppState = DEFAULT_APP_STATE): Prom
 };
 
 export const saveAppState = async (state: AppState): Promise<void> => {
+  ensureAuthScope();
   saveLocalMirrorState(state);
 
   if (isDefaultFallbackBootstrap && !hasRemoteHydratedState) {
@@ -535,6 +589,7 @@ export const saveAppState = async (state: AppState): Promise<void> => {
 };
 
 export const clearAppState = async (): Promise<void> => {
+  ensureAuthScope();
   if (!remoteStateVersion || !remoteStateToken) {
     await tryLoadRemoteState(DEFAULT_APP_STATE);
   }

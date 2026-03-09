@@ -100,6 +100,8 @@ model User {
   sessionsClosed      OperatingSession[] @relation("SessionClosedBy")
   stockMovements      StockMovement[]    @relation("StockMovementCreatedBy")
   auditLogsAuthored   AuditLog[]         @relation("AuditAuthor")
+  appStateSnapshots   AppState[]         @relation("AppStateOwner")
+  appStateBackups     AppStateBackup[]   @relation("AppStateBackupOwner")
 
   @@map("users")
 }
@@ -389,24 +391,33 @@ model AuditLog {
 }
 
 model AppState {
-  id        Int      @id @default(1)
-  stateJson Json     @map("state_json")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id          Int      @id @default(autoincrement())
+  ownerUserId String?  @unique @map("owner_user_id") @db.Uuid
+  stateJson   Json     @map("state_json")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  owner User? @relation("AppStateOwner", fields: [ownerUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([ownerUserId])
 
   @@map("app_state")
 }
 
 model AppStateBackup {
   id            String             @id @default(uuid()) @db.Uuid
+  ownerUserId   String?            @map("owner_user_id") @db.Uuid
   kind          AppStateBackupKind
   sourceVersion String             @map("source_version") @db.VarChar(80)
   backupDay     DateTime?          @map("backup_day") @db.Date
   stateJson     Json               @map("state_json")
   createdAt     DateTime           @default(now()) @map("created_at")
 
-  @@unique([backupDay, kind])
+  owner User? @relation("AppStateBackupOwner", fields: [ownerUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([ownerUserId, backupDay, kind])
   @@index([kind, createdAt])
+  @@index([ownerUserId, kind, createdAt])
   @@index([sourceVersion])
   @@map("app_state_backups")
 }
