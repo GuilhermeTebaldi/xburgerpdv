@@ -164,6 +164,16 @@ const AdminGeralPage: React.FC = () => {
     return Array.from(groups.values()).sort((a, b) => b.latestCreatedAtMs - a.latestCreatedAtMs);
   }, [users]);
 
+  const completeCompanyGroups = useMemo(
+    () => groupedCompanies.filter((group) => Boolean(group.manager && group.operator)),
+    [groupedCompanies]
+  );
+
+  const incompleteCompanyGroups = useMemo(
+    () => groupedCompanies.filter((group) => !group.manager || !group.operator),
+    [groupedCompanies]
+  );
+
   const resetMessages = () => {
     setLoginError('');
     setCreateError('');
@@ -410,6 +420,90 @@ const AdminGeralPage: React.FC = () => {
       setPendingCompanyKey(null);
     }
   };
+
+  const renderCompanyRows = (groups: CompanyUsersGroup[]) =>
+    groups.map((group) => {
+      const ownerKey =
+        group.stateOwnerUserId || group.manager?.id || group.operator?.id || null;
+      const managerLabel = group.manager
+        ? `${group.manager.name || '-'} (${group.manager.email})`
+        : 'Não cadastrado';
+      const operatorLabel = group.operator
+        ? `${group.operator.name || '-'} (${group.operator.email})`
+        : 'Não cadastrado';
+      const managerActive = group.manager?.isActive ?? false;
+      const operatorActive = group.operator?.isActive ?? false;
+      const isBillingBlocked =
+        (group.manager?.billingBlocked ?? false) || (group.operator?.billingBlocked ?? false);
+      const isCompanyDisabled =
+        !managerActive && !operatorActive && (group.manager !== null || group.operator !== null);
+      const isBusy = Boolean(ownerKey && pendingCompanyKey === ownerKey);
+      const hasPair = Boolean(group.manager && group.operator);
+
+      const statusLabel =
+        hasPair
+          ? managerActive && operatorActive
+            ? 'Ativos'
+            : isCompanyDisabled
+              ? 'Inativos'
+              : 'Parcial'
+          : 'Incompleto';
+
+      return (
+        <tr key={group.key} className="border-b border-slate-100">
+          <td className="py-2 pr-3 font-semibold">{group.companyName}</td>
+          <td className={`py-2 pr-3 ${group.manager ? '' : 'text-amber-700 font-semibold'}`}>{managerLabel}</td>
+          <td className={`py-2 pr-3 ${group.operator ? '' : 'text-amber-700 font-semibold'}`}>{operatorLabel}</td>
+          <td className="py-2 pr-3">
+            {group.stateOwnerUserId ? group.stateOwnerUserId.slice(0, 8) : '-'}
+          </td>
+          <td className="py-2 pr-3">{statusLabel}</td>
+          <td className="py-2 pr-3">
+            <span
+              className={`px-2 py-1 rounded-full text-xs font-bold ${
+                hasPair ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+              }`}
+            >
+              {hasPair ? 'VINCULADO' : 'SOLTO'}
+            </span>
+          </td>
+          <td className="py-2 pr-3">
+            {isBillingBlocked ? 'Bloqueada' : 'Em dia'}
+          </td>
+          <td className="py-2 pr-3">
+            {group.latestCreatedAtMs
+              ? new Date(group.latestCreatedAtMs).toLocaleString('pt-BR')
+              : '-'}
+          </td>
+          <td className="py-2 pr-3">
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={!ownerKey || isBusy}
+                onClick={() => {
+                  if (!ownerKey) return;
+                  void updateCompanyBilling(ownerKey, !isBillingBlocked);
+                }}
+                className="px-3 py-1 rounded-lg border border-slate-300 text-xs font-semibold disabled:opacity-50"
+              >
+                {isBillingBlocked ? 'Liberar' : 'Bloquear'}
+              </button>
+              <button
+                type="button"
+                disabled={!ownerKey || isBusy}
+                onClick={() => {
+                  if (!ownerKey) return;
+                  void updateCompanyStatus(ownerKey, isCompanyDisabled);
+                }}
+                className="px-3 py-1 rounded-lg border border-red-300 text-red-700 text-xs font-semibold disabled:opacity-50"
+              >
+                {isCompanyDisabled ? 'Reativar' : 'Excluir'}
+              </button>
+            </div>
+          </td>
+        </tr>
+      );
+    });
 
   const handleLinkExistingCompanyUsers = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -685,95 +779,74 @@ const AdminGeralPage: React.FC = () => {
               {isLoadingUsers ? (
                 <p className="text-sm text-slate-500">Carregando...</p>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-slate-500 border-b border-slate-200">
-                        <th className="py-2 pr-3">Empresa</th>
-                        <th className="py-2 pr-3">ADMGERENTE</th>
-                        <th className="py-2 pr-3">OPERADOR</th>
-                        <th className="py-2 pr-3">Vínculo</th>
-                        <th className="py-2 pr-3">Status</th>
-                        <th className="py-2 pr-3">Cobrança</th>
-                        <th className="py-2 pr-3">Criado em</th>
-                        <th className="py-2 pr-3">Ações</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {groupedCompanies.map((group) => {
-                        const ownerKey =
-                          group.stateOwnerUserId || group.manager?.id || group.operator?.id || null;
-                        const managerLabel = group.manager
-                          ? `${group.manager.name || '-'} (${group.manager.email})`
-                          : 'Não cadastrado';
-                        const operatorLabel = group.operator
-                          ? `${group.operator.name || '-'} (${group.operator.email})`
-                          : 'Não cadastrado';
-                        const managerActive = group.manager?.isActive ?? false;
-                        const operatorActive = group.operator?.isActive ?? false;
-                        const isBillingBlocked =
-                          (group.manager?.billingBlocked ?? false) || (group.operator?.billingBlocked ?? false);
-                        const isCompanyDisabled =
-                          !managerActive && !operatorActive && (group.manager !== null || group.operator !== null);
-                        const isBusy = Boolean(ownerKey && pendingCompanyKey === ownerKey);
-
-                        const statusLabel =
-                          group.manager && group.operator
-                            ? managerActive && operatorActive
-                              ? 'Ativos'
-                              : isCompanyDisabled
-                                ? 'Inativos'
-                                : 'Parcial'
-                            : 'Incompleto';
-
-                        return (
-                          <tr key={group.key} className="border-b border-slate-100">
-                            <td className="py-2 pr-3 font-semibold">{group.companyName}</td>
-                            <td className="py-2 pr-3">{managerLabel}</td>
-                            <td className="py-2 pr-3">{operatorLabel}</td>
-                            <td className="py-2 pr-3">
-                              {group.stateOwnerUserId ? group.stateOwnerUserId.slice(0, 8) : '-'}
-                            </td>
-                            <td className="py-2 pr-3">{statusLabel}</td>
-                            <td className="py-2 pr-3">
-                              {isBillingBlocked ? 'Bloqueada' : 'Em dia'}
-                            </td>
-                            <td className="py-2 pr-3">
-                              {group.latestCreatedAtMs
-                                ? new Date(group.latestCreatedAtMs).toLocaleString('pt-BR')
-                                : '-'}
-                            </td>
-                            <td className="py-2 pr-3">
-                              <div className="flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  disabled={!ownerKey || isBusy}
-                                  onClick={() => {
-                                    if (!ownerKey) return;
-                                    void updateCompanyBilling(ownerKey, !isBillingBlocked);
-                                  }}
-                                  className="px-3 py-1 rounded-lg border border-slate-300 text-xs font-semibold disabled:opacity-50"
-                                >
-                                  {isBillingBlocked ? 'Liberar' : 'Bloquear'}
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={!ownerKey || isBusy}
-                                  onClick={() => {
-                                    if (!ownerKey) return;
-                                    void updateCompanyStatus(ownerKey, isCompanyDisabled);
-                                  }}
-                                  className="px-3 py-1 rounded-lg border border-red-300 text-red-700 text-xs font-semibold disabled:opacity-50"
-                                >
-                                  {isCompanyDisabled ? 'Reativar' : 'Excluir'}
-                                </button>
-                              </div>
-                            </td>
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-wide text-emerald-700 mb-2">
+                      Empresas Vinculadas ({completeCompanyGroups.length})
+                    </h3>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-slate-500 border-b border-slate-200">
+                            <th className="py-2 pr-3">Empresa</th>
+                            <th className="py-2 pr-3">ADMGERENTE</th>
+                            <th className="py-2 pr-3">OPERADOR</th>
+                            <th className="py-2 pr-3">Vínculo</th>
+                            <th className="py-2 pr-3">Status</th>
+                            <th className="py-2 pr-3">Par</th>
+                            <th className="py-2 pr-3">Cobrança</th>
+                            <th className="py-2 pr-3">Criado em</th>
+                            <th className="py-2 pr-3">Ações</th>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                        </thead>
+                        <tbody>
+                          {completeCompanyGroups.length > 0 ? (
+                            renderCompanyRows(completeCompanyGroups)
+                          ) : (
+                            <tr>
+                              <td colSpan={9} className="py-3 text-slate-500">
+                                Nenhuma empresa vinculada completa ainda.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-wide text-amber-700 mb-2">
+                      Cadastros Soltos / Incompletos ({incompleteCompanyGroups.length})
+                    </h3>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-slate-500 border-b border-slate-200">
+                            <th className="py-2 pr-3">Empresa</th>
+                            <th className="py-2 pr-3">ADMGERENTE</th>
+                            <th className="py-2 pr-3">OPERADOR</th>
+                            <th className="py-2 pr-3">Vínculo</th>
+                            <th className="py-2 pr-3">Status</th>
+                            <th className="py-2 pr-3">Par</th>
+                            <th className="py-2 pr-3">Cobrança</th>
+                            <th className="py-2 pr-3">Criado em</th>
+                            <th className="py-2 pr-3">Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {incompleteCompanyGroups.length > 0 ? (
+                            renderCompanyRows(incompleteCompanyGroups)
+                          ) : (
+                            <tr>
+                              <td colSpan={9} className="py-3 text-slate-500">
+                                Nenhum cadastro solto. Tudo vinculado corretamente.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </div>
               )}
               {companyActionSuccess && (
