@@ -119,16 +119,35 @@ export interface DailyBackupResult {
 }
 
 export class StateService {
-  private ensureOwnerUserId(actorUserId: string | undefined): string {
-    const ownerUserId = actorUserId?.trim();
-    if (!ownerUserId) {
+  private async resolveOwnerUserId(actorUserId: string | undefined): Promise<string> {
+    const actorId = actorUserId?.trim();
+    if (!actorId) {
       throw new HttpError(401, 'Usuário autenticado não encontrado para acessar o estado.');
     }
+
+    const actor = await prisma.user.findUnique({
+      where: { id: actorId },
+      select: {
+        id: true,
+        isActive: true,
+        stateOwnerUserId: true,
+      },
+    });
+
+    if (!actor || !actor.isActive) {
+      throw new HttpError(401, 'Usuário autenticado não encontrado para acessar o estado.');
+    }
+
+    const ownerUserId = actor.stateOwnerUserId?.trim() || actor.id;
+    if (!ownerUserId) {
+      throw new HttpError(401, 'Vínculo de empresa inválido para acessar o estado.');
+    }
+
     return ownerUserId;
   }
 
   async getAppState(actorUserId: string): Promise<AppStateSnapshot> {
-    const ownerUserId = this.ensureOwnerUserId(actorUserId);
+    const ownerUserId = await this.resolveOwnerUserId(actorUserId);
     try {
       const snapshot = await prisma.appState.findUnique({ where: { ownerUserId } });
       if (snapshot) {
@@ -158,7 +177,7 @@ export class StateService {
     expectedVersion: string,
     context?: RequestContext
   ): Promise<AppStateSnapshot> {
-    const ownerUserId = this.ensureOwnerUserId(actorUserId);
+    const ownerUserId = await this.resolveOwnerUserId(actorUserId);
     const normalized = normalizeStatePayload(state);
     return this.persistSnapshot(normalized, 'APP_STATE_UPSERTED', ownerUserId, context, expectedVersion);
   }
@@ -168,7 +187,7 @@ export class StateService {
     expectedVersion: string,
     context?: RequestContext
   ): Promise<AppStateSnapshot> {
-    const ownerUserId = this.ensureOwnerUserId(actorUserId);
+    const ownerUserId = await this.resolveOwnerUserId(actorUserId);
     return this.persistSnapshot(EMPTY_APP_STATE, 'APP_STATE_CLEARED', ownerUserId, context, expectedVersion);
   }
 
@@ -178,7 +197,7 @@ export class StateService {
     expectedVersion: string,
     context?: RequestContext
   ): Promise<AppStateSnapshot> {
-    const ownerUserId = this.ensureOwnerUserId(actorUserId);
+    const ownerUserId = await this.resolveOwnerUserId(actorUserId);
     try {
       return await this.applyCommandSnapshot(ownerUserId, command, expectedVersion, context);
     } catch (error) {

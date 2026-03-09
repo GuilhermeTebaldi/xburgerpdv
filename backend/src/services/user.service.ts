@@ -12,6 +12,19 @@ interface CreateUserInput {
   isActive: boolean;
 }
 
+interface CompanyCredentialInput {
+  email: string;
+  password: string;
+  name?: string;
+}
+
+interface CreateCompanyUsersInput {
+  companyName: string;
+  manager: CompanyCredentialInput;
+  operator: CompanyCredentialInput;
+  isActive: boolean;
+}
+
 const EMPTY_APP_STATE = {
   ingredients: [],
   products: [],
@@ -58,6 +71,8 @@ export class UserService {
         id: true,
         email: true,
         name: true,
+        companyName: true,
+        stateOwnerUserId: true,
         role: true,
         isActive: true,
         createdAt: true,
@@ -95,11 +110,18 @@ export class UserService {
         id: true,
         email: true,
         name: true,
+        companyName: true,
+        stateOwnerUserId: true,
         role: true,
         isActive: true,
         createdAt: true,
         updatedAt: true,
       },
+    });
+
+    await prisma.user.update({
+      where: { id: created.id },
+      data: { stateOwnerUserId: created.id },
     });
 
     await prisma.appState.upsert({
@@ -111,6 +133,141 @@ export class UserService {
       update: {},
     });
 
-    return created;
+    return {
+      ...created,
+      stateOwnerUserId: created.id,
+    };
+  }
+
+  async createCompanyUsers(actorUserId: string, input: CreateCompanyUsersInput) {
+    await assertAdminActor(actorUserId);
+
+    const companyName = input.companyName.trim();
+    const managerEmail = input.manager.email.trim().toLowerCase();
+    const operatorEmail = input.operator.email.trim().toLowerCase();
+    const managerName = input.manager.name?.trim() || null;
+    const operatorName = input.operator.name?.trim() || null;
+
+    if (managerEmail === operatorEmail) {
+      throw new HttpError(409, 'E-mail do operador deve ser diferente do ADMGERENTE.');
+    }
+
+    const managerPasswordHash = await bcrypt.hash(input.manager.password, 12);
+    const operatorPasswordHash = await bcrypt.hash(input.operator.password, 12);
+
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const manager = await tx.user.upsert({
+        where: { email: managerEmail },
+        create: {
+          email: managerEmail,
+          passwordHash: managerPasswordHash,
+          name: managerName,
+          companyName,
+          role: UserRole.ADMIN,
+          isActive: input.isActive,
+        },
+        update: {
+          passwordHash: managerPasswordHash,
+          name: managerName,
+          companyName,
+          role: UserRole.ADMIN,
+          isActive: input.isActive,
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          companyName: true,
+          stateOwnerUserId: true,
+          role: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      const operator = await tx.user.upsert({
+        where: { email: operatorEmail },
+        create: {
+          email: operatorEmail,
+          passwordHash: operatorPasswordHash,
+          name: operatorName,
+          companyName,
+          role: UserRole.OPERATOR,
+          isActive: input.isActive,
+          stateOwnerUserId: manager.id,
+        },
+        update: {
+          passwordHash: operatorPasswordHash,
+          name: operatorName,
+          companyName,
+          role: UserRole.OPERATOR,
+          isActive: input.isActive,
+          stateOwnerUserId: manager.id,
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          companyName: true,
+          stateOwnerUserId: true,
+          role: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      const managerState = await tx.appState.findUnique({
+        where: { ownerUserId: manager.id },
+        select: { ownerUserId: true, updatedAt: true },
+      });
+      const operatorState = await tx.appState.findUnique({
+        where: { ownerUserId: operator.id },
+        select: { ownerUserId: true, updatedAt: true },
+      });
+
+      const sharedOwnerId =
+        managerState && operatorState
+          ? managerState.updatedAt >= operatorState.updatedAt
+            ? manager.id
+            : operator.id
+          : managerState
+            ? manager.id
+            : operatorState
+              ? operator.id
+              : manager.id;
+
+      await tx.user.update({
+        where: { id: manager.id },
+        data: { stateOwnerUserId: sharedOwnerId },
+      });
+      await tx.user.update({
+        where: { id: operator.id },
+        data: { stateOwnerUserId: sharedOwnerId },
+      });
+
+      await tx.appState.upsert({
+        where: { ownerUserId: sharedOwnerId },
+        create: {
+          ownerUserId: sharedOwnerId,
+          stateJson: EMPTY_APP_STATE as Prisma.InputJsonValue,
+        },
+        update: {},
+      });
+
+      return {
+        manager: {
+          ...manager,
+          stateOwnerUserId: sharedOwnerId,
+        },
+        operator: {
+          ...operator,
+          stateOwnerUserId: sharedOwnerId,
+        },
+      };
+    });
+
+    return result;
   }
 }

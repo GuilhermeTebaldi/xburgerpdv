@@ -13,6 +13,8 @@ interface ManagedUser {
   id: string;
   email: string;
   name: string | null;
+  companyName: string | null;
+  stateOwnerUserId: string | null;
   role: UserRole;
   isActive: boolean;
   createdAt: string;
@@ -20,7 +22,6 @@ interface ManagedUser {
 
 const ADMIN_GERAL_TOKEN_KEY = 'xburger_admingeral_token';
 const DEFAULT_API_BASE_URL = 'https://xburger-saas-backend.onrender.com';
-type NewUserRole = 'OPERATOR' | 'ADMIN';
 
 const resolveApiBaseUrl = (): string => {
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
@@ -85,10 +86,13 @@ const AdminGeralPage: React.FC = () => {
   const [loginError, setLoginError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  const [newEmail, setNewEmail] = useState('');
-  const [newName, setNewName] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [newRole, setNewRole] = useState<NewUserRole>('OPERATOR');
+  const [companyName, setCompanyName] = useState('');
+  const [managerEmail, setManagerEmail] = useState('');
+  const [managerName, setManagerName] = useState('');
+  const [managerPassword, setManagerPassword] = useState('');
+  const [operatorEmail, setOperatorEmail] = useState('');
+  const [operatorName, setOperatorName] = useState('');
+  const [operatorPassword, setOperatorPassword] = useState('');
   const [newIsActive, setNewIsActive] = useState(true);
   const [createError, setCreateError] = useState('');
   const [createSuccess, setCreateSuccess] = useState('');
@@ -214,7 +218,7 @@ const AdminGeralPage: React.FC = () => {
     setCreateSuccess('');
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/v1/users`, {
+      const response = await fetch(`${apiBaseUrl}/api/v1/users/company`, {
         method: 'POST',
         headers: {
           Accept: 'application/json',
@@ -222,10 +226,17 @@ const AdminGeralPage: React.FC = () => {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          email: newEmail.trim().toLowerCase(),
-          password: newPassword,
-          name: newName.trim() || undefined,
-          role: newRole,
+          companyName: companyName.trim(),
+          manager: {
+            email: managerEmail.trim().toLowerCase(),
+            password: managerPassword,
+            name: managerName.trim() || undefined,
+          },
+          operator: {
+            email: operatorEmail.trim().toLowerCase(),
+            password: operatorPassword,
+            name: operatorName.trim() || undefined,
+          },
           isActive: newIsActive,
         }),
       });
@@ -236,11 +247,14 @@ const AdminGeralPage: React.FC = () => {
         return;
       }
 
-      setCreateSuccess('Usuário criado com sucesso.');
-      setNewEmail('');
-      setNewName('');
-      setNewPassword('');
-      setNewRole('OPERATOR');
+      setCreateSuccess('Empresa vinculada com ADMGERENTE + OPERADOR criada com sucesso.');
+      setCompanyName('');
+      setManagerEmail('');
+      setManagerName('');
+      setManagerPassword('');
+      setOperatorEmail('');
+      setOperatorName('');
+      setOperatorPassword('');
       setNewIsActive(true);
       await loadUsers(token);
     } catch {
@@ -323,42 +337,80 @@ const AdminGeralPage: React.FC = () => {
             </section>
 
             <section className="bg-white border border-slate-200 rounded-3xl p-6">
-              <h2 className="text-xl font-black mb-4">Cadastrar usuário</h2>
+              <h2 className="text-xl font-black mb-2">Cadastrar empresa vinculada</h2>
+              <p className="text-sm text-slate-500 mb-4">
+                Este cadastro cria/atualiza dois acessos da mesma empresa: <strong>ADMGERENTE</strong> e <strong>OPERADOR</strong>.
+              </p>
               <form className="grid grid-cols-1 md:grid-cols-2 gap-4" onSubmit={handleCreateUser}>
+                <input
+                  type="text"
+                  required
+                  autoComplete="organization"
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 md:col-span-2"
+                  placeholder="Nome da empresa (ex.: Lanches São Paulo)"
+                />
+
+                <div className="md:col-span-2 mt-2">
+                  <h3 className="text-sm font-black text-slate-700 uppercase tracking-wide">ADMGERENTE</h3>
+                </div>
                 <input
                   type="email"
                   required
                   autoComplete="email"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
+                  value={managerEmail}
+                  onChange={(e) => setManagerEmail(e.target.value)}
                   className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50"
-                  placeholder="novo.usuario@xburgerpdv.com.br"
+                  placeholder="admgerente@empresa.com"
                 />
                 <input
                   type="text"
                   autoComplete="name"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
+                  value={managerName}
+                  onChange={(e) => setManagerName(e.target.value)}
                   className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50"
-                  placeholder="Nome (opcional)"
+                  placeholder="Nome do ADMGERENTE (opcional)"
                 />
                 <input
                   type="password"
                   required
                   autoComplete="new-password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
+                  value={managerPassword}
+                  onChange={(e) => setManagerPassword(e.target.value)}
                   className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50"
-                  placeholder="Senha (mín. 6)"
+                  placeholder="Senha do ADMGERENTE (mín. 6)"
                 />
-                <select
-                  value={newRole}
-                  onChange={(e) => setNewRole(e.target.value as NewUserRole)}
+
+                <div className="md:col-span-2 mt-2">
+                  <h3 className="text-sm font-black text-slate-700 uppercase tracking-wide">OPERADOR</h3>
+                </div>
+                <input
+                  type="email"
+                  required
+                  autoComplete="email"
+                  value={operatorEmail}
+                  onChange={(e) => setOperatorEmail(e.target.value)}
                   className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50"
-                >
-                  <option value="OPERATOR">OPERADOR</option>
-                  <option value="ADMIN">ADMGERENTE</option>
-                </select>
+                  placeholder="operador@empresa.com"
+                />
+                <input
+                  type="text"
+                  autoComplete="name"
+                  value={operatorName}
+                  onChange={(e) => setOperatorName(e.target.value)}
+                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50"
+                  placeholder="Nome do OPERADOR (opcional)"
+                />
+                <input
+                  type="password"
+                  required
+                  autoComplete="new-password"
+                  value={operatorPassword}
+                  onChange={(e) => setOperatorPassword(e.target.value)}
+                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50"
+                  placeholder="Senha do OPERADOR (mín. 6)"
+                />
                 <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
                   <input
                     type="checkbox"
@@ -373,7 +425,7 @@ const AdminGeralPage: React.FC = () => {
                     disabled={isCreating}
                     className="px-6 py-3 rounded-2xl bg-red-600 text-white font-bold disabled:opacity-60"
                   >
-                    {isCreating ? 'Criando...' : 'Criar usuário'}
+                    {isCreating ? 'Vinculando...' : 'Criar empresa vinculada'}
                   </button>
                   {createSuccess && <p className="text-sm font-semibold text-emerald-700">{createSuccess}</p>}
                   {createError && <p className="text-sm font-semibold text-red-600">{createError}</p>}
@@ -400,9 +452,11 @@ const AdminGeralPage: React.FC = () => {
                   <table className="min-w-full text-sm">
                     <thead>
                       <tr className="text-left text-slate-500 border-b border-slate-200">
+                        <th className="py-2 pr-3">Empresa</th>
                         <th className="py-2 pr-3">Nome</th>
                         <th className="py-2 pr-3">E-mail</th>
                         <th className="py-2 pr-3">Role</th>
+                        <th className="py-2 pr-3">Vínculo</th>
                         <th className="py-2 pr-3">Status</th>
                         <th className="py-2 pr-3">Criado em</th>
                       </tr>
@@ -410,9 +464,13 @@ const AdminGeralPage: React.FC = () => {
                     <tbody>
                       {users.map((user) => (
                         <tr key={user.id} className="border-b border-slate-100">
+                          <td className="py-2 pr-3">{user.companyName || '-'}</td>
                           <td className="py-2 pr-3">{user.name || '-'}</td>
                           <td className="py-2 pr-3">{user.email}</td>
                           <td className="py-2 pr-3">{formatRoleLabel(user.role)}</td>
+                          <td className="py-2 pr-3">
+                            {user.stateOwnerUserId ? user.stateOwnerUserId.slice(0, 8) : '-'}
+                          </td>
                           <td className="py-2 pr-3">{user.isActive ? 'Ativo' : 'Inativo'}</td>
                           <td className="py-2 pr-3">
                             {new Date(user.createdAt).toLocaleString('pt-BR')}

@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import { UserRole } from '@prisma/client';
 
 import { UserService } from '../services/user.service.js';
-import { userCreateSchema } from '../validators/user.validator.js';
+import { companyUsersCreateSchema, userCreateSchema } from '../validators/user.validator.js';
 
 const userService = new UserService();
 
@@ -43,5 +43,30 @@ export const userController = {
 
     res.status(201).json(created);
   },
-};
 
+  createCompanyUsers: async (req: Request, res: Response) => {
+    const actorUserId = req.authUserId;
+    if (!actorUserId) {
+      res.status(401).json({ error: 'Usuário não autenticado.' });
+      return;
+    }
+
+    const payload = companyUsersCreateSchema.parse(req.body);
+    const created = await userService.createCompanyUsers(actorUserId, {
+      companyName: payload.companyName,
+      manager: {
+        email: payload.manager.email,
+        password: payload.manager.password,
+        name: payload.manager.name,
+      },
+      operator: {
+        email: payload.operator.email,
+        password: payload.operator.password,
+        name: payload.operator.name,
+      },
+      isActive: payload.isActive,
+    });
+
+    res.status(201).json(created);
+  },
+};

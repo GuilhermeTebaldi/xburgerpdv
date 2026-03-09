@@ -10,3 +10,25 @@ export const userCreateSchema = z.object({
   isActive: z.boolean().default(true),
 });
 
+const userCredentialSchema = z.object({
+  email: z.string().email().max(255),
+  password: z.string().min(6).max(72),
+  name: z.string().trim().min(2).max(120).optional(),
+});
+
+export const companyUsersCreateSchema = z
+  .object({
+    companyName: z.string().trim().min(2).max(120),
+    manager: userCredentialSchema,
+    operator: userCredentialSchema,
+    isActive: z.boolean().default(true),
+  })
+  .superRefine((value, ctx) => {
+    if (value.manager.email.trim().toLowerCase() === value.operator.email.trim().toLowerCase()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['operator', 'email'],
+        message: 'E-mail do operador deve ser diferente do ADMGERENTE.',
+      });
+    }
+  });
