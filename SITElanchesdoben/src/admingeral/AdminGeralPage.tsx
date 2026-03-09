@@ -31,6 +31,7 @@ interface CompanyUsersGroup {
 
 const ADMIN_GERAL_TOKEN_KEY = 'xburger_admingeral_token';
 const DEFAULT_API_BASE_URL = 'https://xburger-saas-backend.onrender.com';
+const ADMIN_GERAL_EMAIL = 'xburger.admin@geral.com';
 
 const resolveApiBaseUrl = (): string => {
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
@@ -90,7 +91,7 @@ const AdminGeralPage: React.FC = () => {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [users, setUsers] = useState<ManagedUser[]>([]);
 
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(ADMIN_GERAL_EMAIL);
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -177,6 +178,9 @@ const AdminGeralPage: React.FC = () => {
     if (mePayload.role !== 'ADMIN') {
       throw new Error('Somente usuários ADMIN podem acessar o /admingeral.');
     }
+    if (mePayload.email.trim().toLowerCase() !== ADMIN_GERAL_EMAIL) {
+      throw new Error('Acesso restrito ao Admin Geral da gestão.');
+    }
 
     setAuthUser(mePayload);
     return true;
@@ -199,7 +203,10 @@ const AdminGeralPage: React.FC = () => {
       }
 
       const payload = (await response.json()) as ManagedUser[];
-      setUsers(Array.isArray(payload) ? payload : []);
+      const filteredUsers = (Array.isArray(payload) ? payload : []).filter(
+        (user) => user.email.trim().toLowerCase() !== ADMIN_GERAL_EMAIL
+      );
+      setUsers(filteredUsers);
     } finally {
       setIsLoadingUsers(false);
     }
@@ -345,9 +352,9 @@ const AdminGeralPage: React.FC = () => {
                 required
                 autoComplete="username"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50"
-                placeholder="admin@xburgerpdv.com.br"
+                readOnly
+                className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-100 text-slate-600"
+                placeholder={ADMIN_GERAL_EMAIL}
               />
               <input
                 type="password"
