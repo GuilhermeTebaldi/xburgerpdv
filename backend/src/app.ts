@@ -36,6 +36,7 @@ app.use(
       callback(null, false);
     }) satisfies CorsOptions['origin'],
     credentials: false,
+    maxAge: 86400,
     exposedHeaders: ['ETag', 'X-State-Version', 'X-State-Token'],
   })
 );

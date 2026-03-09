@@ -361,8 +361,10 @@ export class StateService {
       const operationNow = new Date();
       this.assertExpectedVersion(expectedVersion, currentVersion);
 
-      const currentState = current ? normalizeStatePayloadSafe(current.stateJson) : EMPTY_APP_STATE;
-      const nextState = applyStateCommand(currentState, command);
+      const currentState = current
+        ? normalizeStatePayloadSafe(current.stateJson)
+        : normalizeStatePayloadSafe({});
+      const nextState = applyStateCommand(currentState, command, { mutateInPlace: true });
 
       const saved = current
         ? await tx.appState.update({

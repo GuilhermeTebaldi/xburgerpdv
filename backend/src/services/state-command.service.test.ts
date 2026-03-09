@@ -37,6 +37,32 @@ const createBaseState = (): FrontAppState => ({
   globalCleaningStockEntries: [],
 });
 
+test('applyStateCommand mutateInPlace preserves business output and avoids clone work', () => {
+  const command = {
+    type: 'SALE_REGISTER',
+    productId: 'p-burger',
+  } as const;
+
+  const immutableInput = createBaseState();
+  const immutableResult = applyStateCommand(immutableInput, command);
+
+  const mutableInput = createBaseState();
+  const mutableResult = applyStateCommand(mutableInput, command, { mutateInPlace: true });
+  const getIngredientStocks = (state: FrontAppState) =>
+    Object.fromEntries(state.ingredients.map((ingredient) => [ingredient.id, ingredient.currentStock]));
+
+  assert.notEqual(immutableResult, immutableInput);
+  assert.equal(mutableResult, mutableInput);
+  assert.equal(mutableResult.sales.length, immutableResult.sales.length);
+  assert.equal(mutableResult.stockEntries.length, immutableResult.stockEntries.length);
+  assert.equal(mutableResult.globalSales.length, immutableResult.globalSales.length);
+  assert.equal(mutableResult.globalStockEntries.length, immutableResult.globalStockEntries.length);
+  assert.deepEqual(getIngredientStocks(mutableResult), getIngredientStocks(immutableResult));
+  assert.equal(mutableResult.sales[0]?.total, immutableResult.sales[0]?.total);
+  assert.equal(mutableResult.sales[0]?.totalCost, immutableResult.sales[0]?.totalCost);
+  assert.equal(immutableInput.sales.length, 0);
+});
+
 test('sale register and undo keep stock and history consistent', () => {
   const base = createBaseState();
   const sold = applyStateCommand(base, {

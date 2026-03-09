@@ -1264,9 +1264,10 @@ const ensureUniqueId = (
 
 export const applyStateCommand = (
   currentState: FrontAppState,
-  command: StateCommandInput
+  command: StateCommandInput,
+  options?: { mutateInPlace?: boolean }
 ): FrontAppState => {
-  const state = cloneState(currentState);
+  const state = options?.mutateInPlace ? currentState : cloneState(currentState);
 
   switch (command.type) {
     case 'SALE_REGISTER':
