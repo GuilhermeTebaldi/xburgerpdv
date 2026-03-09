@@ -11,6 +11,13 @@ import { apiRouter } from './routes/index.js';
 
 const app = express();
 const localhostOriginPattern = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
+const DEFAULT_ALLOWED_ORIGIN_PATTERNS = [
+  'https://xburgerpdv.com.br',
+  'https://www.xburgerpdv.com.br',
+  'https://app.xburgerpdv.com.br',
+  'https://xburgerpdv.vercel.app',
+  'https://*.xburgerpdv.com.br',
+];
 
 const normalizeOrigin = (value: string): string => {
   try {
@@ -23,6 +30,17 @@ const normalizeOrigin = (value: string): string => {
     return value.trim().toLowerCase();
   }
 };
+
+const normalizeOriginPattern = (value: string): string => {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return '';
+  if (trimmed.includes('*')) return trimmed;
+  return normalizeOrigin(trimmed);
+};
+
+const allowedOriginPatterns = Array.from(
+  new Set([...DEFAULT_ALLOWED_ORIGIN_PATTERNS, ...env.corsOrigins].map(normalizeOriginPattern).filter(Boolean))
+);
 
 const isWildcardOriginMatch = (origin: string, pattern: string): boolean => {
   if (!pattern.includes('*')) {
@@ -60,7 +78,7 @@ const isWildcardOriginMatch = (origin: string, pattern: string): boolean => {
 
 const isOriginAllowed = (origin: string): boolean => {
   const normalizedOrigin = normalizeOrigin(origin);
-  return env.corsOrigins.some((allowedOrigin) =>
+  return allowedOriginPatterns.some((allowedOrigin) =>
     isWildcardOriginMatch(normalizedOrigin, allowedOrigin)
   );
 };
@@ -78,11 +96,6 @@ app.use(
 
       if (localhostOriginPattern.test(origin)) {
         callback(null, true);
-        return;
-      }
-
-      if (env.corsOrigins.length === 0) {
-        callback(null, env.NODE_ENV !== 'production');
         return;
       }
 

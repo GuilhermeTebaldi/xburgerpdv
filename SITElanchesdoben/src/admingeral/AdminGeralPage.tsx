@@ -268,6 +268,7 @@ const AdminGeralPage: React.FC = () => {
               <input
                 type="email"
                 required
+                autoComplete="username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50"
@@ -276,6 +277,7 @@ const AdminGeralPage: React.FC = () => {
               <input
                 type="password"
                 required
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50"
@@ -319,6 +321,7 @@ const AdminGeralPage: React.FC = () => {
                 <input
                   type="email"
                   required
+                  autoComplete="email"
                   value={newEmail}
                   onChange={(e) => setNewEmail(e.target.value)}
                   className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50"
@@ -326,6 +329,7 @@ const AdminGeralPage: React.FC = () => {
                 />
                 <input
                   type="text"
+                  autoComplete="name"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50"
@@ -334,6 +338,7 @@ const AdminGeralPage: React.FC = () => {
                 <input
                   type="password"
                   required
+                  autoComplete="new-password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50"
@@ -421,4 +426,3 @@ const AdminGeralPage: React.FC = () => {
 };
 
 export default AdminGeralPage;
-

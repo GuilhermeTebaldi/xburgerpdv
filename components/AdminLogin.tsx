@@ -96,6 +96,7 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onLogin }) => {
             <input 
               type="email" 
               required
+              autoComplete="username"
               value={email}
               onChange={e => setEmail(e.target.value)}
               className="w-full bg-slate-100 border-none rounded-3xl px-6 py-4 font-bold text-slate-800 focus:ring-4 focus:ring-red-500/20 transition-all text-lg"
@@ -109,6 +110,7 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onLogin }) => {
               <input 
                 type={showPassword ? 'text' : 'password'}
                 required
+                autoComplete="current-password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 className="w-full bg-slate-100 border-none rounded-3xl px-6 py-4 pr-28 font-bold text-slate-800 focus:ring-4 focus:ring-red-500/20 transition-all text-lg"
