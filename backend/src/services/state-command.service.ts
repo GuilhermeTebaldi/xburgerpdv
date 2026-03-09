@@ -401,6 +401,19 @@ const requireSaleDraft = (state: FrontAppState, draftId: string): FrontSaleDraft
   return draft;
 };
 
+const getOrCreateSaleDraft = (state: FrontAppState, draftId: string): FrontSaleDraft => {
+  const drafts = ensureSaleDrafts(state);
+  const existing = drafts.find((entry) => entry.id === draftId);
+  if (existing) return existing;
+
+  applySaleDraftCreate(state, {
+    type: 'SALE_DRAFT_CREATE',
+    draftId,
+  });
+
+  return requireSaleDraft(state, draftId);
+};
+
 const ensureDraftStatus = (
   draft: FrontSaleDraft,
   allowed: FrontSaleDraft['status'][],
@@ -523,7 +536,7 @@ const applySaleDraftAddItem = (
   state: FrontAppState,
   command: Extract<StateCommandInput, { type: 'SALE_DRAFT_ADD_ITEM' }>
 ) => {
-  const draft = requireSaleDraft(state, command.draftId);
+  const draft = getOrCreateSaleDraft(state, command.draftId);
   ensureDraftStatus(draft, ['DRAFT'], 'Carrinho já foi finalizado para pagamento.');
 
   const product = state.products.find((entry) => entry.id === command.productId);

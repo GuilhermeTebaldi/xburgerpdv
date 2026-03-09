@@ -135,6 +135,7 @@ interface StateWriteContext {
 }
 
 let writeContext: StateWriteContext | null = null;
+let writeContextRefreshInFlight: Promise<void> | null = null;
 
 const getApiBaseUrl = (): string | null => {
   const raw = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
@@ -432,13 +433,33 @@ const refreshWriteContext = async (): Promise<void> => {
   writeContext = readContextFromResponse(getResponse);
 };
 
+const ensureWriteContext = async (): Promise<void> => {
+  if (writeContext && !isWriteContextExpiringSoon(writeContext)) {
+    return;
+  }
+
+  if (!writeContextRefreshInFlight) {
+    writeContextRefreshInFlight = refreshWriteContext().finally(() => {
+      writeContextRefreshInFlight = null;
+    });
+  }
+
+  await writeContextRefreshInFlight;
+};
+
+export const warmupStateWriteContext = async (): Promise<void> => {
+  try {
+    await ensureWriteContext();
+  } catch {
+    // Non-blocking warm-up: command execution path still retries with full error handling.
+  }
+};
+
 export const runStateCommand = async (command: StateCommand): Promise<AppState> => {
   const payloadCommand = withCommandId(command);
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (!writeContext || isWriteContextExpiringSoon(writeContext)) {
-      await refreshWriteContext();
-    }
+    await ensureWriteContext();
 
     const context = writeContext;
     if (!context) {

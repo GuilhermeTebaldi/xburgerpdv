@@ -32,6 +32,7 @@ import { DEFAULT_APP_STATE, loadAppState, type AppState } from './data/appStorag
 import {
   runStateCommand,
   StateCommandSyncError,
+  warmupStateWriteContext,
   type StateCommand,
 } from './data/stateCommandClient';
 
@@ -704,6 +705,11 @@ const App: React.FC = () => {
     };
   }, [applyCashHistorySnapshot, isAccessVerified]);
 
+  useEffect(() => {
+    if (!isAccessVerified) return;
+    void warmupStateWriteContext();
+  }, [isAccessVerified]);
+
   const showNotification = useCallback((message: string) => {
     setNotification({ isVisible: true, message });
   }, []);
@@ -972,23 +978,32 @@ const App: React.FC = () => {
     }
   }, [activeDraft, activeDraftId]);
 
+  const resolveEditableDraftId = useCallback((): string | null => {
+    const currentOpenDrafts = saleDraftsRef.current.filter(
+      (draft) => draft.status === 'DRAFT' || draft.status === 'PENDING_PAYMENT'
+    );
+    const selected = activeDraftIdRef.current
+      ? currentOpenDrafts.find((draft) => draft.id === activeDraftIdRef.current)
+      : null;
+    if (selected?.status === 'DRAFT') {
+      return selected.id;
+    }
+
+    const fallback = currentOpenDrafts.find((draft) => draft.status === 'DRAFT');
+    if (!fallback) {
+      return null;
+    }
+
+    activeDraftIdRef.current = fallback.id;
+    setActiveDraftId(fallback.id);
+    return fallback.id;
+  }, []);
+
   const ensureActiveDraft = useCallback(
     async (customerType: SaleCustomerType = 'BALCAO'): Promise<string | null> => {
-      const currentOpenDrafts = saleDraftsRef.current.filter(
-        (draft) => draft.status === 'DRAFT' || draft.status === 'PENDING_PAYMENT'
-      );
-      const selected = activeDraftIdRef.current
-        ? currentOpenDrafts.find((draft) => draft.id === activeDraftIdRef.current)
-        : null;
-      if (selected) {
-        return selected.id;
-      }
-
-      const fallback = currentOpenDrafts[0];
-      if (fallback) {
-        activeDraftIdRef.current = fallback.id;
-        setActiveDraftId(fallback.id);
-        return fallback.id;
+      const existingDraftId = resolveEditableDraftId();
+      if (existingDraftId) {
+        return existingDraftId;
       }
 
       if (pendingDraftCreationRef.current) {
@@ -1018,7 +1033,7 @@ const App: React.FC = () => {
       pendingDraftCreationRef.current = creationPromise;
       return creationPromise;
     },
-    [runCommandWithSync]
+    [resolveEditableDraftId, runCommandWithSync]
   );
 
   const handleCreateNewDraft = (customerType: SaleCustomerType) => {
@@ -1076,8 +1091,12 @@ const App: React.FC = () => {
 
   const handleSale = useCallback((product: Product, recipeOverride?: RecipeItem[], priceOverride?: number) => {
     void (async () => {
-      const draftId = await ensureActiveDraft('BALCAO');
-      if (!draftId) return;
+      let draftId = resolveEditableDraftId();
+      let shouldSetActiveDraft = false;
+      if (!draftId) {
+        draftId = createClientId('draft');
+        shouldSetActiveDraft = true;
+      }
 
       const ok = await runCommandWithSync(
         {
@@ -1093,9 +1112,14 @@ const App: React.FC = () => {
       );
       if (!ok) return;
 
+      if (shouldSetActiveDraft) {
+        activeDraftIdRef.current = draftId;
+        setActiveDraftId(draftId);
+      }
+
       triggerCartEntryEffect(product.name);
     })();
-  }, [ensureActiveDraft, runCommandWithSync, triggerCartEntryEffect]);
+  }, [resolveEditableDraftId, runCommandWithSync, triggerCartEntryEffect]);
 
   const handleUpdateDraftCustomerType = (customerType: SaleCustomerType) => {
     if (!activeDraft) return;

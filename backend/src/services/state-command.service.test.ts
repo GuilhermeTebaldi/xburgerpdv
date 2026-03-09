@@ -166,6 +166,26 @@ test('draft flow keeps stock unchanged until payment confirmation', () => {
   assert.equal(paid.stockEntries.length, 3);
 });
 
+test('draft add item auto-creates missing draft and keeps stock untouched before payment', () => {
+  const base = createBaseState();
+  const withItem = applyStateCommand(base, {
+    type: 'SALE_DRAFT_ADD_ITEM',
+    draftId: 'draft-fast-first-item',
+    productId: 'p-burger',
+    quantity: 1,
+  });
+
+  assert.equal(withItem.saleDrafts?.length, 1);
+  assert.equal(withItem.saleDrafts?.[0]?.id, 'draft-fast-first-item');
+  assert.equal(withItem.saleDrafts?.[0]?.status, 'DRAFT');
+  assert.equal(withItem.saleDrafts?.[0]?.items.length, 1);
+  assert.equal(withItem.saleDrafts?.[0]?.total, 20);
+  assert.equal(withItem.sales.length, 0);
+  assert.equal(withItem.stockEntries.length, 0);
+  assert.equal(withItem.ingredients.find((entry) => entry.id === 'i-bread')?.currentStock, 50);
+  assert.equal(withItem.ingredients.find((entry) => entry.id === 'i-meat')?.currentStock, 40);
+});
+
 test('draft confirm paid is idempotent and does not double debit stock', () => {
   const base = createBaseState();
   const withDraft = applyStateCommand(base, { type: 'SALE_DRAFT_CREATE', draftId: 'draft-idem' });
