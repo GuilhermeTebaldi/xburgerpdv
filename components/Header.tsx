@@ -6,9 +6,10 @@ interface HeaderProps {
   currentView: ViewMode;
   setView: (view: ViewMode) => void;
   dailyTotal: number;
+  canAccessAdmin: boolean;
 }
 
-const Header: React.FC<HeaderProps> = ({ currentView, setView, dailyTotal }) => {
+const Header: React.FC<HeaderProps> = ({ currentView, setView, dailyTotal, canAccessAdmin }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -63,13 +64,15 @@ const Header: React.FC<HeaderProps> = ({ currentView, setView, dailyTotal }) => 
           >
             OUTROS
           </button>
-          <button
-            onClick={() => handleChangeView(ViewMode.ADMIN)}
-            className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 ${currentView === ViewMode.ADMIN ? 'bg-slate-900 text-yellow-400 shadow-sm' : 'hover:bg-red-500'}`}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            ADMIN
-          </button>
+          {canAccessAdmin && (
+            <button
+              onClick={() => handleChangeView(ViewMode.ADMIN)}
+              className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 ${currentView === ViewMode.ADMIN ? 'bg-slate-900 text-yellow-400 shadow-sm' : 'hover:bg-red-500'}`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              ADMIN
+            </button>
+          )}
         </nav>
 
         <div className="flex items-center gap-3">
@@ -120,13 +123,15 @@ const Header: React.FC<HeaderProps> = ({ currentView, setView, dailyTotal }) => 
             >
               OUTROS
             </button>
-            <button
-              onClick={() => handleChangeView(ViewMode.ADMIN)}
-              className={`col-span-2 px-3 py-3 rounded-xl text-[11px] font-black tracking-wide transition-all flex items-center justify-center gap-2 ${currentView === ViewMode.ADMIN ? 'bg-slate-900 text-yellow-400 shadow-sm' : 'bg-red-600/50 hover:bg-red-500'}`}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-              ADMIN
-            </button>
+            {canAccessAdmin && (
+              <button
+                onClick={() => handleChangeView(ViewMode.ADMIN)}
+                className={`col-span-2 px-3 py-3 rounded-xl text-[11px] font-black tracking-wide transition-all flex items-center justify-center gap-2 ${currentView === ViewMode.ADMIN ? 'bg-slate-900 text-yellow-400 shadow-sm' : 'bg-red-600/50 hover:bg-red-500'}`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                ADMIN
+              </button>
+            )}
           </nav>
         </div>
       )}

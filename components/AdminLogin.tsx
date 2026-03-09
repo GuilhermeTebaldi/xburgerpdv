@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { persistAdminAuthToken } from '../data/adminAuthToken';
 
 interface AdminLoginProps {
-  onLogin: (result: { success: boolean; token?: string }) => void;
+  onLogin: (result: { success: boolean; token?: string; role?: 'ADMIN' | 'OPERATOR' | 'AUDITOR' }) => void;
 }
 
 const DEFAULT_API_BASE_URL = 'https://xburger-saas-backend.onrender.com';
@@ -55,15 +55,24 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onLogin }) => {
       });
 
       if (response.ok) {
-        const payload = (await response.json()) as { token?: unknown };
+        const payload = (await response.json()) as { token?: unknown; user?: { role?: unknown } };
         const token = typeof payload?.token === 'string' ? payload.token.trim() : '';
+        const role =
+          payload?.user?.role === 'ADMIN' || payload?.user?.role === 'OPERATOR' || payload?.user?.role === 'AUDITOR'
+            ? payload.user.role
+            : undefined;
         if (!token) {
           setError('Resposta inválida do servidor de autenticação.');
           setTimeout(() => setError(''), 3000);
           return;
         }
+        if (role !== 'ADMIN') {
+          setError('Acesso negado. Somente ADMGERENTE pode entrar na Administração.');
+          setTimeout(() => setError(''), 3500);
+          return;
+        }
         persistAdminAuthToken(token, false);
-        onLogin({ success: true, token });
+        onLogin({ success: true, token, role });
         setPassword('');
         return;
       }

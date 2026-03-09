@@ -20,6 +20,7 @@ interface ManagedUser {
 
 const ADMIN_GERAL_TOKEN_KEY = 'xburger_admingeral_token';
 const DEFAULT_API_BASE_URL = 'https://xburger-saas-backend.onrender.com';
+type NewUserRole = 'OPERATOR' | 'ADMIN';
 
 const resolveApiBaseUrl = (): string => {
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
@@ -67,6 +68,12 @@ const clearStoredToken = () => {
   }
 };
 
+const formatRoleLabel = (role: UserRole): string => {
+  if (role === 'ADMIN') return 'ADMGERENTE';
+  if (role === 'OPERATOR') return 'OPERADOR';
+  return 'AUDITOR';
+};
+
 const AdminGeralPage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const [token, setToken] = useState<string>(() => loadStoredToken());
@@ -81,7 +88,7 @@ const AdminGeralPage: React.FC = () => {
   const [newEmail, setNewEmail] = useState('');
   const [newName, setNewName] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [newRole, setNewRole] = useState<UserRole>('OPERATOR');
+  const [newRole, setNewRole] = useState<NewUserRole>('OPERATOR');
   const [newIsActive, setNewIsActive] = useState(true);
   const [createError, setCreateError] = useState('');
   const [createSuccess, setCreateSuccess] = useState('');
@@ -263,7 +270,7 @@ const AdminGeralPage: React.FC = () => {
 
         {!token || !authUser ? (
           <section className="bg-white border border-slate-200 rounded-3xl p-6">
-            <h2 className="text-xl font-black mb-4">Entrar ddcomo ADMIN</h2>
+            <h2 className="text-xl font-black mb-4">Entrar como ADMGERENTE</h2>
             <form className="space-y-4" onSubmit={handleLogin}>
               <input
                 type="email"
@@ -302,7 +309,7 @@ const AdminGeralPage: React.FC = () => {
                 <div>
                   <h2 className="text-xl font-black">Sessão ativa</h2>
                   <p className="text-sm text-slate-600">
-                    {authUser.name || 'Administrador'} ({authUser.email}) - {authUser.role}
+                    {authUser.name || 'Administrador'} ({authUser.email}) - {formatRoleLabel(authUser.role)}
                   </p>
                 </div>
                 <button
@@ -346,12 +353,11 @@ const AdminGeralPage: React.FC = () => {
                 />
                 <select
                   value={newRole}
-                  onChange={(e) => setNewRole(e.target.value as UserRole)}
+                  onChange={(e) => setNewRole(e.target.value as NewUserRole)}
                   className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50"
                 >
-                  <option value="OPERATOR">OPERATOR</option>
-                  <option value="AUDITOR">AUDITOR</option>
-                  <option value="ADMIN">ADMIN</option>
+                  <option value="OPERATOR">OPERADOR</option>
+                  <option value="ADMIN">ADMGERENTE</option>
                 </select>
                 <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
                   <input
@@ -406,7 +412,7 @@ const AdminGeralPage: React.FC = () => {
                         <tr key={user.id} className="border-b border-slate-100">
                           <td className="py-2 pr-3">{user.name || '-'}</td>
                           <td className="py-2 pr-3">{user.email}</td>
-                          <td className="py-2 pr-3">{user.role}</td>
+                          <td className="py-2 pr-3">{formatRoleLabel(user.role)}</td>
                           <td className="py-2 pr-3">{user.isActive ? 'Ativo' : 'Inativo'}</td>
                           <td className="py-2 pr-3">
                             {new Date(user.createdAt).toLocaleString('pt-BR')}

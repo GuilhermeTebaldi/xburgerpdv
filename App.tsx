@@ -29,7 +29,7 @@ import {
   RecipeItem,
 } from './types';
 import { DEFAULT_APP_STATE, loadAppState, type AppState } from './data/appStorage';
-import { hasAdminAuthToken, persistAdminAuthToken } from './data/adminAuthToken';
+import { hasAdminAuthToken, persistAdminAuthToken, readAdminAuthToken } from './data/adminAuthToken';
 import {
   runStateCommand,
   StateCommandSyncError,
@@ -78,6 +78,18 @@ interface StockUpdateOptions {
   useCashRegister?: boolean;
   purchaseDescription?: string;
 }
+
+type AuthRole = 'ADMIN' | 'OPERATOR' | 'AUDITOR';
+interface AuthMePayload {
+  role: AuthRole;
+}
+
+const DEFAULT_API_BASE_URL = 'https://xburger-saas-backend.onrender.com';
+const resolveApiBaseUrl = (): string => {
+  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
+  const normalized = raw ? raw.replace(/\/+$/, '') : '';
+  return normalized || DEFAULT_API_BASE_URL;
+};
 
 const roundMoney = (value: number): number => Number(value.toFixed(2));
 
@@ -500,6 +512,7 @@ const saveOfflineSaleQueue = (queue: OfflineQueuedSale[]): void => {
 const App: React.FC = () => {
   const [view, setView] = useState<ViewMode>(ViewMode.POS);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [authRole, setAuthRole] = useState<AuthRole | null>(null);
   const [activeCategory, setActiveCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [isAccessVerified, setIsAccessVerified] = useState(false);
@@ -566,6 +579,8 @@ const App: React.FC = () => {
   const [cashReceivedInput, setCashReceivedInput] = useState('');
   const cartEntryFxTimeoutRef = useRef<number | null>(null);
   const appOrderTotalInputRef = useRef<HTMLInputElement | null>(null);
+  const hasAppliedRoleLandingRef = useRef(false);
+  const canAccessAdmin = authRole === 'ADMIN';
 
   useEffect(() => {
     isCashHistoryLegacyModeRef.current = isCashHistoryLegacyMode;
@@ -607,6 +622,46 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!isAccessVerified) return;
+
+    const token = readAdminAuthToken();
+    if (!token) {
+      setAuthRole(null);
+      setIsAdminAuthenticated(false);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch(`${resolveApiBaseUrl()}/api/v1/auth/me`, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error('Falha ao validar usuário autenticado.');
+        }
+
+        const payload = (await response.json()) as AuthMePayload;
+        if (cancelled) return;
+        setAuthRole(payload.role);
+      } catch {
+        if (cancelled) return;
+        setAuthRole(null);
+        setIsAdminAuthenticated(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAccessVerified]);
+
+  useEffect(() => {
+    if (!isAccessVerified) return;
     const session = loadAdminSessionBarrier();
     if (!session) return;
     setIsAdminAuthenticated(true);
@@ -615,6 +670,37 @@ const App: React.FC = () => {
       lastHeartbeatAt: Date.now(),
     });
   }, [isAccessVerified]);
+
+  useEffect(() => {
+    if (!isAccessVerified) return;
+
+    if (authRole === null) {
+      hasAppliedRoleLandingRef.current = false;
+    }
+
+    if (!hasAppliedRoleLandingRef.current && authRole) {
+      if (authRole === 'ADMIN') {
+        setView(ViewMode.ADMIN);
+      } else {
+        setView(ViewMode.POS);
+      }
+      hasAppliedRoleLandingRef.current = true;
+    }
+
+    if (authRole === 'ADMIN') {
+      setIsAdminAuthenticated(true);
+      return;
+    }
+
+    setIsAdminAuthenticated(false);
+    if (view === ViewMode.ADMIN) {
+      setView(ViewMode.POS);
+      setNotification({
+        isVisible: true,
+        message: 'Acesso restrito: somente ADMGERENTE pode abrir Administração.',
+      });
+    }
+  }, [authRole, isAccessVerified, setNotification, view]);
 
   useEffect(() => {
     if (!isAccessVerified) return;
@@ -952,17 +1038,28 @@ const App: React.FC = () => {
         ? `Sem internet estável. ${pendingOfflineSales} venda(s) aguardando envio.`
         : 'Sistema sincronizado.';
 
-  const handleAdminLogin = useCallback((result: { success: boolean; token?: string }) => {
-    if (!result.success) return;
-    if (typeof result.token === 'string' && result.token.trim()) {
-      const keepPersistentAccess =
-        typeof window !== 'undefined' &&
-        window.localStorage.getItem(ADMIN_GATE_KEY) === 'authenticated';
-      persistAdminAuthToken(result.token, keepPersistentAccess);
-    }
-    reinforceAdminSessionBarrier();
-    setIsAdminAuthenticated(true);
-  }, []);
+  const handleAdminLogin = useCallback(
+    (result: { success: boolean; token?: string; role?: AuthRole }) => {
+      if (!result.success) return;
+      if (result.role && result.role !== 'ADMIN') {
+        setIsAdminAuthenticated(false);
+        setAuthRole(result.role);
+        showNotification('Acesso restrito: somente ADMGERENTE pode entrar na Administração.');
+        setView(ViewMode.POS);
+        return;
+      }
+      if (typeof result.token === 'string' && result.token.trim()) {
+        const keepPersistentAccess =
+          typeof window !== 'undefined' &&
+          window.localStorage.getItem(ADMIN_GATE_KEY) === 'authenticated';
+        persistAdminAuthToken(result.token, keepPersistentAccess);
+      }
+      setAuthRole('ADMIN');
+      reinforceAdminSessionBarrier();
+      setIsAdminAuthenticated(true);
+    },
+    [setAuthRole, showNotification]
+  );
 
   const openSaleDrafts = useMemo(
     () => saleDrafts.filter((draft) => draft.status === 'DRAFT' || draft.status === 'PENDING_PAYMENT'),
@@ -2011,7 +2108,7 @@ const App: React.FC = () => {
 
   return (
     <div className="qb-app min-h-screen bg-slate-50 flex flex-col">
-      <Header currentView={view} setView={setView} dailyTotal={dailyTotal} />
+      <Header currentView={view} setView={setView} dailyTotal={dailyTotal} canAccessAdmin={canAccessAdmin} />
       <SyncStatusOverlay
         visible={isSyncIndicatorVisible}
         message={syncIndicatorMessage}
@@ -2183,7 +2280,14 @@ const App: React.FC = () => {
         )}
 
         {view === ViewMode.ADMIN && (
-          !isAdminAuthenticated ? (
+          !canAccessAdmin ? (
+            <section className="max-w-3xl mx-auto mt-8 bg-white border border-slate-200 rounded-3xl p-8 text-center">
+              <h2 className="text-2xl font-black text-slate-900">Acesso restrito</h2>
+              <p className="text-slate-600 mt-2">
+                Somente perfil <strong>ADMGERENTE</strong> pode acessar a tela ADMINISTRAÇÃO.
+              </p>
+            </section>
+          ) : !isAdminAuthenticated ? (
             <AdminLogin onLogin={handleAdminLogin} />
           ) : (
             <AdminDashboard 
