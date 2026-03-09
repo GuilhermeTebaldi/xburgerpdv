@@ -1429,3 +1429,22 @@ export const applyStateCommand = (
     }
   }
 };
+
+const ARCHIVE_MUTATING_COMMAND_TYPES = new Set<StateCommandInput['type']>([
+  'SALE_REGISTER',
+  'SALE_DRAFT_CONFIRM_PAID',
+  'SALE_UNDO_LAST',
+  'SALE_UNDO_BY_ID',
+  'INGREDIENT_STOCK_MOVE',
+  'CASH_EXPENSE',
+  'CASH_EXPENSE_REVERT',
+  'CLEANING_STOCK_MOVE',
+  'CLOSE_DAY',
+  'FACTORY_RESET',
+  'CLEAR_OPERATIONAL_DATA',
+  'DELETE_ARCHIVE_SALES',
+]);
+
+export const commandTouchesArchiveState = (
+  commandType: StateCommandInput['type']
+): boolean => ARCHIVE_MUTATING_COMMAND_TYPES.has(commandType);

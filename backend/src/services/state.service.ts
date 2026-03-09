@@ -17,7 +17,7 @@ import {
 } from './mappers.service.js';
 import { SessionService } from './session.service.js';
 import { addDays, toBackupDay, toDateOnlyKey } from './state-backup.utils.js';
-import { applyStateCommand } from './state-command.service.js';
+import { applyStateCommand, commandTouchesArchiveState } from './state-command.service.js';
 
 const EMPTY_APP_STATE: FrontAppState = {
   ingredients: [],
@@ -87,6 +87,33 @@ const normalizeStatePayloadSafe = (value: unknown): FrontAppState => {
 };
 
 const toVersionTag = (value: Date): string => value.toISOString();
+
+interface HotStatePatch {
+  ingredients: FrontAppState['ingredients'];
+  products: FrontAppState['products'];
+  sales: FrontAppState['sales'];
+  stockEntries: FrontAppState['stockEntries'];
+  cleaningMaterials: FrontAppState['cleaningMaterials'];
+  cleaningStockEntries: FrontAppState['cleaningStockEntries'];
+  saleDrafts: FrontAppState['saleDrafts'];
+  cashRegisterAmount: FrontAppState['cashRegisterAmount'];
+}
+
+interface PersistedStateRow {
+  stateJson: Prisma.JsonValue;
+  updatedAt: Date;
+}
+
+const toHotStatePatch = (state: FrontAppState): HotStatePatch => ({
+  ingredients: state.ingredients,
+  products: state.products,
+  sales: state.sales,
+  stockEntries: state.stockEntries,
+  cleaningMaterials: state.cleaningMaterials,
+  cleaningStockEntries: state.cleaningStockEntries,
+  saleDrafts: state.saleDrafts,
+  cashRegisterAmount: state.cashRegisterAmount,
+});
 
 export interface AppStateSnapshot {
   state: FrontAppState;
@@ -366,13 +393,18 @@ export class StateService {
         : normalizeStatePayloadSafe({});
       const nextState = applyStateCommand(currentState, command, { mutateInPlace: true });
 
-      const saved = current
-        ? await tx.appState.update({
-            where: { id: 1 },
-            data: {
-              stateJson: nextState as unknown as Prisma.InputJsonValue,
-            },
-          })
+      // Commands that do not touch historical/global collections update only "hot" keys.
+      // This preserves full history while avoiding heavy JSON writes on frequent cart operations.
+      const shouldUpdateArchive = commandTouchesArchiveState(command.type);
+      const saved: PersistedStateRow = current
+        ? shouldUpdateArchive
+          ? await tx.appState.update({
+              where: { id: 1 },
+              data: {
+                stateJson: nextState as unknown as Prisma.InputJsonValue,
+              },
+            })
+          : await this.updateHotStateTx(tx, nextState)
         : await tx.appState.create({
             data: {
               id: 1,
@@ -405,6 +437,32 @@ export class StateService {
         version: toVersionTag(saved.updatedAt),
       };
     });
+  }
+
+  private async updateHotStateTx(
+    tx: Prisma.TransactionClient,
+    state: FrontAppState
+  ): Promise<PersistedStateRow> {
+    const patch = JSON.stringify(toHotStatePatch(state));
+    const rows = await tx.$queryRaw<Array<{ state_json: Prisma.JsonValue; updated_at: Date }>>(
+      Prisma.sql`
+        UPDATE app_state
+        SET state_json = state_json || ${patch}::jsonb,
+            updated_at = now()
+        WHERE id = 1
+        RETURNING state_json, updated_at
+      `
+    );
+
+    const row = rows[0];
+    if (!row) {
+      throw new HttpError(500, 'Falha ao persistir estado operacional.');
+    }
+
+    return {
+      stateJson: row.state_json,
+      updatedAt: row.updated_at,
+    };
   }
 
   private async createDailyBackup(

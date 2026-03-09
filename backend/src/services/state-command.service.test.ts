@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import type { FrontAppState } from '../types/frontend.js';
 import { HttpError } from '../utils/http-error.js';
-import { applyStateCommand } from './state-command.service.js';
+import { applyStateCommand, commandTouchesArchiveState } from './state-command.service.js';
 
 const createBaseState = (): FrontAppState => ({
   ingredients: [
@@ -61,6 +61,18 @@ test('applyStateCommand mutateInPlace preserves business output and avoids clone
   assert.equal(mutableResult.sales[0]?.total, immutableResult.sales[0]?.total);
   assert.equal(mutableResult.sales[0]?.totalCost, immutableResult.sales[0]?.totalCost);
   assert.equal(immutableInput.sales.length, 0);
+});
+
+test('commandTouchesArchiveState classifies hot-only commands safely', () => {
+  assert.equal(commandTouchesArchiveState('SALE_DRAFT_ADD_ITEM'), false);
+  assert.equal(commandTouchesArchiveState('SALE_DRAFT_FINALIZE'), false);
+  assert.equal(commandTouchesArchiveState('SET_CASH_REGISTER'), false);
+  assert.equal(commandTouchesArchiveState('CLEAR_HISTORY'), false);
+
+  assert.equal(commandTouchesArchiveState('SALE_REGISTER'), true);
+  assert.equal(commandTouchesArchiveState('SALE_DRAFT_CONFIRM_PAID'), true);
+  assert.equal(commandTouchesArchiveState('CASH_EXPENSE'), true);
+  assert.equal(commandTouchesArchiveState('CLOSE_DAY'), true);
 });
 
 test('sale register and undo keep stock and history consistent', () => {
