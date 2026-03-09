@@ -33,6 +33,20 @@ import {
 } from 'recharts';
 import heroMainImage from '../34256273-84a8-40b6-acaf-01d17bbc945a-2.png';
 
+const DEFAULT_API_BASE_URL = 'https://xburger-saas-backend.onrender.com';
+const ADMIN_AUTH_TOKEN_KEY = 'xburger_admin_auth_token';
+const ADMIN_GATE_KEY = 'xburger_admin_gate';
+const ADMIN_SESSION_KEY = 'xburger_admin_session';
+const ADMIN_SESSION_BACKUP_KEY = 'xburger_admin_session_backup';
+
+type AuthLoginRole = 'ADMIN' | 'OPERATOR' | 'AUDITOR';
+
+const resolveApiBaseUrl = (): string => {
+  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
+  const normalized = raw ? raw.replace(/\/+$/, '') : '';
+  return normalized || DEFAULT_API_BASE_URL;
+};
+
 const normalizeSystemPath = (value?: string): string => {
   const trimmed = (value || '').trim();
   if (!trimmed) return '/sistema/';
@@ -48,6 +62,56 @@ const resolveSystemUrl = (): string => {
   const systemPath = normalizeSystemPath(import.meta.env.VITE_ADMIN_SYSTEM_PATH);
   if (typeof window === 'undefined') return systemPath;
   return new URL(systemPath, window.location.origin).toString();
+};
+
+const extractApiError = async (response: Response): Promise<string | null> => {
+  try {
+    const payload = (await response.json()) as unknown;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+    const record = payload as Record<string, unknown>;
+    if (typeof record.error === 'string' && record.error.trim()) return record.error.trim();
+    if (typeof record.message === 'string' && record.message.trim()) return record.message.trim();
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const generateSessionToken = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `session-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+};
+
+const persistSystemAccessSession = (authToken: string, rememberMe: boolean) => {
+  if (typeof window === 'undefined') return;
+
+  const sessionBarrier = JSON.stringify({
+    token: generateSessionToken(),
+    issuedAt: Date.now(),
+    lastHeartbeatAt: Date.now(),
+  });
+
+  try {
+    window.sessionStorage.setItem(ADMIN_AUTH_TOKEN_KEY, authToken);
+    window.sessionStorage.setItem(ADMIN_GATE_KEY, 'authenticated');
+    window.sessionStorage.setItem(ADMIN_SESSION_BACKUP_KEY, sessionBarrier);
+  } catch {
+    // ignore storage failures
+  }
+
+  try {
+    window.localStorage.setItem(ADMIN_GATE_KEY, 'authenticated');
+    window.localStorage.setItem(ADMIN_SESSION_KEY, sessionBarrier);
+    if (rememberMe) {
+      window.localStorage.setItem(ADMIN_AUTH_TOKEN_KEY, authToken);
+    } else {
+      window.localStorage.removeItem(ADMIN_AUTH_TOKEN_KEY);
+    }
+  } catch {
+    // ignore storage failures
+  }
 };
 // Mock data for the dashboard preview
 const weeklyData = [
@@ -87,6 +151,11 @@ const products = [
 export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('geral');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(true);
+  const [loginError, setLoginError] = useState('');
+  const [isLoginSubmitting, setIsLoginSubmitting] = useState(false);
   const { scrollYProgress } = useScroll();
   const opacity = useTransform(scrollYProgress, [0, 0.05], [1, 0.8]);
   const scale = useTransform(scrollYProgress, [0, 0.05], [1, 0.95]);
@@ -94,6 +163,54 @@ export default function App() {
   const redirectToSystem = () => {
     if (typeof window !== 'undefined') {
       window.location.assign(systemUrl);
+    }
+  };
+
+  const handleLoginSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (isLoginSubmitting) return;
+
+    setIsLoginSubmitting(true);
+    setLoginError('');
+
+    try {
+      const response = await fetch(`${resolveApiBaseUrl()}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: loginEmail.trim().toLowerCase(),
+          password: loginPassword,
+        }),
+      });
+
+      if (!response.ok) {
+        const apiError = await extractApiError(response);
+        setLoginError(apiError || 'Não foi possível autenticar. Confira e-mail e senha.');
+        return;
+      }
+
+      const payload = (await response.json()) as { token?: unknown; user?: { role?: unknown } };
+      const token = typeof payload?.token === 'string' ? payload.token.trim() : '';
+      const role =
+        payload?.user?.role === 'ADMIN' || payload?.user?.role === 'OPERATOR' || payload?.user?.role === 'AUDITOR'
+          ? (payload.user.role as AuthLoginRole)
+          : null;
+
+      if (!token || !role) {
+        setLoginError('Resposta inválida do servidor de autenticação.');
+        return;
+      }
+
+      persistSystemAccessSession(token, rememberMe);
+      setLoginPassword('');
+      redirectToSystem();
+    } catch {
+      setLoginError('Falha de conexão com o backend.');
+    } finally {
+      setIsLoginSubmitting(false);
     }
   };
 
@@ -540,15 +657,16 @@ export default function App() {
 
             <form
               className="space-y-6"
-              onSubmit={(e) => {
-                e.preventDefault();
-                redirectToSystem();
-              }}
+              onSubmit={handleLoginSubmit}
             >
               <div>
                 <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">E-mail ou Usuário</label>
                 <input 
-                  type="text" 
+                  type="email"
+                  required
+                  autoComplete="username"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
                   className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-600/20 focus:border-red-600 transition-all font-medium"
                   placeholder="seu@email.com"
                 />
@@ -556,20 +674,34 @@ export default function App() {
               <div>
                 <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Senha</label>
                 <input 
-                  type="password" 
+                  type="password"
+                  required
+                  autoComplete="current-password"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
                   className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-600/20 focus:border-red-600 transition-all font-medium"
                   placeholder="••••••••"
                 />
               </div>
               <div className="flex items-center justify-between text-sm">
                 <label className="flex items-center gap-2 cursor-pointer group">
-                  <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-red-600 focus:ring-red-600" />
+                  <input
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300 text-red-600 focus:ring-red-600"
+                  />
                   <span className="text-slate-500 group-hover:text-slate-900 transition-colors">Lembrar de mim</span>
                 </label>
                 <a href="#" className="text-red-600 font-bold hover:underline">Esqueceu a senha?</a>
               </div>
-              <button className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg hover:bg-red-700 transition-all shadow-xl shadow-red-200 active:scale-95">
-                ENTRAR NO SISTEMA
+              {loginError && <p className="text-sm font-semibold text-red-600">{loginError}</p>}
+              <button
+                type="submit"
+                disabled={isLoginSubmitting}
+                className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg hover:bg-red-700 transition-all shadow-xl shadow-red-200 active:scale-95 disabled:opacity-60"
+              >
+                {isLoginSubmitting ? 'VALIDANDO...' : 'ENTRAR NO SISTEMA'}
               </button>
             </form>
             
