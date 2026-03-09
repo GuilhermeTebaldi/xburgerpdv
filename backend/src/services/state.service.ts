@@ -88,6 +88,30 @@ const normalizeStatePayloadSafe = (value: unknown): FrontAppState => {
 
 const toVersionTag = (value: Date): string => value.toISOString();
 
+const MAX_STATE_GLOBAL_SALES = 600;
+const MAX_STATE_GLOBAL_CANCELLED_SALES = 300;
+const MAX_STATE_GLOBAL_STOCK_ENTRIES = 1600;
+const MAX_STATE_GLOBAL_CLEANING_STOCK_ENTRIES = 800;
+const MAX_STATE_DAILY_HISTORY = 180;
+
+const keepLastItems = <T>(items: T[], maxItems: number): T[] => {
+  if (maxItems <= 0) return [];
+  if (items.length <= maxItems) return items;
+  return items.slice(items.length - maxItems);
+};
+
+const trimStateForRealtimeSync = (state: FrontAppState): FrontAppState => ({
+  ...state,
+  globalSales: keepLastItems(state.globalSales, MAX_STATE_GLOBAL_SALES),
+  globalCancelledSales: keepLastItems(state.globalCancelledSales, MAX_STATE_GLOBAL_CANCELLED_SALES),
+  globalStockEntries: keepLastItems(state.globalStockEntries, MAX_STATE_GLOBAL_STOCK_ENTRIES),
+  globalCleaningStockEntries: keepLastItems(
+    state.globalCleaningStockEntries,
+    MAX_STATE_GLOBAL_CLEANING_STOCK_ENTRIES
+  ),
+  dailySalesHistory: keepLastItems(state.dailySalesHistory || [], MAX_STATE_DAILY_HISTORY),
+});
+
 export interface AppStateSnapshot {
   state: FrontAppState;
   version: string;
@@ -108,7 +132,7 @@ export class StateService {
       const snapshot = await prisma.appState.findUnique({ where: { id: 1 } });
       if (snapshot) {
         return {
-          state: normalizeStatePayloadSafe(snapshot.stateJson),
+          state: trimStateForRealtimeSync(normalizeStatePayloadSafe(snapshot.stateJson)),
           version: toVersionTag(snapshot.updatedAt),
         };
       }
@@ -149,7 +173,7 @@ export class StateService {
     expectedVersion: string,
     context?: RequestContext
   ): Promise<AppStateSnapshot> {
-    const normalized = normalizeStatePayload(state);
+    const normalized = trimStateForRealtimeSync(normalizeStatePayload(state));
     return this.persistSnapshot(normalized, 'APP_STATE_UPSERTED', context, expectedVersion);
   }
 
@@ -292,17 +316,19 @@ export class StateService {
 
       await this.ensurePreWriteBackupTx(tx, current);
 
+      const stateToPersist = trimStateForRealtimeSync(state);
+
       const saved = current
         ? await tx.appState.update({
             where: { id: 1 },
             data: {
-              stateJson: state as unknown as Prisma.InputJsonValue,
+              stateJson: stateToPersist as unknown as Prisma.InputJsonValue,
             },
           })
         : await tx.appState.create({
             data: {
               id: 1,
-              stateJson: state as unknown as Prisma.InputJsonValue,
+              stateJson: stateToPersist as unknown as Prisma.InputJsonValue,
             },
           });
 
@@ -323,7 +349,7 @@ export class StateService {
       );
 
       return {
-        state,
+        state: stateToPersist,
         version: toVersionTag(saved.updatedAt),
       };
     });
@@ -361,8 +387,10 @@ export class StateService {
       const operationNow = new Date();
       this.assertExpectedVersion(expectedVersion, currentVersion);
 
-      const currentState = current ? normalizeStatePayloadSafe(current.stateJson) : EMPTY_APP_STATE;
-      const nextState = applyStateCommand(currentState, command);
+      const currentState = trimStateForRealtimeSync(
+        current ? normalizeStatePayloadSafe(current.stateJson) : EMPTY_APP_STATE
+      );
+      const nextState = trimStateForRealtimeSync(applyStateCommand(currentState, command));
 
       const saved = current
         ? await tx.appState.update({
