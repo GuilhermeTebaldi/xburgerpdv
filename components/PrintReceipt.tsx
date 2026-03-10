@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { DEFAULT_APP_STATE, loadAppState, type AppState } from '../data/appStorage';
+import { readActiveAuthSubject } from '../data/authScope';
 import type { Sale, SaleDraft, SaleOrigin, SalePaymentMethod } from '../types';
 
 interface PrintReceiptProps {
@@ -334,6 +335,15 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
     setErrorMessage(null);
     setReceipt(null);
     hasTriggeredPrintRef.current = false;
+
+    const authSubject = readActiveAuthSubject();
+    if (!authSubject) {
+      setErrorMessage('Sessão inválida. Faça login novamente para imprimir o cupom.');
+      setIsLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
 
     loadAppState(DEFAULT_APP_STATE)
       .then((state) => {

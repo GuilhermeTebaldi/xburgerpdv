@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { DailySalesHistoryEntry, Ingredient, Sale, SaleOrigin, StockEntry } from '../types';
+import { getScopedAuthStorageKey } from '../data/authScope';
 import { APP_ORIGINS, AppOrigin, buildAppChannelSummary } from '../utils/appChannelSummary';
 import { formatStockQuantityByUnit, getRecipeQuantityUnitLabel } from '../utils/recipe';
 
@@ -119,7 +120,7 @@ const normalizeDailyHistoryEntry = (value: unknown): DailySalesHistoryEntry | nu
 const readLocalDailySalesHistory = (): DailySalesHistoryEntry[] => {
   if (typeof window === 'undefined') return [];
   try {
-    const raw = window.localStorage.getItem(LOCAL_DAILY_HISTORY_KEY);
+    const raw = window.localStorage.getItem(getScopedAuthStorageKey(LOCAL_DAILY_HISTORY_KEY));
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
@@ -148,77 +149,31 @@ const escapeHtml = (value: string): string =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-const THERMAL_REPORT_COLUMNS = 48;
-const THERMAL_REPORT_WIDTH_MM = 72;
-const THERMAL_REPORT_SEPARATOR = '-'.repeat(THERMAL_REPORT_COLUMNS);
+const DEFAULT_REPORT_PAPER_WIDTH_MM = 58;
+const MIN_REPORT_PAPER_WIDTH_MM = 48;
+const MAX_REPORT_PAPER_WIDTH_MM = 80;
 
-const normalizeThermalText = (value: string): string => value.replace(/\s+/g, ' ').trim();
+const clampReportPaperWidthMm = (value: number): number =>
+  Math.min(MAX_REPORT_PAPER_WIDTH_MM, Math.max(MIN_REPORT_PAPER_WIDTH_MM, Math.round(value)));
 
-const formatThermalCurrency = (value: number): string =>
+const getReportPaperWidthMm = (): number => {
+  if (typeof window === 'undefined') return DEFAULT_REPORT_PAPER_WIDTH_MM;
+  const raw = window.localStorage.getItem('xburger_receipt_paper_width_mm');
+  const parsed = raw ? Number(raw) : NaN;
+  if (!Number.isFinite(parsed)) return DEFAULT_REPORT_PAPER_WIDTH_MM;
+  return clampReportPaperWidthMm(parsed);
+};
+
+const formatPrintCurrency = (value: number): string =>
   `R$ ${(Number.isFinite(value) ? value : 0).toFixed(2).replace('.', ',')}`;
 
-const fitThermalText = (value: string, width: number): string => {
-  const normalized = normalizeThermalText(value);
-  if (normalized.length <= width) return normalized;
-  if (width <= 1) return normalized.slice(0, width);
-  return normalized.slice(0, width);
-};
-
-const alignThermalPair = (left: string, right: string, width = THERMAL_REPORT_COLUMNS): string => {
-  const leftText = normalizeThermalText(left);
-  const rightText = normalizeThermalText(right);
-  if (!rightText) return fitThermalText(leftText, width);
-
-  const maxLeft = width - rightText.length - 1;
-  if (maxLeft <= 0) return fitThermalText(rightText, width);
-
-  const fittedLeft = fitThermalText(leftText, maxLeft);
-  const spaces = Math.max(1, width - fittedLeft.length - rightText.length);
-  return `${fittedLeft}${' '.repeat(spaces)}${rightText}`;
-};
-
-const centerThermalText = (value: string, width = THERMAL_REPORT_COLUMNS): string => {
-  const fitted = fitThermalText(value, width);
-  const remaining = width - fitted.length;
-  if (remaining <= 0) return fitted;
-  const leftPad = Math.floor(remaining / 2);
-  const rightPad = remaining - leftPad;
-  return `${' '.repeat(leftPad)}${fitted}${' '.repeat(rightPad)}`;
-};
-
-const wrapThermalText = (value: string, width = THERMAL_REPORT_COLUMNS): string[] => {
-  const normalized = normalizeThermalText(value);
-  if (!normalized) return [''];
-
-  const words = normalized.split(' ');
-  const lines: string[] = [];
-  let current = '';
-
-  words.forEach((word) => {
-    if (word.length > width) {
-      if (current) {
-        lines.push(current);
-        current = '';
-      }
-      for (let i = 0; i < word.length; i += width) {
-        lines.push(word.slice(i, i + width));
-      }
-      return;
-    }
-
-    const candidate = current ? `${current} ${word}` : word;
-    if (candidate.length <= width) {
-      current = candidate;
-      return;
-    }
-
-    if (current) lines.push(current);
-    current = word;
-  });
-
-  if (current) lines.push(current);
-  return lines;
-};
+const renderPrintRows = (rows: { label: string; value: string }[]): string =>
+  rows
+    .map(
+      (row) =>
+        `<div class="receipt-row"><span class="receipt-label">${escapeHtml(row.label)}</span><span class="receipt-value">${escapeHtml(row.value)}</span></div>`
+    )
+    .join('');
 
 const summarizePaymentMethods = (
   reportSales: Sale[]
@@ -506,172 +461,182 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
           : window.open('', '_blank', 'width=420,height=980');
       if (!printWindow) return false;
 
+      const paperWidthMm = getReportPaperWidthMm();
       const closedAt = toDate(report.closedAt);
       const cashExpenses = roundMoney(Math.max(0, Number(report.cashExpenses) || 0));
-      const estimatedCash = report.openingCash + report.totalRevenue - report.totalPurchases - cashExpenses;
+      const estimatedCash = roundMoney(
+        report.openingCash + report.totalRevenue - report.totalPurchases - cashExpenses
+      );
       const orderedSales = [...reportSales].sort(
         (a, b) => toDate(a.timestamp).getTime() - toDate(b.timestamp).getTime()
       );
+      const hasDetailedSales = orderedSales.length > 0;
       const paymentSummary = summarizePaymentMethods(orderedSales);
+      const appChannelSnapshot = buildAppChannelSummary(orderedSales);
+      const localRevenue = roundMoney(Math.max(0, report.totalRevenue - appChannelSnapshot.totalRevenue));
 
-      const productSummary = orderedSales.reduce<Record<string, { qty: number; revenue: number; cost: number }>>(
-        (acc, sale) => {
-          const key = sale.productName || 'Sem nome';
-          if (!acc[key]) {
-            acc[key] = { qty: 0, revenue: 0, cost: 0 };
-          }
-          acc[key].qty += 1;
-          acc[key].revenue += Number(sale.total) || 0;
-          acc[key].cost += Number(sale.totalCost) || 0;
-          return acc;
-        },
-        {}
-      );
-
-      const reportLines: string[] = [];
       const closedDate = closedAt.toLocaleDateString('pt-BR');
       const closedTime = closedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const printedAt = new Date();
+      const printedDate = printedAt.toLocaleDateString('pt-BR');
+      const printedTime = printedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-      reportLines.push(centerThermalText('RELATORIO DIARIO DE VENDAS'));
-      reportLines.push(alignThermalPair(`Data: ${closedDate}`, `Hora: ${closedTime}`));
-      reportLines.push(THERMAL_REPORT_SEPARATOR);
-      reportLines.push(alignThermalPair('Caixa Inicial:', formatThermalCurrency(report.openingCash)));
-      reportLines.push(alignThermalPair('Faturamento:', formatThermalCurrency(report.totalRevenue)));
-      reportLines.push(alignThermalPair('Compras (Insumos):', formatThermalCurrency(report.totalPurchases)));
-      reportLines.push(alignThermalPair('Lucro:', formatThermalCurrency(report.totalProfit)));
-      reportLines.push(alignThermalPair('Pedidos:', String(report.saleCount)));
-      reportLines.push(alignThermalPair('Saida de Caixa:', formatThermalCurrency(cashExpenses)));
-      reportLines.push(alignThermalPair('Caixa Estimado:', formatThermalCurrency(estimatedCash)));
-      reportLines.push(THERMAL_REPORT_SEPARATOR);
-      reportLines.push(centerThermalText('FORMA PAGAMENTO'));
+      const summaryRowsHtml = renderPrintRows([
+        { label: 'Data do fechamento', value: `${closedDate} ${closedTime}` },
+        { label: 'Caixa inicial', value: formatPrintCurrency(report.openingCash) },
+        { label: 'Faturamento bruto', value: formatPrintCurrency(report.totalRevenue) },
+        { label: 'Compras (insumos)', value: formatPrintCurrency(report.totalPurchases) },
+        { label: 'Saída de caixa', value: formatPrintCurrency(cashExpenses) },
+        { label: 'Lucro operacional', value: formatPrintCurrency(report.totalProfit) },
+        { label: 'Caixa estimado', value: formatPrintCurrency(estimatedCash) },
+        { label: 'Total de vendas', value: String(Math.max(0, Math.floor(Number(report.saleCount) || 0))) },
+      ]);
 
-      if (orderedSales.length > 0) {
-        paymentSummary.rows.forEach((row) => {
-          reportLines.push(alignThermalPair(row.label, formatThermalCurrency(row.value)));
+      const paymentRows = paymentSummary.rows.map((row) => ({
+        label: row.label,
+        value: formatPrintCurrency(row.value),
+      }));
+      if (paymentSummary.unclassifiedValue > 0) {
+        paymentRows.push({
+          label: 'Não informado',
+          value: formatPrintCurrency(paymentSummary.unclassifiedValue),
         });
-        if (paymentSummary.unclassifiedValue > 0) {
-          reportLines.push(
-            alignThermalPair('Nao informado', formatThermalCurrency(paymentSummary.unclassifiedValue))
-          );
-        }
-      } else {
-        reportLines.push('Sem detalhamento de vendas para pagamento.');
       }
 
-      reportLines.push(THERMAL_REPORT_SEPARATOR);
+      const paymentRowsHtml = hasDetailedSales
+        ? renderPrintRows(paymentRows)
+        : '<p class="receipt-note">Sem detalhamento por pagamento para este fechamento.</p>';
 
-      if (orderedSales.length > 0) {
-        reportLines.push(centerThermalText('RESUMO POR PRODUTO'));
-        reportLines.push(THERMAL_REPORT_SEPARATOR);
-        Object.entries(productSummary)
-          .sort((a, b) => b[1].qty - a[1].qty || b[1].revenue - a[1].revenue)
-          .forEach(([productName, row]) => {
-            const profit = row.revenue - row.cost;
-            wrapThermalText(productName).forEach((line) => {
-              reportLines.push(line);
-            });
-            reportLines.push(alignThermalPair(`Qtd: ${row.qty}`, `Fat: ${formatThermalCurrency(row.revenue)}`));
-            reportLines.push(alignThermalPair(`Cmp: ${formatThermalCurrency(row.cost)}`, `Luc: ${formatThermalCurrency(profit)}`));
-            reportLines.push(THERMAL_REPORT_SEPARATOR);
-          });
-
-        reportLines.push(centerThermalText('VENDAS REGISTRADAS'));
-        reportLines.push(THERMAL_REPORT_SEPARATOR);
-
-        orderedSales.forEach((sale, index) => {
-          const saleDate = toDate(sale.timestamp);
-          const saleHour = saleDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-          const saleTotal = Number(sale.total) || 0;
-          const saleCost = Number(sale.totalCost) || 0;
-          const saleProfit = saleTotal - saleCost;
-          const paymentMethod = (sale.payment?.method || 'NAO INFORMADO').toUpperCase();
-          const saleOrigin = getSaleOriginLabel(sale.saleOrigin).toUpperCase();
-          const appOrderValue = Number(sale.appOrderTotal);
-          const appOrderLabel =
-            isAppSaleOrigin(sale.saleOrigin) && Number.isFinite(appOrderValue) && appOrderValue > 0
-              ? formatThermalCurrency(appOrderValue)
-              : '';
-
-          reportLines.push(alignThermalPair(`#${String(index + 1).padStart(3, '0')} ${saleHour}`, paymentMethod));
-          wrapThermalText(sale.productName || 'Sem nome').forEach((line) => {
-            reportLines.push(line);
-          });
-          reportLines.push(alignThermalPair(`Canal: ${saleOrigin}`, appOrderLabel ? `App: ${appOrderLabel}` : ''));
-          reportLines.push(alignThermalPair(`Fat: ${formatThermalCurrency(saleTotal)}`, `Cmp: ${formatThermalCurrency(saleCost)}`));
-          reportLines.push(alignThermalPair('Lucro:', formatThermalCurrency(saleProfit)));
-          reportLines.push(THERMAL_REPORT_SEPARATOR);
-        });
-      } else {
-        reportLines.push(centerThermalText('DETALHAMENTO DE VENDAS'));
-        reportLines.push(THERMAL_REPORT_SEPARATOR);
-        reportLines.push('Este relatorio nao possui vendas detalhadas.');
-        reportLines.push(THERMAL_REPORT_SEPARATOR);
-      }
-
-      reportLines.push('');
-      reportLines.push(centerThermalText('FIM DO RELATORIO'));
-      reportLines.push('');
+      const channelRowsHtml = hasDetailedSales
+        ? renderPrintRows([
+            { label: 'Balcão', value: formatPrintCurrency(localRevenue) },
+            { label: 'iFood', value: formatPrintCurrency(appChannelSnapshot.byOrigin.IFOOD.revenue) },
+            { label: '99', value: formatPrintCurrency(appChannelSnapshot.byOrigin.APP99.revenue) },
+            { label: 'Keeta', value: formatPrintCurrency(appChannelSnapshot.byOrigin.KEETA.revenue) },
+          ])
+        : '<p class="receipt-note">Sem detalhamento por canal para este fechamento.</p>';
 
       const html = `<!doctype html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <title>Relatório Diário</title>
+  <title>Fechamento de Caixa</title>
   <style>
-    :root { color-scheme: light; }
-    * { box-sizing: border-box; }
+    @page { size: ${paperWidthMm}mm auto; margin: 0; }
     html, body {
       margin: 0;
       padding: 0;
       background: #fff;
-    }
-    body {
-      width: ${THERMAL_REPORT_WIDTH_MM}mm;
-      max-width: ${THERMAL_REPORT_WIDTH_MM}mm;
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 12px;
-      line-height: 1.35;
-      font-weight: 800;
       color: #000;
-      text-rendering: geometricPrecision;
-      -webkit-print-color-adjust: exact;
-      print-color-adjust: exact;
+      font-family: 'Courier New', Courier, monospace;
     }
-    .report {
-      width: ${THERMAL_REPORT_WIDTH_MM}mm;
-      max-width: ${THERMAL_REPORT_WIDTH_MM}mm;
-      padding: 2mm;
+    .receipt-shell {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: #fff;
     }
-    pre {
-      margin: 0;
+    .receipt-paper {
+      width: ${paperWidthMm}mm;
+      max-width: ${paperWidthMm}mm;
+      padding: 3mm 2mm;
       font-family: inherit;
-      font-size: inherit;
-      line-height: inherit;
-      font-weight: inherit;
-      white-space: pre;
+      font-size: 10px;
+      line-height: 1.28;
+      font-weight: 700;
       letter-spacing: 0;
     }
-    @page {
-      size: 80mm auto;
-      margin: 0;
+    .receipt-center { text-align: center; }
+    .receipt-strong { font-weight: 900; }
+    .receipt-divider {
+      border-top: 2px dashed #000;
+      margin: 6px 0;
     }
-    @media screen {
-      body {
-        margin: 10px auto;
-        box-shadow: 0 0 0 1px #e2e8f0;
-      }
+    .receipt-section-title {
+      text-align: center;
+      text-transform: uppercase;
+      font-weight: 900;
+      letter-spacing: 0.4px;
+      margin: 4px 0;
+    }
+    .receipt-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: start;
+      column-gap: 6px;
+    }
+    .receipt-label {
+      min-width: 0;
+      word-break: break-word;
+    }
+    .receipt-value {
+      text-align: right;
+      white-space: nowrap;
+    }
+    .receipt-note {
+      margin-top: 2px;
+      font-size: 10px;
+      font-weight: 700;
     }
     @media print {
       html, body {
-        width: ${THERMAL_REPORT_WIDTH_MM}mm;
-        max-width: ${THERMAL_REPORT_WIDTH_MM}mm;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      .receipt-shell { min-height: auto; }
+      .receipt-paper {
+        margin: 0;
+        padding: 2.5mm 2mm;
+        font-size: 10px;
+        line-height: 1.25;
+        font-weight: 700;
+      }
+      .receipt-paper * {
+        color: #000 !important;
+        text-shadow: none;
+        -webkit-text-stroke: 0;
+        text-rendering: optimizeLegibility;
+      }
+      .receipt-paper .receipt-strong {
+        font-weight: 900 !important;
       }
     }
   </style>
 </head>
 <body>
-  <div class="report">
-    <pre>${escapeHtml(reportLines.join('\n'))}</pre>
+  <div class="receipt-shell">
+    <div class="receipt-paper">
+      <div class="receipt-center">
+        <div class="receipt-strong">VALORES DE FECHAMENTO</div>
+        <div class="receipt-strong">FECHAMENTO DE CAIXA</div>
+      </div>
+
+      <div class="receipt-divider"></div>
+
+      <div class="receipt-section-title">Resumo Geral</div>
+      ${summaryRowsHtml}
+
+      <div class="receipt-divider"></div>
+
+      <div class="receipt-section-title">Valores por Forma de Pagamento</div>
+      ${paymentRowsHtml}
+
+      <div class="receipt-divider"></div>
+
+      <div class="receipt-section-title">Valores por Canal de Venda</div>
+      ${channelRowsHtml}
+
+      ${
+        hasDetailedSales
+          ? ''
+          : '<p class="receipt-note">Fechamento salvo sem itens detalhados de venda para impressão.</p>'
+      }
+
+      <div class="receipt-divider"></div>
+
+      ${renderPrintRows([{ label: 'Impresso em', value: `${printedDate} ${printedTime}` }])}
+    </div>
   </div>
 </body>
 </html>`;

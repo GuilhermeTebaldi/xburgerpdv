@@ -30,6 +30,7 @@ import {
 } from './types';
 import { DEFAULT_APP_STATE, loadAppState, type AppState } from './data/appStorage';
 import { hasAdminAuthToken, persistAdminAuthToken, readAdminAuthToken } from './data/adminAuthToken';
+import { getScopedAuthStorageKey } from './data/authScope';
 import {
   runStateCommand,
   StateCommandSyncError,
@@ -127,7 +128,7 @@ const writeCashHistoryLegacyMode = (enabled: boolean): void => {
 const readLocalCashRegisterAmount = (): number => {
   if (typeof window === 'undefined') return 0;
   try {
-    const raw = window.localStorage.getItem(LOCAL_CASH_REGISTER_KEY);
+    const raw = window.localStorage.getItem(getScopedAuthStorageKey(LOCAL_CASH_REGISTER_KEY));
     if (!raw) return 0;
     const parsed = Number(raw);
     if (!Number.isFinite(parsed) || parsed < 0) return 0;
@@ -140,7 +141,10 @@ const readLocalCashRegisterAmount = (): number => {
 const writeLocalCashRegisterAmount = (amount: number): void => {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(LOCAL_CASH_REGISTER_KEY, String(roundMoney(Math.max(0, amount))));
+    window.localStorage.setItem(
+      getScopedAuthStorageKey(LOCAL_CASH_REGISTER_KEY),
+      String(roundMoney(Math.max(0, amount)))
+    );
   } catch {
     // ignore storage write failures
   }
@@ -176,7 +180,7 @@ const normalizeDailyHistoryEntry = (value: unknown): DailySalesHistoryEntry | nu
 const readLocalDailySalesHistory = (): DailySalesHistoryEntry[] => {
   if (typeof window === 'undefined') return [];
   try {
-    const raw = window.localStorage.getItem(LOCAL_DAILY_HISTORY_KEY);
+    const raw = window.localStorage.getItem(getScopedAuthStorageKey(LOCAL_DAILY_HISTORY_KEY));
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
@@ -198,7 +202,10 @@ const normalizeDailyHistoryList = (
 const writeLocalDailySalesHistory = (history: DailySalesHistoryEntry[]): void => {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(LOCAL_DAILY_HISTORY_KEY, JSON.stringify(history));
+    window.localStorage.setItem(
+      getScopedAuthStorageKey(LOCAL_DAILY_HISTORY_KEY),
+      JSON.stringify(history)
+    );
   } catch {
     // ignore storage write failures
   }
