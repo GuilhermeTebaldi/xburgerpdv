@@ -297,7 +297,7 @@ export default function App() {
             </span>
             <h1 className="text-5xl md:text-7xl lg:text-8xl font-black tracking-tighter leading-[0.9] mb-8">
               GESTÃO <span className="text-red-600">INTELIGENTE</span> <br />
-              PARA SUA <span className="text-amber-500 underline decoration-red-600/30">LANCHONETE</span>
+              PARA <span className="text-amber-500 underline decoration-red-600/30">SEU NEGÓCIO</span>
             </h1>
             <p className="max-w-2xl mx-auto text-lg text-slate-600 mb-10 leading-relaxed">
               Controle total de estoque, administração financeira detalhada e o PDV mais rápido do mercado. 
