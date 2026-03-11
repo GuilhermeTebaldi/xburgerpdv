@@ -1,222 +1,180 @@
-# Plano Seguro de Evolução para SaaS (sem tocar no Lanches do Bem)
+# Diagnostico do sistema atual e evolucao segura para novos segmentos
 
-Data: 2026-03-09  
-Status: planejamento técnico (nenhuma alteração em produção foi feita)
+Data: 2026-03-11
 
-## Objetivo
-Criar o SaaS em `XBURGERPDV.COM.BR`, com múltiplos clientes isolados por subdomínio, sem perder dados e sem alterar o funcionamento atual de:
-- `https://www.lanchesdoben.com.br/`
-- `https://www.lanchesdoben.com.br/sistema/`
+## 1) Resposta direta a sua pergunta
 
-## Premissa de segurança (regra principal)
-A forma mais segura é **não migrar nem alterar o stack atual do Lanches do Bem agora**.  
-Crie um **stack novo e paralelo** para SaaS (novo backend + novo banco + novo frontend), e mantenha o legado intacto.
+Sim, sua percepcao esta correta: hoje o sistema esta modelado principalmente para operacao de lanchonete/food service.  
+Para um negocio de material de construcao (ou varejo geral), varias partes funcionam, mas categoria e estoque precisam evoluir para nao gerar limitacoes operacionais.
 
-## Varredura técnica do sistema atual (achados reais)
+---
 
-### 1) Arquitetura atual é tenant único
-- O banco não possui `tenant_id` nas tabelas de negócio.
-- Arquivo: `backend/prisma/schema.prisma`.
-- Consequência: hoje não há isolamento por cliente.
+## 2) Como o sistema esta hoje (estado real)
 
-### 2) Estado operacional está em snapshot único
-- Existe `app_state` singleton (`id=1`) e `app_state_backups` sem tenant.
-- Arquivos:
-- `backend/prisma/migrations/20260220190000_add_app_state_snapshot/migration.sql`
-- `backend/prisma/migrations/20260221120000_add_app_state_backups/migration.sql`
-- `backend/src/services/state.service.ts`
-- Consequência: dados de todos clientes ficariam misturados se ligar múltiplas lojas no mesmo backend atual.
+### 2.1 Dominio de produto e categoria
 
-### 3) Fluxo de autenticação atual no frontend é frágil
-- Login administrativo no sistema principal está hardcoded no frontend.
-- Arquivo: `components/AdminLogin.tsx` (`meu@admin.com` / `admin123`).
-- No painel de config crítica existe senha fixa local (`admin123`).
-- Arquivo: `components/AdminDashboard.tsx`.
-- Consequência: não atende padrão SaaS seguro.
+- Categorias de produto no frontend/state: `Snack`, `Drink`, `Side`, `Combo` (fixas).
+- No backend transacional principal (Prisma), enum de categoria: `SNACK`, `DRINK`, `SIDE` (fixas).
+- Produto e pensado com receita de insumos (BOM): cada produto consome ingredientes.
 
-### 4) Site institucional também está acoplado ao Lanches do Bem
-- Login do modal admin é hardcoded no site institucional.
-- Arquivo: `SITElanchesdoben/src/App.tsx` (`meu@admin.com` / `ben123`).
-- Consequência: não escalável para múltiplos clientes.
+Evidencias no codigo:
+- `types.ts` -> `Product.category` e `SaleOrigin/SalePayment`.
+- `backend/prisma/schema.prisma` -> `enum ProductCategory { SNACK DRINK SIDE }`.
+- `backend/src/validators/product.validator.ts` -> categoria valida apenas `SNACK|DRINK|SIDE`.
 
-### 5) Endpoints públicos sensíveis no backend atual
-- Vários `GET` estão sem `authRequired`.
-- Arquivos em `backend/src/routes/*.ts`.
-- O fluxo de estado emite `X-State-Token` no `GET/HEAD` e aceita escrita por token.
-- Arquivos:
-- `backend/src/controllers/state.controller.ts`
-- `backend/src/middlewares/state-auth.middleware.ts`
-- `data/stateCommandClient.ts`
-- Consequência: para SaaS, isso precisa ser endurecido antes de onboarding de múltiplos clientes.
+### 2.2 Estoque e custo
 
-### 6) CORS e deploy atuais são orientados ao domínio antigo
-- CORS atualmente está configurado para `lanchesdoben.com.br`.
-- Arquivo: `backend/render.yaml`.
-- Build atual entrega site em `/` e sistema em `/sistema`.
-- Arquivos:
-- `scripts/merge-builds.mjs`
-- `vite.config.ts`
-- Consequência: é possível manter esse formato, mas para SaaS precisa camada de tenant por host.
+- O estoque principal e de **insumo** (`Ingredient`), nao de SKU final.
+- Venda baixa estoque via receita (`recipe`) e registra custo por insumo.
+- Criacao de produto exige receita com pelo menos 1 insumo no backend de produto.
+- Existe material de limpeza separado, tambem com estoque proprio.
 
-## Decisão de arquitetura recomendada
+Evidencias no codigo:
+- `backend/src/services/product.service.ts` -> produto sem receita e rejeitado.
+- `backend/src/services/sale.service.ts` -> baixa estoque por ingrediente e valida saldo.
+- `types.ts` -> `Product.recipe`, `Sale.recipe`, `stockDebited`.
 
-### Estratégia recomendada (zero risco para o que já funciona)
-1. Manter o stack atual do Lanches do Bem como está (legado congelado).
-2. Criar stack novo SaaS separado:
-- API SaaS (novo serviço)
-- Banco SaaS (novo banco)
-- Front SaaS (portal + sistema tenant-aware)
-3. Entrar novos clientes apenas no stack novo.
-4. Lanches do Bem continua no stack antigo até você decidir migrar com janela controlada.
+### 2.3 Unidades e conversoes
 
-## Domínios e subdomínios (recomendação)
+- Ha conversoes especiais focadas em cozinha: `kg<->g` e `l<->ml`.
+- Fluxo historico preservado para receitas antigas/fractionais.
 
-### Nome padrão de cliente
-Use `cliente.xburgerpdv.com.br` (ex.: `lanchesdoben.xburgerpdv.com.br`).  
-É melhor que `cliente.app.xburgerpdv.com.br` porque é mais simples para venda e suporte.
+Evidencias:
+- `utils/recipe.ts` -> regras de conversao e exibicao de unidade.
 
-### Mapa recomendado
-- `xburgerpdv.com.br` -> portal comercial/login SaaS
-- `xburgerpdv.com.br/admingeral` -> painel super admin
-- `app.xburgerpdv.com.br` -> API SaaS
-- `*.xburgerpdv.com.br` -> entrada dos clientes (tenant por subdomínio)
-- `www.lanchesdoben.com.br` e `/sistema` -> continuam no ambiente atual, sem alteração
+### 2.4 Canais e fluxo de venda
 
-## DNS no RegistroBR e Render (sem afetar Lanches do Bem)
+- Origem da venda suportada no fluxo atual: `LOCAL`, `IFOOD`, `APP99`, `KEETA`.
+- Existe resumo financeiro de apps com metrica `Diferenca Apps = Receita app - Referencia`.
+- Pagamento dividido ja existe (`DIVIDIDO`) com modos:
+  - `PEOPLE` (por pessoas)
+  - `MIXED` (mesma pessoa, multiplas formas)
 
-### O que já existe
-- `CNAME app.xburgerpdv.com.br -> xburger-backend.onrender.com` (aguardando verificação).
+Evidencias:
+- `types.ts` e `backend/src/types/frontend.ts`.
+- `utils/appChannelSummary.ts` (formula da diferenca).
+- `backend/src/services/state-command.service.ts` (validacoes de dividido).
 
-### O que adicionar no projeto SaaS
-1. Domínio do portal (`xburgerpdv.com.br`) apontando para o host do frontend SaaS.
-2. Wildcard `*.xburgerpdv.com.br` para o host do frontend tenant.
-3. `app.xburgerpdv.com.br` para API SaaS.
-4. Verificar certificado TLS de todos os domínios no provedor.
+---
 
-### Observação importante
-Se seu provedor/plano não suportar wildcard direto como você precisa, use camada de proxy/CDN (ex.: Cloudflare) para rotear por host sem mexer no legado.
+## 3) O que funciona para qualquer segmento (aproveitavel)
 
-## Modelo de dados SaaS (alvo)
+- Fluxo de PDV (venda, pagamento, cancelamento, confirmacao).
+- Multiforma de pagamento, inclusive dividido.
+- Auditoria, historico e controles de sessao/estado.
+- Estrutura SaaS com usuarios e isolamento por dono de estado.
+- Estoque com movimentacao e trilha de custo (conceito util para varejo em geral).
 
-### Tabelas novas
-1. `tenants`
-- `id`, `slug`, `nome_fantasia`, `status`, `created_at`
+---
 
-2. `tenant_domains`
-- `id`, `tenant_id`, `domain`, `is_primary`, `verified_at`
+## 4) Onde nao atende bem material de construcao hoje
 
-3. `tenant_users`
-- `tenant_id`, `user_id`, `role`, `is_active`
-- roles sugeridos: `OWNER_ADMIN`, `OPERATOR`, `AUDITOR`
+### 4.1 Categorias fixas
 
-### Alterações nas tabelas de negócio
-Adicionar `tenant_id` em todas as tabelas operacionais e auditoria:
-- `users` (ou usar `users` global + vínculo em `tenant_users`)
-- `ingredients`, `products`, `product_ingredients`
-- `operating_sessions`, `sales`, `sale_items`, `sale_item_ingredients`
-- `refunds`, `refund_items`, `refund_item_ingredients`
-- `stock_movements`, `cleaning_materials`, `audit_logs`
-- `app_state`, `app_state_backups`
+- Nao existe categoria dinamica por empresa/tenant.
+- "Snack/Drink/Side" nao representa "cimento, eletrica, hidraulica, ferramentas..." etc.
 
-### Regra para `app_state`
-Trocar singleton global por chave composta por tenant:
-- `PRIMARY KEY (tenant_id, id)` com `id=1`
-- backups com `tenant_id` e unique por `tenant_id + backup_day + kind`
+### 4.2 Modelo de estoque focado em receita
 
-## Autenticação e autorização (alvo)
+- Material de construcao costuma vender SKU pronto (saco cimento, tinta, parafuso), nao "receita".
+- Hoje a baixa e pensada por ingrediente consumido, nao por item revendido diretamente.
 
-### Tenant resolve por host
-- Extrair tenant do `Host` (subdomínio) ou mapear por `tenant_domains`.
+### 4.3 Unidade comercial mais ampla
 
-### JWT obrigatório para escrita e leitura privada
-- JWT deve conter `tenant_id` e `role`.
-- Não emitir token de escrita para usuário anônimo.
-- Endpoints de estado e comandos devem validar tenant + role em todas as operações.
+- Segmentos de construcao exigem unidade por `un`, `cx`, `m`, `m2`, `m3`, `kg`, `lt`, fracionamento especifico.
+- Regras atuais de conversao tratam principalmente cozinha (g/ml).
 
-### Dois acessos por cliente (seu requisito)
-1. Conta do dono/admin geral da loja:
-- visão `ADMINISTRAÇÃO`, `ANÁLISE`, `CONFIG`, etc.
+### 4.4 Cadastros e atributos de varejo tecnico
 
-2. Conta do funcionário:
-- visão operacional `CAIXA`, `ESTOQUE`, `VENDAS`, `OUTROS`.
+- Podem faltar campos importantes para esse segmento:
+  - codigo de barras / SKU fabricante
+  - marca, modelo, variacao (cor, bitola, voltagem)
+  - multiplo de venda (caixa fechada, fracionado, minimo)
+  - politicas fiscais e classificacoes (dependendo da operacao)
 
-## `/admingeral` (super admin SaaS)
+### 4.5 Integrações de canal
 
-### Funções mínimas
-1. Criar tenant (slug único).
-2. Criar usuário dono (admin da loja).
-3. Criar usuário operador.
-4. Vincular domínio/subdomínio do tenant.
-5. Reset de senha por tenant.
-6. Bloquear/desbloquear tenant.
+- Canais atuais sao de delivery de comida (`IFOOD/99/KEETA`), nao marketplaces/operacoes comuns de material.
 
-### Credenciais iniciais que você sugeriu
-- Email: `admingeral123@gmail.com`
-- Senha: `Gui@1604`
+---
 
-Usar apenas como bootstrap inicial. No primeiro login:
-1. Forçar troca de senha.
-2. Ativar 2FA.
-3. Mover credencial para segredo de ambiente (nunca hardcoded no frontend).
+## 5) Risco de tentar "forcar" o sistema atual sem evolucao
 
-## Plano de execução em fases (sem perder dados)
+- Categoria errada em relatorios e dashboard.
+- Estoque inconsistente (baixa por receita onde deveria baixar por SKU).
+- Custo/margem distorcidos.
+- Maior risco de erro operacional no caixa e no inventario.
+- Regressao se alterar enums/fluxos centrais sem compatibilidade.
 
-### Fase 0 - Congelamento seguro do legado
-1. Não alterar código/deploy do stack atual do Lanches do Bem.
-2. Confirmar backup completo do banco atual.
-3. Testar restauração desse backup em ambiente de teste.
-4. Registrar checklist de rollback.
+---
 
-### Fase 1 - Infra paralela SaaS
-1. Provisionar novo banco Postgres para SaaS.
-2. Subir novo serviço backend SaaS (não reutilizar DB legado).
-3. Subir frontend portal SaaS (`xburgerpdv.com.br`).
-4. Configurar domínios novos e TLS.
+## 6) Estrategia segura recomendada (sem quebrar lanchonete)
 
-### Fase 2 - Multi-tenant no backend novo
-1. Implementar `tenants`, `tenant_domains`, `tenant_users`.
-2. Introduzir `tenant_id` em todas as entidades.
-3. Ajustar índices/uniques por tenant.
-4. Aplicar filtros obrigatórios por tenant em todas as queries.
-5. Revisar auditoria com `tenant_id`.
+Principio: **nao substituir o que funciona; adicionar camadas de extensao por perfil de negocio.**
 
-### Fase 3 - Segurança de acesso
-1. Remover credenciais fixas do frontend.
-2. Exigir JWT e role em rotas sensíveis.
-3. Bloquear escrita por token anônimo de estado.
-4. Rate limit e proteção de login.
+### Fase 0 - Congelamento e baseline
 
-### Fase 4 - Portal `admingeral`
-1. Tela para cadastrar tenant + dois usuários (dono/funcionário).
-2. Geração automática de subdomínio do cliente.
-3. Fluxo de recuperação de senha e ativação.
+- Mapear fluxo atual de food como "perfil padrao".
+- Criar suite de regressao obrigatoria (pagamento simples, dividido, app sale, estorno, estoque).
 
-### Fase 5 - Onboarding piloto
-1. Criar tenant de teste (`lojateste.xburgerpdv.com.br`).
-2. Validar isolamento completo de dados.
-3. Validar permissões dono vs funcionário.
-4. Só então abrir cadastro para clientes reais.
+### Fase 1 - Extensao de dominio (aditiva)
 
-### Fase 6 - (Opcional) Migração futura do Lanches do Bem
-1. Quando quiser migrar, fazer cópia do banco legado para staging.
-2. Backfill para `tenant_id = lanchesdoben`.
-3. Testes de integridade e reconciliação.
-4. Cutover com janela controlada e rollback pronto.
+- Adicionar `businessProfile` por tenant: `FOOD` (default), `RETAIL_BUILDING`, etc.
+- Criar categorias dinamicas por tenant (`product_categories`), sem remover enum antigo de imediato.
+- Introduzir tipo de produto:
+  - `RECIPE` (modelo atual food)
+  - `SIMPLE_STOCK` (baixa direta por SKU)
 
-## O que NÃO fazer agora (para não correr risco)
-1. Não apontar novos clientes para o backend atual tenant único.
-2. Não alterar schema do banco legado em produção neste momento.
-3. Não remover/alterar `www.lanchesdoben.com.br` ou `/sistema` agora.
-4. Não manter credenciais hardcoded em frontend.
+### Fase 2 - Estoque multi-estrategia
 
-## Checklist de validação antes de vender o SaaS
-1. Teste de isolamento: cliente A não enxerga nenhum dado do cliente B.
-2. Teste de permissão: operador não acessa área de dono.
-3. Teste de backup/restore por tenant.
-4. Teste de carga básica com múltiplos tenants.
-5. Teste de recuperação de senha e bloqueio de conta.
-6. Auditoria de ações críticas por usuário e tenant.
+- Manter baixa por receita para `RECIPE`.
+- Implementar baixa por item para `SIMPLE_STOCK`.
+- Preservar trilha auditavel de movimentos e custo medio/ultimo custo conforme regra definida.
 
-## Conclusão prática
-Sim, é possível fazer exatamente o que você quer **sem alterar nada do Lanches do Bem agora** e sem perder dados, desde que a execução seja por stack paralelo SaaS e com multi-tenant real no backend novo.  
-Esse é o caminho mais seguro para vender o sistema para várias lojas.
+### Fase 3 - UI condicionada por perfil
+
+- No perfil FOOD, manter telas/atalhos atuais.
+- No perfil RETAIL, exibir categorias dinamicas e cadastro de SKU com atributos tecnicos.
+- Nao abrir "segunda UX paralela confusa"; reutilizar a tela principal com variacao por perfil.
+
+### Fase 4 - Migração e rollout controlado
+
+- Sem migração destrutiva.
+- Feature flags por tenant.
+- Rollout gradual (piloto -> grupo pequeno -> geral).
+
+---
+
+## 7) Plano de rollback (obrigatorio)
+
+- Toda mudanca com migration aditiva e reversivel.
+- Backup antes de cada release de schema.
+- Feature flag para desligar novo fluxo sem derrubar o PDV.
+- Se houver erro: voltar tenant para perfil/fluxo antigo imediatamente.
+
+---
+
+## 8) Testes minimos obrigatorios antes de producao
+
+### Regressao do que ja existe
+
+- Venda normal com PIX/DEBITO/CREDITO/DINHEIRO.
+- Pagamento dividido `PEOPLE` e `MIXED`.
+- Cancelar dividido e retorno ao fluxo normal.
+- Origem `LOCAL/IFOOD/APP99/KEETA` e calculo de diferenca apps.
+- Estorno e recomposicao de estoque.
+
+### Novos cenarios (perfil material de construcao)
+
+- Cadastro de categoria dinamica.
+- Venda de SKU simples com baixa correta.
+- Venda fracionada por unidade suportada.
+- Concorrencia de estoque (duas vendas simultaneas).
+- Relatorio de custo/margem coerente.
+
+---
+
+## 9) Conclusao pratica
+
+Hoje o sistema e forte para lanchonete e pode continuar assim sem risco.  
+Para atender material de construcao com qualidade profissional, a evolucao correta e tornar categoria e estrategia de estoque configuraveis por perfil de negocio, em camadas aditivas, com rollout gradual e regressao automatizada.

@@ -16,7 +16,8 @@ import {
   ShieldCheck,
   Smartphone,
   Monitor,
-  Zap
+  Zap,
+  MessageCircle
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -38,6 +39,8 @@ const ADMIN_AUTH_TOKEN_KEY = 'xburger_admin_auth_token';
 const ADMIN_GATE_KEY = 'xburger_admin_gate';
 const ADMIN_SESSION_KEY = 'xburger_admin_session';
 const ADMIN_SESSION_BACKUP_KEY = 'xburger_admin_session_backup';
+const SALES_WHATSAPP_URL =
+  'https://wa.me/5549999102026?text=Ol%C3%A1!%20Quero%20comprar%20ou%20conhecer%20melhor%20o%20XBURGERPDV.';
 
 type AuthLoginRole = 'ADMIN' | 'OPERATOR' | 'AUDITOR';
 
@@ -150,6 +153,7 @@ const products = [
 
 export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [showSalesPromo, setShowSalesPromo] = useState(true);
   const [activeTab, setActiveTab] = useState('geral');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -164,6 +168,11 @@ export default function App() {
     if (typeof window !== 'undefined') {
       window.location.assign(systemUrl);
     }
+  };
+
+  const openSalesWhatsApp = () => {
+    if (typeof window === 'undefined') return;
+    window.open(SALES_WHATSAPP_URL, '_blank', 'noopener,noreferrer');
   };
 
   const handleLoginSubmit = async (event: React.FormEvent) => {
@@ -766,6 +775,92 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      <AnimatePresence>
+        {showSalesPromo && (
+          <motion.aside
+            initial={{ opacity: 0, x: 120 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 120 }}
+            transition={{ duration: 0.55, ease: 'easeOut', delay: 0.35 }}
+            className="fixed bottom-3 right-3 sm:bottom-6 sm:right-6 z-[80] w-auto max-w-[228px] sm:max-w-[365px]"
+          >
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={openSalesWhatsApp}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  openSalesWhatsApp();
+                }
+              }}
+              className="group relative cursor-pointer overflow-hidden rounded-2xl sm:rounded-[1.7rem] border border-white/10 bg-slate-900 p-3 sm:p-5 shadow-2xl shadow-slate-900/45 transition-transform hover:-translate-y-1"
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800" />
+              <div className="pointer-events-none absolute -left-10 -top-10 h-40 w-40 rounded-full bg-red-600/25 blur-3xl" />
+              <div className="pointer-events-none absolute -bottom-10 -right-8 h-32 w-32 rounded-full bg-amber-400/20 blur-3xl" />
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setShowSalesPromo(false);
+                }}
+                className="absolute right-2 top-2 sm:right-3 sm:top-3 z-20 rounded-full bg-white/10 p-1 text-slate-300 transition-colors hover:bg-white/20 hover:text-white"
+                aria-label="Fechar propaganda de atendimento"
+              >
+                <X className="h-4 w-4" />
+              </button>
+
+              <div className="relative z-10 pr-6 sm:pr-8">
+                <div className="flex items-center gap-2 sm:hidden">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-green-500/20 text-green-300">
+                    <MessageCircle className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.12em] text-red-300">Cristiane</p>
+                    <p className="text-xs font-semibold text-slate-100">WhatsApp</p>
+                  </div>
+                  <ArrowRight className="ml-auto h-4 w-4 text-green-300" />
+                </div>
+
+                <div className="hidden sm:block">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-red-300">Atendimento Comercial</p>
+                  <h4 className="mt-1 text-base font-black leading-tight text-white sm:text-lg">
+                    Fale com nossos atendentes e acelere seu negócio.
+                  </h4>
+                  <p className="mt-2 text-sm text-slate-300">
+                    Vendedora: Cristiane. Clique para abrir o WhatsApp e falar direto.
+                  </p>
+
+                  <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-green-500 to-green-600 px-4 py-2 text-xs font-black uppercase tracking-wider text-white shadow-lg shadow-green-900/30 transition-transform group-hover:scale-[1.02]">
+                    <MessageCircle className="h-4 w-4" />
+                    Falar no WhatsApp
+                    <ArrowRight className="h-4 w-4" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.aside>
+        )}
+
+        {!showSalesPromo && (
+          <motion.button
+            type="button"
+            initial={{ opacity: 0, x: 30, scale: 0.9 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 30, scale: 0.9 }}
+            transition={{ duration: 0.35, ease: 'easeOut' }}
+            onClick={() => setShowSalesPromo(true)}
+            className="fixed bottom-3 right-3 sm:bottom-6 sm:right-6 z-[80] inline-flex items-center gap-2 rounded-full border border-white/10 bg-slate-900 px-3 py-2 text-xs font-black uppercase tracking-wide text-white shadow-xl shadow-slate-900/40 hover:bg-slate-800"
+            aria-label="Reabrir atendimento comercial"
+          >
+            <MessageCircle className="h-4 w-4 text-green-400" />
+            <span className="hidden sm:inline">Atendimento</span>
+            <ArrowRight className="h-4 w-4 text-red-300" />
+          </motion.button>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
