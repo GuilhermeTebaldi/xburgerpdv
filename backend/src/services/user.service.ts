@@ -495,6 +495,7 @@ export class UserService {
             billingBlocked: false,
             billingBlockedMessage: null,
             billingBlockedUntil: null,
+            isActive: true,
           },
     });
   }
