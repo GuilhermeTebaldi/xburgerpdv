@@ -57,14 +57,27 @@ export interface ComboItem {
 }
 
 export type SaleStatus = 'DRAFT' | 'PENDING_PAYMENT' | 'PAID' | 'CANCELLED';
-export type SalePaymentMethod = 'PIX' | 'DEBITO' | 'CREDITO' | 'DINHEIRO';
+export type SaleBasePaymentMethod = 'PIX' | 'DEBITO' | 'CREDITO' | 'DINHEIRO';
+export type SalePaymentMethod = SaleBasePaymentMethod | 'DIVIDIDO';
+export type SalePaymentSplitMode = 'PEOPLE' | 'MIXED';
 export type SaleCustomerType = 'BALCAO' | 'ENTREGA';
 export type SaleOrigin = 'LOCAL' | 'IFOOD' | 'APP99' | 'KEETA';
+
+export interface SalePaymentSplitEntry {
+  sequence: number;
+  label: string;
+  method: SaleBasePaymentMethod;
+  amount: number;
+  cashReceived?: number | null;
+}
 
 export interface SalePayment {
   method: SalePaymentMethod | null;
   cashReceived: number | null;
   change: number | null;
+  splitMode?: SalePaymentSplitMode | null;
+  splitCount?: number | null;
+  splitPayments?: SalePaymentSplitEntry[];
   confirmedAt: Date | string | null;
 }
 

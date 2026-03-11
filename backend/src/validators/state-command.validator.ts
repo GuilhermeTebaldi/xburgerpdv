@@ -53,9 +53,19 @@ const baseCommandSchema = z.object({
   commandId: idSchema.optional(),
 });
 
-const salePaymentMethodSchema = z.enum(['PIX', 'DEBITO', 'CREDITO', 'DINHEIRO']);
+const saleBasePaymentMethodSchema = z.enum(['PIX', 'DEBITO', 'CREDITO', 'DINHEIRO']);
+const salePaymentMethodSchema = z.enum(['PIX', 'DEBITO', 'CREDITO', 'DINHEIRO', 'DIVIDIDO']);
+const salePaymentSplitModeSchema = z.enum(['PEOPLE', 'MIXED']);
 const saleCustomerTypeSchema = z.enum(['BALCAO', 'ENTREGA']);
 const saleOriginSchema = z.enum(['LOCAL', 'IFOOD', 'APP99', 'KEETA']);
+
+const salePaymentSplitEntrySchema = z.object({
+  sequence: z.coerce.number().int().positive(),
+  label: z.string().trim().min(1).max(80),
+  method: saleBasePaymentMethodSchema,
+  amount: z.coerce.number().finite().positive(),
+  cashReceived: z.coerce.number().finite().min(0).optional().nullable(),
+});
 
 const saleRegisterCommandSchema = baseCommandSchema.extend({
   type: z.literal('SALE_REGISTER'),
@@ -106,6 +116,9 @@ const saleDraftFinalizeCommandSchema = baseCommandSchema.extend({
   draftId: idSchema,
   paymentMethod: salePaymentMethodSchema,
   cashReceived: z.coerce.number().finite().min(0).optional(),
+  splitMode: salePaymentSplitModeSchema.optional(),
+  splitCount: z.coerce.number().int().positive().optional(),
+  splitPayments: z.array(salePaymentSplitEntrySchema).min(1).optional(),
   saleOrigin: saleOriginSchema.optional(),
   appOrderTotal: z.coerce.number().finite().positive().optional(),
 });

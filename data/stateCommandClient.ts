@@ -6,6 +6,8 @@ import type {
   RecipeItem,
   SaleCustomerType,
   SaleDraft,
+  SalePaymentSplitEntry,
+  SalePaymentSplitMode,
   SaleOrigin,
   SalePaymentMethod,
   StockEntry,
@@ -82,6 +84,9 @@ export type StateCommand =
       draftId: string;
       paymentMethod: SalePaymentMethod;
       cashReceived?: number;
+      splitMode?: SalePaymentSplitMode;
+      splitCount?: number;
+      splitPayments?: SalePaymentSplitEntry[];
       saleOrigin?: SaleOrigin;
       appOrderTotal?: number;
     })

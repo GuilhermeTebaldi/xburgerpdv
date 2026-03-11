@@ -2,7 +2,14 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { DEFAULT_APP_STATE, loadAppState, type AppState } from '../data/appStorage';
 import { readActiveAuthSubject } from '../data/authScope';
-import type { Sale, SaleDraft, SaleOrigin, SalePaymentMethod } from '../types';
+import type {
+  Sale,
+  SaleBasePaymentMethod,
+  SaleDraft,
+  SaleOrigin,
+  SalePaymentMethod,
+  SalePaymentSplitEntry,
+} from '../types';
 
 interface PrintReceiptProps {
   receiptId: string;
@@ -28,6 +35,14 @@ interface ReceiptViewModel {
   paymentMethodLabel: string;
   paymentCashReceived: number | null;
   paymentChange: number | null;
+  paymentSplits: {
+    sequence: number;
+    label: string;
+    method: SaleBasePaymentMethod;
+    amount: number;
+    cashReceived: number | null;
+    change: number | null;
+  }[];
   saleOriginLabel: string | null;
   saleOriginShortLabel: string | null;
   appOrderTotal: number | null;
@@ -108,7 +123,51 @@ const formatPaymentMethod = (method: SalePaymentMethod | null | undefined): stri
   if (method === 'DEBITO') return 'DEBITO';
   if (method === 'CREDITO') return 'CREDITO';
   if (method === 'DINHEIRO') return 'DINHEIRO';
+  if (method === 'DIVIDIDO') return 'DIVIDIDO';
   return method;
+};
+
+const isBasePaymentMethod = (value: unknown): value is SaleBasePaymentMethod =>
+  value === 'PIX' || value === 'DEBITO' || value === 'CREDITO' || value === 'DINHEIRO';
+
+const normalizePaymentSplits = (value: unknown): ReceiptViewModel['paymentSplits'] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry, index) => {
+      const candidate =
+        entry && typeof entry === 'object' && !Array.isArray(entry)
+          ? (entry as Partial<SalePaymentSplitEntry>)
+          : null;
+      if (!candidate || !isBasePaymentMethod(candidate.method)) return null;
+
+      const amount = Number(candidate.amount);
+      if (!Number.isFinite(amount) || amount <= 0) return null;
+
+      const sequenceRaw = Number(candidate.sequence);
+      const sequence = Number.isInteger(sequenceRaw) && sequenceRaw > 0 ? sequenceRaw : index + 1;
+      const label =
+        typeof candidate.label === 'string' && candidate.label.trim()
+          ? candidate.label.trim()
+          : `Parcela ${sequence}`;
+      const cashReceived =
+        candidate.method === 'DINHEIRO' && Number.isFinite(Number(candidate.cashReceived))
+          ? roundMoney(Number(candidate.cashReceived))
+          : null;
+
+      return {
+        sequence,
+        label,
+        method: candidate.method,
+        amount: roundMoney(amount),
+        cashReceived,
+        change:
+          candidate.method === 'DINHEIRO' && cashReceived !== null
+            ? roundMoney(cashReceived - roundMoney(amount))
+            : null,
+      };
+    })
+    .filter((entry): entry is ReceiptViewModel['paymentSplits'][number] => Boolean(entry))
+    .sort((left, right) => left.sequence - right.sequence);
 };
 
 const isAppSaleOrigin = (origin: SaleOrigin): boolean =>
@@ -302,6 +361,7 @@ const buildReceiptViewModel = (state: AppState, receiptId: string): ReceiptViewM
   const paymentMethod = payment?.method ?? null;
   const paymentCashReceived = normalizeMoneyValue(payment?.cashReceived);
   const paymentChange = normalizeMoneyValue(payment?.change);
+  const paymentSplits = paymentMethod === 'DIVIDIDO' ? normalizePaymentSplits(payment?.splitPayments) : [];
 
   return {
     restaurantName: getRestaurantName(),
@@ -314,6 +374,7 @@ const buildReceiptViewModel = (state: AppState, receiptId: string): ReceiptViewM
     paymentMethodLabel: formatPaymentMethod(paymentMethod),
     paymentCashReceived,
     paymentChange,
+    paymentSplits,
     saleOriginLabel: isAppSale ? formatSaleOrigin(saleOrigin) : null,
     saleOriginShortLabel: formatSaleOriginShort(saleOrigin),
     appOrderTotal,
@@ -561,6 +622,29 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
               <span className="receipt-label">Pagamento</span>
               <span className="receipt-value">{receipt.paymentMethodLabel}</span>
             </div>
+            {receipt.paymentMethodLabel === 'DIVIDIDO' &&
+              receipt.paymentSplits.map((entry) => (
+                <React.Fragment key={`split-${entry.sequence}`}>
+                  <div className="receipt-row">
+                    <span className="receipt-label">
+                      {entry.label} ({formatPaymentMethod(entry.method)})
+                    </span>
+                    <span className="receipt-value">{formatMoney(entry.amount)}</span>
+                  </div>
+                  {entry.method === 'DINHEIRO' && entry.cashReceived !== null && (
+                    <div className="receipt-row">
+                      <span className="receipt-label">Recebido {entry.label.toLowerCase()}</span>
+                      <span className="receipt-value">{formatMoney(entry.cashReceived)}</span>
+                    </div>
+                  )}
+                  {entry.method === 'DINHEIRO' && entry.change !== null && (
+                    <div className="receipt-row">
+                      <span className="receipt-label">{entry.change >= 0 ? 'Troco' : 'Faltam'}</span>
+                      <span className="receipt-value">{formatMoney(Math.abs(entry.change))}</span>
+                    </div>
+                  )}
+                </React.Fragment>
+              ))}
             {receipt.saleOriginLabel && (
               <div className="receipt-row">
                 <span className="receipt-label">Canal</span>

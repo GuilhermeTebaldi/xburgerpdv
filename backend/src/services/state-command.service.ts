@@ -9,7 +9,10 @@ import type {
   FrontSaleCustomerType,
   FrontSaleDraft,
   FrontSaleDraftItem,
+  FrontSaleBasePaymentMethod,
   FrontSalePayment,
+  FrontSalePaymentSplitEntry,
+  FrontSalePaymentSplitMode,
   FrontSalePaymentMethod,
   FrontSaleOrigin,
   FrontSale,
@@ -153,8 +156,51 @@ const cloneRecipe = (recipe: FrontRecipeItem[] | undefined): FrontRecipeItem[] |
     quantity: item.quantity,
   }));
 
-const isSalePaymentMethod = (value: unknown): value is FrontSalePaymentMethod =>
+const isSaleBasePaymentMethod = (value: unknown): value is FrontSaleBasePaymentMethod =>
   value === 'PIX' || value === 'DEBITO' || value === 'CREDITO' || value === 'DINHEIRO';
+
+const isSalePaymentMethod = (value: unknown): value is FrontSalePaymentMethod =>
+  isSaleBasePaymentMethod(value) || value === 'DIVIDIDO';
+
+const isSalePaymentSplitMode = (value: unknown): value is FrontSalePaymentSplitMode =>
+  value === 'PEOPLE' || value === 'MIXED';
+
+const normalizeSalePaymentSplitEntry = (
+  value: unknown,
+  fallbackSequence: number
+): FrontSalePaymentSplitEntry | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const candidate = value as Partial<FrontSalePaymentSplitEntry>;
+  if (!isSaleBasePaymentMethod(candidate.method)) return null;
+
+  const amount = Number(candidate.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  const sequenceRaw = Number(candidate.sequence);
+  const sequence = Number.isInteger(sequenceRaw) && sequenceRaw > 0 ? sequenceRaw : fallbackSequence;
+  const labelRaw = typeof candidate.label === 'string' ? candidate.label.trim() : '';
+  const label = labelRaw || `Parcela ${sequence}`;
+
+  if (candidate.method === 'DINHEIRO') {
+    const cashReceivedValue = Number(candidate.cashReceived);
+    if (!Number.isFinite(cashReceivedValue) || cashReceivedValue < 0) return null;
+    return {
+      sequence,
+      label,
+      method: candidate.method,
+      amount: roundMoney(amount),
+      cashReceived: roundMoney(cashReceivedValue),
+    };
+  }
+
+  return {
+    sequence,
+    label,
+    method: candidate.method,
+    amount: roundMoney(amount),
+    cashReceived: null,
+  };
+};
 
 const isSaleOrigin = (value: unknown): value is FrontSaleOrigin =>
   value === 'LOCAL' || value === 'IFOOD' || value === 'APP99' || value === 'KEETA';
@@ -235,11 +281,24 @@ const normalizeSalePayment = (payment: unknown): FrontSalePayment => {
       : undefined;
   const cashReceived = candidate?.cashReceived;
   const change = candidate?.change;
+  const method = isSalePaymentMethod(candidate?.method) ? candidate.method : null;
+  const splitMode = isSalePaymentSplitMode(candidate?.splitMode) ? candidate.splitMode : null;
+  const splitCountRaw = Number(candidate?.splitCount);
+  const splitCount = Number.isInteger(splitCountRaw) && splitCountRaw > 0 ? splitCountRaw : null;
+  const splitPayments = Array.isArray(candidate?.splitPayments)
+    ? candidate.splitPayments
+        .map((entry, index) => normalizeSalePaymentSplitEntry(entry, index + 1))
+        .filter((entry): entry is FrontSalePaymentSplitEntry => Boolean(entry))
+        .sort((left, right) => left.sequence - right.sequence)
+    : [];
 
   return {
-    method: isSalePaymentMethod(candidate?.method) ? candidate.method : null,
+    method,
     cashReceived: typeof cashReceived === 'number' && Number.isFinite(cashReceived) ? cashReceived : null,
     change: typeof change === 'number' && Number.isFinite(change) ? change : null,
+    splitMode: method === 'DIVIDIDO' ? splitMode : null,
+    splitCount: method === 'DIVIDIDO' ? splitCount : null,
+    splitPayments: method === 'DIVIDIDO' ? splitPayments : [],
     confirmedAt:
       candidate?.confirmedAt instanceof Date || typeof candidate?.confirmedAt === 'string'
         ? candidate.confirmedAt
@@ -382,6 +441,9 @@ const defaultSalePayment = (): FrontSalePayment => ({
   method: null,
   cashReceived: null,
   change: null,
+  splitMode: null,
+  splitCount: null,
+  splitPayments: [],
   confirmedAt: null,
 });
 
@@ -448,6 +510,83 @@ const normalizePaymentChange = (
   return roundMoney(cashReceived - total);
 };
 
+interface ValidatedSplitPaymentPlan {
+  splitMode: FrontSalePaymentSplitMode;
+  splitCount: number;
+  splitPayments: FrontSalePaymentSplitEntry[];
+}
+
+const validateAndNormalizeSplitPaymentPlan = (input: {
+  splitMode: unknown;
+  splitCount: unknown;
+  splitPayments: unknown;
+  amountDue: number;
+}): ValidatedSplitPaymentPlan => {
+  const { splitMode, splitCount, splitPayments, amountDue } = input;
+  if (!isSalePaymentSplitMode(splitMode)) {
+    throw new HttpError(422, 'Modo de divisão inválido.');
+  }
+
+  const normalizedCount = Number(splitCount);
+  if (!Number.isInteger(normalizedCount) || normalizedCount <= 0) {
+    throw new HttpError(422, 'Quantidade de pessoas/parciais inválida para divisão.');
+  }
+
+  if (!Array.isArray(splitPayments) || splitPayments.length === 0) {
+    throw new HttpError(422, 'Informe os pagamentos da divisão.');
+  }
+
+  const normalizedPayments = splitPayments.map((entry, index) => {
+    const normalized = normalizeSalePaymentSplitEntry(entry, index + 1);
+    if (!normalized) {
+      throw new HttpError(422, `Parcela ${index + 1} inválida na divisão.`);
+    }
+    if (normalized.method === 'DINHEIRO') {
+      if (normalized.cashReceived === null || normalized.cashReceived === undefined) {
+        throw new HttpError(422, `Informe o valor recebido da parcela ${normalized.sequence} em dinheiro.`);
+      }
+      if (normalized.cashReceived + Number.EPSILON < normalized.amount) {
+        throw new HttpError(422, `Valor recebido insuficiente na parcela ${normalized.sequence} em dinheiro.`);
+      }
+    }
+    return normalized;
+  });
+
+  const sortedPayments = [...normalizedPayments].sort((left, right) => left.sequence - right.sequence);
+  for (let index = 1; index < sortedPayments.length; index += 1) {
+    if (sortedPayments[index].sequence === sortedPayments[index - 1].sequence) {
+      throw new HttpError(422, 'Sequência de parcelas duplicada na divisão.');
+    }
+  }
+
+  if (splitMode === 'PEOPLE' && sortedPayments.length !== normalizedCount) {
+    throw new HttpError(422, 'Quantidade de parcelas precisa ser igual à quantidade de pessoas.');
+  }
+  if (splitMode === 'MIXED') {
+    if (normalizedCount !== 1) {
+      throw new HttpError(422, 'Pagamento misto deve usar divisão para 1 pessoa.');
+    }
+    if (sortedPayments.length < 2) {
+      throw new HttpError(422, 'Pagamento misto exige pelo menos duas parcelas.');
+    }
+  }
+
+  const expectedTotal = roundMoney(amountDue);
+  const splitTotal = roundMoney(sortedPayments.reduce((sum, entry) => sum + entry.amount, 0));
+  if (Math.abs(splitTotal - expectedTotal) > 0.009) {
+    throw new HttpError(422, 'A soma das parcelas não confere com o total da venda.', {
+      amountDue: expectedTotal,
+      splitTotal,
+    });
+  }
+
+  return {
+    splitMode,
+    splitCount: normalizedCount,
+    splitPayments: sortedPayments,
+  };
+};
+
 const sameRecipe = (left: FrontRecipeItem[], right: FrontRecipeItem[]): boolean => {
   const normalizedLeft = normalizeRecipeItems(left);
   const normalizedRight = normalizeRecipeItems(right);
@@ -471,8 +610,22 @@ const updateDraftPayment = (
   draft: FrontSaleDraft,
   method: FrontSalePaymentMethod,
   cashReceivedInput: number | undefined,
-  amountDue: number
+  amountDue: number,
+  splitPlan?: ValidatedSplitPaymentPlan
 ): void => {
+  if (method === 'DIVIDIDO') {
+    draft.payment = {
+      method,
+      cashReceived: null,
+      change: null,
+      splitMode: splitPlan?.splitMode ?? null,
+      splitCount: splitPlan?.splitCount ?? null,
+      splitPayments: splitPlan?.splitPayments.map((entry) => ({ ...entry })) ?? [],
+      confirmedAt: draft.payment.confirmedAt ?? null,
+    };
+    return;
+  }
+
   const cashReceived =
     method === 'DINHEIRO'
       ? cashReceivedInput !== undefined
@@ -486,6 +639,9 @@ const updateDraftPayment = (
     method,
     cashReceived,
     change: normalizePaymentChange(method, amountDue, cashReceived),
+    splitMode: null,
+    splitCount: null,
+    splitPayments: [],
     confirmedAt: draft.payment.confirmedAt ?? null,
   };
 };
@@ -649,11 +805,22 @@ const applySaleDraftFinalize = (
 
   draft.saleOrigin = saleOrigin;
   draft.appOrderTotal = appOrderTotal;
+  const amountDue = draft.appOrderTotal ?? draft.total;
+  const splitPlan =
+    command.paymentMethod === 'DIVIDIDO'
+      ? validateAndNormalizeSplitPaymentPlan({
+          splitMode: command.splitMode,
+          splitCount: command.splitCount,
+          splitPayments: command.splitPayments,
+          amountDue,
+        })
+      : undefined;
   updateDraftPayment(
     draft,
     command.paymentMethod,
     command.cashReceived,
-    draft.appOrderTotal ?? draft.total
+    amountDue,
+    splitPlan
   );
   draft.status = 'PENDING_PAYMENT';
   draft.updatedAt = toTimestampIso();
@@ -697,7 +864,31 @@ const applySaleDraftConfirmPaid = (
     throw new HttpError(422, 'Forma de pagamento não selecionada.');
   }
 
-  if (paymentMethod === 'DINHEIRO') {
+  if (paymentMethod === 'DIVIDIDO') {
+    const splitPlan = validateAndNormalizeSplitPaymentPlan({
+      splitMode: draft.payment.splitMode,
+      splitCount: draft.payment.splitCount,
+      splitPayments: draft.payment.splitPayments,
+      amountDue,
+    });
+    const cashSplitTotal = roundMoney(
+      splitPlan.splitPayments.reduce(
+        (sum, entry) => sum + (entry.method === 'DINHEIRO' ? entry.amount : 0),
+        0
+      )
+    );
+    const cashReceivedTotal = roundMoney(
+      splitPlan.splitPayments.reduce(
+        (sum, entry) => sum + (entry.method === 'DINHEIRO' ? entry.cashReceived ?? 0 : 0),
+        0
+      )
+    );
+    draft.payment.splitMode = splitPlan.splitMode;
+    draft.payment.splitCount = splitPlan.splitCount;
+    draft.payment.splitPayments = splitPlan.splitPayments.map((entry) => ({ ...entry }));
+    draft.payment.cashReceived = cashSplitTotal > 0 ? cashReceivedTotal : null;
+    draft.payment.change = cashSplitTotal > 0 ? roundMoney(cashReceivedTotal - cashSplitTotal) : null;
+  } else if (paymentMethod === 'DINHEIRO') {
     const cashReceived = draft.payment.cashReceived;
     if (cashReceived === null || !Number.isFinite(cashReceived)) {
       throw new HttpError(422, 'Informe o valor recebido em dinheiro antes de confirmar.');
@@ -709,9 +900,15 @@ const applySaleDraftConfirmPaid = (
       });
     }
     draft.payment.change = roundMoney(cashReceived - amountDue);
+    draft.payment.splitMode = null;
+    draft.payment.splitCount = null;
+    draft.payment.splitPayments = [];
   } else {
     draft.payment.cashReceived = null;
     draft.payment.change = null;
+    draft.payment.splitMode = null;
+    draft.payment.splitCount = null;
+    draft.payment.splitPayments = [];
   }
 
   type PlannedDraftSale = {
@@ -801,6 +998,9 @@ const applySaleDraftConfirmPaid = (
     method: draft.payment.method,
     cashReceived: draft.payment.cashReceived,
     change: draft.payment.change,
+    splitMode: draft.payment.splitMode ?? null,
+    splitCount: draft.payment.splitCount ?? null,
+    splitPayments: draft.payment.splitPayments?.map((entry) => ({ ...entry })) ?? [],
     confirmedAt: timestamp,
   };
 

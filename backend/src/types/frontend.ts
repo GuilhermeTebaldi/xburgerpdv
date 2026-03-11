@@ -56,14 +56,27 @@ export interface FrontComboItem {
 }
 
 export type FrontSaleStatus = 'DRAFT' | 'PENDING_PAYMENT' | 'PAID' | 'CANCELLED';
-export type FrontSalePaymentMethod = 'PIX' | 'DEBITO' | 'CREDITO' | 'DINHEIRO';
+export type FrontSaleBasePaymentMethod = 'PIX' | 'DEBITO' | 'CREDITO' | 'DINHEIRO';
+export type FrontSalePaymentMethod = FrontSaleBasePaymentMethod | 'DIVIDIDO';
+export type FrontSalePaymentSplitMode = 'PEOPLE' | 'MIXED';
 export type FrontSaleCustomerType = 'BALCAO' | 'ENTREGA';
 export type FrontSaleOrigin = 'LOCAL' | 'IFOOD' | 'APP99' | 'KEETA';
+
+export interface FrontSalePaymentSplitEntry {
+  sequence: number;
+  label: string;
+  method: FrontSaleBasePaymentMethod;
+  amount: number;
+  cashReceived?: number | null;
+}
 
 export interface FrontSalePayment {
   method: FrontSalePaymentMethod | null;
   cashReceived: number | null;
   change: number | null;
+  splitMode?: FrontSalePaymentSplitMode | null;
+  splitCount?: number | null;
+  splitPayments?: FrontSalePaymentSplitEntry[];
   confirmedAt: Date | string | null;
 }
 
