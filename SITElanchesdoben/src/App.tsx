@@ -39,6 +39,7 @@ const ADMIN_AUTH_TOKEN_KEY = 'xburger_admin_auth_token';
 const ADMIN_GATE_KEY = 'xburger_admin_gate';
 const ADMIN_SESSION_KEY = 'xburger_admin_session';
 const ADMIN_SESSION_BACKUP_KEY = 'xburger_admin_session_backup';
+const DEMO_VIDEO_SRC = '/demo-video-2026-03-11.mp4';
 const SALES_WHATSAPP_URL =
   'https://wa.me/5549999102026?text=Ol%C3%A1!%20Quero%20comprar%20ou%20conhecer%20melhor%20o%20XBURGERPDV.';
 
@@ -154,6 +155,7 @@ const products = [
 export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [showSalesPromo, setShowSalesPromo] = useState(true);
+  const [isDemoModalOpen, setIsDemoModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('geral');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -174,6 +176,33 @@ export default function App() {
     if (typeof window === 'undefined') return;
     window.open(SALES_WHATSAPP_URL, '_blank', 'noopener,noreferrer');
   };
+
+  const scrollToLoginSection = () => {
+    if (typeof window === 'undefined') return;
+    const loginSection = window.document.getElementById('login');
+    if (!loginSection) return;
+    loginSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  useEffect(() => {
+    if (!isDemoModalOpen || typeof window === 'undefined') return;
+
+    const { body } = window.document;
+    const previousOverflow = body.style.overflow;
+    body.style.overflow = 'hidden';
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsDemoModalOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [isDemoModalOpen]);
 
   const handleLoginSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -313,7 +342,11 @@ export default function App() {
               Tudo o que você precisa para escalar seu negócio de lanches.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <button className="group relative bg-red-600 text-white px-8 py-4 rounded-2xl text-lg font-bold hover:bg-red-700 transition-all shadow-xl shadow-red-200 flex items-center gap-2 overflow-hidden">
+              <button
+                type="button"
+                onClick={scrollToLoginSection}
+                className="group relative bg-red-600 text-white px-8 py-4 rounded-2xl text-lg font-bold hover:bg-red-700 transition-all shadow-xl shadow-red-200 flex items-center gap-2 overflow-hidden"
+              >
                 <span className="relative z-10">Começar Agora</span>
                 <ArrowRight className="relative z-10 w-5 h-5 group-hover:translate-x-1 transition-transform" />
                 <motion.div 
@@ -321,7 +354,11 @@ export default function App() {
                   initial={false}
                 />
               </button>
-              <button className="bg-white text-slate-900 border border-slate-200 px-8 py-4 rounded-2xl text-lg font-bold hover:bg-slate-50 transition-all flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsDemoModalOpen(true)}
+                className="bg-white text-slate-900 border border-slate-200 px-8 py-4 rounded-2xl text-lg font-bold hover:bg-slate-50 transition-all flex items-center gap-2"
+              >
                 Ver Demonstração
               </button>
             </div>
@@ -775,6 +812,57 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      <AnimatePresence>
+        {isDemoModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="fixed inset-0 z-[90] bg-slate-950/80 p-4 backdrop-blur-sm sm:p-8"
+            onClick={() => setIsDemoModalOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 24, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 24, scale: 0.98 }}
+              transition={{ duration: 0.3, ease: 'easeOut' }}
+              className="mx-auto mt-16 w-full max-w-5xl rounded-3xl border border-white/10 bg-slate-900 p-4 shadow-2xl shadow-slate-950/70 sm:mt-12 sm:p-6"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="mb-4 flex items-center justify-between sm:mb-5">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-red-300">Demonstração</p>
+                  <h3 className="text-lg font-black text-white sm:text-2xl">XBURGERPDV em ação</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsDemoModalOpen(false)}
+                  className="rounded-full bg-white/10 p-2 text-slate-200 transition-colors hover:bg-white/20 hover:text-white"
+                  aria-label="Fechar vídeo de demonstração"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-slate-950">
+                <video
+                  className="h-full w-full max-h-[72vh] object-contain"
+                  src={DEMO_VIDEO_SRC}
+                  controls
+                  autoPlay
+                  playsInline
+                  preload="metadata"
+                >
+                  Seu navegador não suporta vídeo HTML5.
+                </video>
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/20 to-transparent" />
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {showSalesPromo && (
