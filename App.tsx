@@ -610,6 +610,7 @@ const App: React.FC = () => {
   const [splitCount, setSplitCount] = useState(0);
   const [splitPayments, setSplitPayments] = useState<SalePaymentSplitEntry[]>([]);
   const [splitStepIndex, setSplitStepIndex] = useState(0);
+  const [splitNeedsMethodSelection, setSplitNeedsMethodSelection] = useState(false);
   const [splitAmountInput, setSplitAmountInput] = useState('');
   const [splitCashReceivedInput, setSplitCashReceivedInput] = useState('');
   const [paymentMethodBeforeSplit, setPaymentMethodBeforeSplit] = useState<SaleBasePaymentMethod>('PIX');
@@ -630,6 +631,7 @@ const App: React.FC = () => {
     setSplitCount(0);
     setSplitPayments([]);
     setSplitStepIndex(0);
+    setSplitNeedsMethodSelection(false);
     setSplitAmountInput('');
     setSplitCashReceivedInput('');
     if (nextMethod) {
@@ -1464,6 +1466,7 @@ const App: React.FC = () => {
           contiguousCompleted += 1;
         }
         setSplitStepIndex(contiguousCompleted);
+        setSplitNeedsMethodSelection(contiguousCompleted < persistedCount);
         setSplitAmountInput('');
         setSplitCashReceivedInput('');
       } else {
@@ -1475,6 +1478,7 @@ const App: React.FC = () => {
         );
         const remaining = roundMoney(Math.max(0, paymentTotal - usedTotal));
         setSplitStepIndex(persistedPayments.length);
+        setSplitNeedsMethodSelection(remaining > 0);
         setSplitAmountInput(remaining > 0 ? String(remaining) : '');
         setSplitCashReceivedInput('');
       }
@@ -2395,6 +2399,11 @@ const App: React.FC = () => {
     (isSplitModeEnabled ? !splitValidation.isReady : isCashPaymentInsufficient) ||
     (isAppSaleOriginActive && isAppOrderTotalInvalid) ||
     isPaymentActionBlocked;
+  const shouldPulsePaymentMethods =
+    isSplitModeEnabled &&
+    splitNeedsMethodSelection &&
+    ((splitMode === 'PEOPLE' && splitStepIndex < splitCount) ||
+      (splitMode === 'MIXED' && splitMixedRemaining > 0));
 
   useEffect(() => {
     if (!isPaymentOpen || !isAppSaleOriginActive) return;
@@ -2428,6 +2437,7 @@ const App: React.FC = () => {
     setSplitCount(parsedCount > 1 ? parsedCount : 1);
     setSplitPayments([]);
     setSplitStepIndex(0);
+    setSplitNeedsMethodSelection(true);
     setSplitCashReceivedInput('');
     setSplitAmountInput(parsedCount > 1 ? '' : String(effectivePaymentTotal));
     setPaymentMethod('PIX');
@@ -2437,6 +2447,7 @@ const App: React.FC = () => {
   const handleSplitReset = () => {
     setSplitPayments([]);
     setSplitStepIndex(0);
+    setSplitNeedsMethodSelection(true);
     setSplitCashReceivedInput('');
     setSplitAmountInput(splitMode === 'MIXED' ? String(effectivePaymentTotal) : '');
     setPaymentMethod('PIX');
@@ -2448,6 +2459,7 @@ const App: React.FC = () => {
       const previousSequence = splitStepIndex;
       setSplitPayments((current) => current.filter((entry) => entry.sequence < previousSequence));
       setSplitStepIndex((current) => Math.max(0, current - 1));
+      setSplitNeedsMethodSelection(true);
       setSplitCashReceivedInput('');
       setPaymentMethod('PIX');
       return;
@@ -2460,12 +2472,17 @@ const App: React.FC = () => {
       setSplitStepIndex((current) => Math.max(0, current - 1));
       setSplitAmountInput(String(lastEntry.amount));
       setSplitCashReceivedInput('');
-      setPaymentMethod(lastEntry.method);
+      setSplitNeedsMethodSelection(true);
+      setPaymentMethod('PIX');
     }
   };
 
   const handleSplitAdvance = () => {
     if (!isSplitModeEnabled || !splitMode) return;
+    if (splitNeedsMethodSelection) {
+      showNotification('Selecione PIX, Débito, Crédito ou Dinheiro para continuar.');
+      return;
+    }
 
     if (splitMode === 'PEOPLE') {
       if (splitStepIndex >= splitCount) return;
@@ -2500,6 +2517,7 @@ const App: React.FC = () => {
         )
       );
       setSplitStepIndex(sequence);
+      setSplitNeedsMethodSelection(sequence < splitCount);
       setSplitCashReceivedInput('');
       setPaymentMethod('PIX');
       return;
@@ -2551,6 +2569,7 @@ const App: React.FC = () => {
 
       setSplitPayments((current) => [...current, nextEntry]);
       setSplitStepIndex(sequence);
+      setSplitNeedsMethodSelection(remainingAfter > 0);
       setSplitAmountInput(remainingAfter > 0 ? String(remainingAfter) : '');
       setSplitCashReceivedInput('');
       setPaymentMethod('PIX');
@@ -3103,12 +3122,17 @@ const App: React.FC = () => {
                   {BASE_PAYMENT_METHODS.map((method) => (
                     <button
                       key={method}
-                      onClick={() => setPaymentMethod(method)}
+                      onClick={() => {
+                        setPaymentMethod(method);
+                        if (isSplitModeEnabled) {
+                          setSplitNeedsMethodSelection(false);
+                        }
+                      }}
                       className={`qb-btn-touch qb-payment-method-btn px-2 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-wide border transition-all ${
                         paymentMethod === method
                           ? 'bg-red-600 border-red-700 text-white'
                           : 'bg-white border-slate-200 text-slate-700 hover:border-red-300'
-                      }`}
+                      } ${shouldPulsePaymentMethods ? 'animate-pulse' : ''}`}
                     >
                       {getPaymentMethodLabel(method)}
                     </button>
@@ -3120,7 +3144,7 @@ const App: React.FC = () => {
                     onClick={isSplitModeEnabled ? handleCancelSplitMode : handleOpenSplitConfig}
                     className={`qb-btn-touch px-2 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-wide border transition-all ${
                       isSplitModeEnabled
-                        ? 'bg-red-600 border-red-700 text-white'
+                        ? 'bg-orange-500 border-orange-600 text-white'
                         : 'bg-white border-slate-200 text-slate-700 hover:border-red-300'
                     }`}
                   >
@@ -3131,7 +3155,7 @@ const App: React.FC = () => {
                     onClick={() => setIsAppOriginModalOpen(true)}
                     className={`qb-btn-touch px-2 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-wide border transition-all ${
                       isAppSaleOriginActive
-                        ? `text-white ${paymentOriginBarClass} border-transparent`
+                        ? 'bg-green-600 border-green-700 text-white'
                         : 'bg-white border-slate-200 text-slate-700 hover:border-slate-400'
                     }`}
                   >
@@ -3143,6 +3167,11 @@ const App: React.FC = () => {
                     {splitMode === 'PEOPLE'
                       ? `Divisão por pessoas (${splitCount})`
                       : 'Divisão mista (1 pessoa)'}
+                  </p>
+                )}
+                {shouldPulsePaymentMethods && (
+                  <p className="text-[10px] font-black uppercase tracking-widest text-amber-600 animate-pulse">
+                    Escolha a forma de pagamento para continuar
                   </p>
                 )}
               </div>
@@ -3207,7 +3236,7 @@ const App: React.FC = () => {
                             <button
                               type="button"
                               onClick={handleSplitAdvance}
-                              className="qb-btn-touch bg-slate-900 text-white px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest"
+                              className="qb-btn-touch bg-green-600 text-white px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-green-700"
                             >
                               {splitStepIndex + 1 >= splitCount ? 'Concluir Pessoa' : 'Próximo'}
                             </button>
@@ -3307,7 +3336,7 @@ const App: React.FC = () => {
                             <button
                               type="button"
                               onClick={handleSplitAdvance}
-                              className="qb-btn-touch bg-slate-900 text-white px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest"
+                              className="qb-btn-touch bg-green-600 text-white px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-green-700"
                             >
                               {splitCurrentMixedAmount !== null &&
                               Math.abs(splitCurrentMixedAmount - splitMixedRemaining) <= 0.009

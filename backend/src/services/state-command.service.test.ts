@@ -275,6 +275,40 @@ test('draft cancel in DRAFT and PENDING_PAYMENT does not touch stock', () => {
   assert.equal(pendingCancelled.stockEntries.length, 0);
 });
 
+test('draft credit payment confirms without cash fields and keeps stock consistency', () => {
+  const base = createBaseState();
+  const withDraft = applyStateCommand(base, { type: 'SALE_DRAFT_CREATE', draftId: 'draft-credit' });
+  const withItem = applyStateCommand(withDraft, {
+    type: 'SALE_DRAFT_ADD_ITEM',
+    draftId: 'draft-credit',
+    productId: 'p-burger',
+  });
+  const pending = applyStateCommand(withItem, {
+    type: 'SALE_DRAFT_FINALIZE',
+    draftId: 'draft-credit',
+    paymentMethod: 'CREDITO',
+  });
+
+  assert.equal(pending.saleDrafts?.[0]?.status, 'PENDING_PAYMENT');
+  assert.equal(pending.saleDrafts?.[0]?.payment.method, 'CREDITO');
+  assert.equal(pending.saleDrafts?.[0]?.payment.cashReceived, null);
+  assert.equal(pending.saleDrafts?.[0]?.payment.change, null);
+
+  const paid = applyStateCommand(pending, {
+    type: 'SALE_DRAFT_CONFIRM_PAID',
+    draftId: 'draft-credit',
+  });
+
+  assert.equal(paid.saleDrafts?.[0]?.status, 'PAID');
+  assert.equal(paid.sales.length, 1);
+  assert.equal(paid.sales[0]?.payment?.method, 'CREDITO');
+  assert.equal(paid.sales[0]?.payment?.cashReceived, null);
+  assert.equal(paid.sales[0]?.payment?.change, null);
+  assert.equal(paid.ingredients.find((entry) => entry.id === 'i-bread')?.currentStock, 49);
+  assert.equal(paid.ingredients.find((entry) => entry.id === 'i-meat')?.currentStock, 39);
+  assert.equal(paid.ingredients.find((entry) => entry.id === 'i-sauce')?.currentStock, 180);
+});
+
 test('draft cash payment computes change and blocks insufficient cash on confirm', () => {
   const base = createBaseState();
   const withDraft = applyStateCommand(base, { type: 'SALE_DRAFT_CREATE', draftId: 'draft-cash' });
