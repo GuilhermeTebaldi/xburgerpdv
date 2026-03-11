@@ -16,6 +16,8 @@ interface ManagedUser {
   companyName: string | null;
   stateOwnerUserId: string | null;
   billingBlocked: boolean;
+  billingBlockedMessage: string | null;
+  billingBlockedUntil: string | null;
   role: UserRole;
   isActive: boolean;
   createdAt: string;
@@ -84,6 +86,25 @@ const formatRoleLabel = (role: UserRole): string => {
   if (role === 'ADMIN') return 'ADMGERENTE';
   if (role === 'OPERATOR') return 'OPERADOR';
   return 'AUDITOR';
+};
+
+const DEFAULT_BLOCK_DAYS = 15;
+const DELETE_CONFIRMATION_PHRASE = 'EXCLUIRUSER';
+
+const buildDefaultBlockMessage = (companyName: string, blockedDays: number): string =>
+  `Olá! O acesso da empresa ${companyName} ao XBURGERPDV foi bloqueado por inadimplência por ${blockedDays} dia(s). Entre em contato com o financeiro para regularização e liberação do sistema.`;
+
+const isFutureDate = (value: string | null): boolean => {
+  if (!value) return false;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && parsed > Date.now();
+};
+
+const formatDateTime = (value: string | null): string => {
+  if (!value) return '-';
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return '-';
+  return parsed.toLocaleString('pt-BR');
 };
 
 const AdminGeralPage: React.FC = () => {
@@ -349,7 +370,10 @@ const AdminGeralPage: React.FC = () => {
     }
   };
 
-  const updateCompanyBilling = async (stateOwnerUserId: string, blocked: boolean) => {
+  const updateCompanyBilling = async (
+    stateOwnerUserId: string,
+    payload: { blocked: boolean; message?: string; blockedDays?: number }
+  ) => {
     if (!token || !stateOwnerUserId || pendingCompanyKey) return;
     setPendingCompanyKey(stateOwnerUserId);
     setCompanyActionError('');
@@ -364,7 +388,7 @@ const AdminGeralPage: React.FC = () => {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ blocked }),
+          body: JSON.stringify(payload),
         }
       );
 
@@ -375,7 +399,9 @@ const AdminGeralPage: React.FC = () => {
       }
 
       setCompanyActionSuccess(
-        blocked ? 'Empresa bloqueada por inadimplência.' : 'Empresa liberada após regularização.'
+        payload.blocked
+          ? 'Empresa bloqueada com mensagem personalizada e prazo.'
+          : 'Empresa liberada após regularização.'
       );
       await loadUsers(token);
     } catch {
@@ -385,33 +411,46 @@ const AdminGeralPage: React.FC = () => {
     }
   };
 
-  const updateCompanyStatus = async (stateOwnerUserId: string, isActive: boolean) => {
+  const deleteCompanyPermanently = async (
+    stateOwnerUserId: string,
+    firstConfirmation: string,
+    secondConfirmation: string
+  ) => {
     if (!token || !stateOwnerUserId || pendingCompanyKey) return;
     setPendingCompanyKey(stateOwnerUserId);
     setCompanyActionError('');
     setCompanyActionSuccess('');
     try {
       const response = await fetch(
-        `${apiBaseUrl}/api/v1/users/company/${encodeURIComponent(stateOwnerUserId)}/status`,
+        `${apiBaseUrl}/api/v1/users/company/${encodeURIComponent(stateOwnerUserId)}`,
         {
-          method: 'PATCH',
+          method: 'DELETE',
           headers: {
             Accept: 'application/json',
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ isActive }),
+          body: JSON.stringify({
+            firstConfirmation,
+            secondConfirmation,
+          }),
         }
       );
 
       if (!response.ok) {
         const apiError = await extractApiError(response);
-        setCompanyActionError(apiError || 'Falha ao atualizar status da empresa.');
+        setCompanyActionError(apiError || 'Falha ao excluir empresa de forma definitiva.');
         return;
       }
 
+      const result = (await response.json()) as {
+        deletedUsersCount?: number;
+        deletedAppStatesCount?: number;
+      };
       setCompanyActionSuccess(
-        isActive ? 'Empresa reativada com sucesso.' : 'Empresa excluída (desativada) com sucesso.'
+        `Exclusão definitiva concluída. Usuários removidos: ${result.deletedUsersCount || 0}. Estados removidos: ${
+          result.deletedAppStatesCount || 0
+        }.`
       );
       await loadUsers(token);
     } catch {
@@ -433,8 +472,26 @@ const AdminGeralPage: React.FC = () => {
         : 'Não cadastrado';
       const managerActive = group.manager?.isActive ?? false;
       const operatorActive = group.operator?.isActive ?? false;
-      const isBillingBlocked =
-        (group.manager?.billingBlocked ?? false) || (group.operator?.billingBlocked ?? false);
+      const managerBillingBlocked = Boolean(
+        group.manager?.billingBlocked &&
+          (!group.manager?.billingBlockedUntil || isFutureDate(group.manager.billingBlockedUntil))
+      );
+      const operatorBillingBlocked = Boolean(
+        group.operator?.billingBlocked &&
+          (!group.operator?.billingBlockedUntil || isFutureDate(group.operator.billingBlockedUntil))
+      );
+      const blockedUser = managerBillingBlocked
+        ? group.manager
+        : operatorBillingBlocked
+          ? group.operator
+          : null;
+      const isBillingBlocked = Boolean(blockedUser);
+      const billingBlockedUntil = blockedUser?.billingBlockedUntil || null;
+      const billingBlockedMessage = blockedUser?.billingBlockedMessage?.trim() || '';
+      const billingMessageLabel =
+        billingBlockedMessage.length > 90
+          ? `${billingBlockedMessage.slice(0, 90)}...`
+          : billingBlockedMessage;
       const isCompanyDisabled =
         !managerActive && !operatorActive && (group.manager !== null || group.operator !== null);
       const isBusy = Boolean(ownerKey && pendingCompanyKey === ownerKey);
@@ -468,7 +525,21 @@ const AdminGeralPage: React.FC = () => {
             </span>
           </td>
           <td className="py-2 pr-3">
-            {isBillingBlocked ? 'Bloqueada' : 'Em dia'}
+            <div className="space-y-1">
+              <p
+                className={`inline-flex px-2 py-1 rounded-full text-xs font-bold ${
+                  isBillingBlocked ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'
+                }`}
+              >
+                {isBillingBlocked ? 'Bloqueada' : 'Em dia'}
+              </p>
+              {isBillingBlocked && (
+                <p className="text-[11px] text-slate-600">Até: {formatDateTime(billingBlockedUntil)}</p>
+              )}
+              {isBillingBlocked && billingMessageLabel && (
+                <p className="text-[11px] text-slate-500 max-w-xs">{billingMessageLabel}</p>
+              )}
+            </div>
           </td>
           <td className="py-2 pr-3">
             {group.latestCreatedAtMs
@@ -482,7 +553,45 @@ const AdminGeralPage: React.FC = () => {
                 disabled={!ownerKey || isBusy}
                 onClick={() => {
                   if (!ownerKey) return;
-                  void updateCompanyBilling(ownerKey, !isBillingBlocked);
+                  if (isBillingBlocked) {
+                    const releaseConfirmed = window.confirm(
+                      `Liberar o acesso da empresa "${group.companyName}" agora?`
+                    );
+                    if (!releaseConfirmed) return;
+                    void updateCompanyBilling(ownerKey, { blocked: false });
+                    return;
+                  }
+
+                  const blockedDaysRaw = window.prompt(
+                    `Bloquear por quantos dias?`,
+                    String(DEFAULT_BLOCK_DAYS)
+                  );
+                  if (blockedDaysRaw === null) return;
+
+                  const blockedDays = Number.parseInt(blockedDaysRaw.trim(), 10);
+                  if (!Number.isInteger(blockedDays) || blockedDays < 1 || blockedDays > 3650) {
+                    setCompanyActionError('Dias inválidos. Informe um número entre 1 e 3650.');
+                    return;
+                  }
+
+                  const defaultMessage = buildDefaultBlockMessage(group.companyName, blockedDays);
+                  const customMessageRaw = window.prompt(
+                    'Mensagem que o usuário verá na tela de bloqueio:',
+                    defaultMessage
+                  );
+                  if (customMessageRaw === null) return;
+                  const customMessage = customMessageRaw.trim() || defaultMessage;
+
+                  const blockConfirmed = window.confirm(
+                    `Confirmar bloqueio da empresa "${group.companyName}" por ${blockedDays} dia(s)?`
+                  );
+                  if (!blockConfirmed) return;
+
+                  void updateCompanyBilling(ownerKey, {
+                    blocked: true,
+                    blockedDays,
+                    message: customMessage,
+                  });
                 }}
                 className="px-3 py-1 rounded-lg border border-slate-300 text-xs font-semibold disabled:opacity-50"
               >
@@ -493,11 +602,42 @@ const AdminGeralPage: React.FC = () => {
                 disabled={!ownerKey || isBusy}
                 onClick={() => {
                   if (!ownerKey) return;
-                  void updateCompanyStatus(ownerKey, isCompanyDisabled);
+                  const firstConfirmation = window.prompt(
+                    `AÇÃO IRREVERSÍVEL.\nDigite ${DELETE_CONFIRMATION_PHRASE} para excluir todos os dados da empresa "${group.companyName}".`
+                  );
+                  if (firstConfirmation === null) return;
+                  if (firstConfirmation.trim() !== DELETE_CONFIRMATION_PHRASE) {
+                    setCompanyActionError(
+                      `Primeira confirmação inválida. Digite exatamente ${DELETE_CONFIRMATION_PHRASE}.`
+                    );
+                    return;
+                  }
+
+                  const secondConfirmation = window.prompt(
+                    `Confirmação final.\nDigite ${DELETE_CONFIRMATION_PHRASE} novamente para excluir definitivamente.`
+                  );
+                  if (secondConfirmation === null) return;
+                  if (secondConfirmation.trim() !== DELETE_CONFIRMATION_PHRASE) {
+                    setCompanyActionError(
+                      `Segunda confirmação inválida. Digite exatamente ${DELETE_CONFIRMATION_PHRASE}.`
+                    );
+                    return;
+                  }
+
+                  const finalConfirm = window.confirm(
+                    `Última confirmação: excluir a empresa "${group.companyName}" e limpar todos os dados do usuário no banco?`
+                  );
+                  if (!finalConfirm) return;
+
+                  void deleteCompanyPermanently(
+                    ownerKey,
+                    firstConfirmation.trim(),
+                    secondConfirmation.trim()
+                  );
                 }}
                 className="px-3 py-1 rounded-lg border border-red-300 text-red-700 text-xs font-semibold disabled:opacity-50"
               >
-                {isCompanyDisabled ? 'Reativar' : 'Excluir'}
+                Excluir
               </button>
             </div>
           </td>

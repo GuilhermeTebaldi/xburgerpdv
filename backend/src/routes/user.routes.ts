@@ -12,3 +12,4 @@ userRouter.post('/company', authRequired, asyncHandler(userController.createComp
 userRouter.post('/company/link', authRequired, asyncHandler(userController.linkExistingCompanyUsers));
 userRouter.patch('/company/:stateOwnerUserId/billing', authRequired, asyncHandler(userController.setCompanyBilling));
 userRouter.patch('/company/:stateOwnerUserId/status', authRequired, asyncHandler(userController.setCompanyStatus));
+userRouter.delete('/company/:stateOwnerUserId', authRequired, asyncHandler(userController.deleteCompanyPermanently));

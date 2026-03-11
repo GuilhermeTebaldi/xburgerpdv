@@ -3,6 +3,10 @@ import { Prisma, UserRole } from '@prisma/client';
 
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../utils/http-error.js';
+import {
+  buildDefaultBillingBlockedMessage,
+  resolveBillingBlockSnapshot,
+} from './billing-block.service.js';
 
 interface CreateUserInput {
   email: string;
@@ -28,6 +32,8 @@ interface CreateCompanyUsersInput {
 interface SetCompanyBillingInput {
   stateOwnerUserId: string;
   blocked: boolean;
+  message?: string;
+  blockedDays?: number;
 }
 
 interface SetCompanyStatusInput {
@@ -39,6 +45,12 @@ interface LinkExistingCompanyUsersInput {
   companyName: string;
   managerEmail: string;
   operatorEmail: string;
+}
+
+interface DeleteCompanyPermanentlyInput {
+  stateOwnerUserId: string;
+  firstConfirmation: string;
+  secondConfirmation: string;
 }
 
 const EMPTY_APP_STATE = {
@@ -58,6 +70,9 @@ const EMPTY_APP_STATE = {
 } satisfies Record<string, unknown>;
 
 const ADMIN_GERAL_EMAIL = 'xburger.admin@geral.com';
+const DELETE_CONFIRMATION_PHRASE = 'EXCLUIRUSER';
+const DEFAULT_BILLING_BLOCK_DAYS = 15;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const assertAdminActor = async (actorUserId: string) => {
   const actor = await prisma.user.findUnique({
@@ -82,7 +97,7 @@ export class UserService {
   async list(actorUserId: string, includeInactive = true) {
     await assertAdminActor(actorUserId);
 
-    return prisma.user.findMany({
+    const users = await prisma.user.findMany({
       where: includeInactive ? undefined : { isActive: true },
       orderBy: { createdAt: 'desc' },
       select: {
@@ -92,11 +107,23 @@ export class UserService {
         companyName: true,
         stateOwnerUserId: true,
         billingBlocked: true,
+        billingBlockedMessage: true,
+        billingBlockedUntil: true,
         role: true,
         isActive: true,
         createdAt: true,
         updatedAt: true,
       },
+    });
+
+    return users.map((user) => {
+      const billing = resolveBillingBlockSnapshot(user);
+      return {
+        ...user,
+        billingBlocked: billing.isBlocked,
+        billingBlockedMessage: billing.message,
+        billingBlockedUntil: billing.blockedUntil,
+      };
     });
   }
 
@@ -132,6 +159,8 @@ export class UserService {
         companyName: true,
         stateOwnerUserId: true,
         billingBlocked: true,
+        billingBlockedMessage: true,
+        billingBlockedUntil: true,
         role: true,
         isActive: true,
         createdAt: true,
@@ -200,6 +229,8 @@ export class UserService {
           companyName: true,
           stateOwnerUserId: true,
           billingBlocked: true,
+          billingBlockedMessage: true,
+          billingBlockedUntil: true,
           role: true,
           isActive: true,
           createdAt: true,
@@ -233,6 +264,8 @@ export class UserService {
           companyName: true,
           stateOwnerUserId: true,
           billingBlocked: true,
+          billingBlockedMessage: true,
+          billingBlockedUntil: true,
           role: true,
           isActive: true,
           createdAt: true,
@@ -308,11 +341,33 @@ export class UserService {
       const [manager, operator] = await Promise.all([
         tx.user.findUnique({
           where: { email: managerEmail },
-          select: { id: true, email: true, name: true, role: true, isActive: true, billingBlocked: true, createdAt: true, updatedAt: true },
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            role: true,
+            isActive: true,
+            billingBlocked: true,
+            billingBlockedMessage: true,
+            billingBlockedUntil: true,
+            createdAt: true,
+            updatedAt: true,
+          },
         }),
         tx.user.findUnique({
           where: { email: operatorEmail },
-          select: { id: true, email: true, name: true, role: true, isActive: true, billingBlocked: true, createdAt: true, updatedAt: true },
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            role: true,
+            isActive: true,
+            billingBlocked: true,
+            billingBlockedMessage: true,
+            billingBlockedUntil: true,
+            createdAt: true,
+            updatedAt: true,
+          },
         }),
       ]);
 
@@ -400,6 +455,7 @@ export class UserService {
       select: {
         id: true,
         email: true,
+        stateOwnerUserId: true,
       },
     });
 
@@ -414,26 +470,101 @@ export class UserService {
       throw new HttpError(403, 'Conta de gestão não pode ser alterada por estas ações.');
     }
 
-    return users.map((user) => user.id);
+    return users;
   }
 
   async setCompanyBilling(actorUserId: string, input: SetCompanyBillingInput) {
     await assertAdminActor(actorUserId);
-    const targetUserIds = await this.resolveCompanyUsers(input.stateOwnerUserId);
+    const companyUsers = await this.resolveCompanyUsers(input.stateOwnerUserId);
+    const targetUserIds = companyUsers.map((user) => user.id);
+
+    const blockedDays = Math.max(1, Math.floor(input.blockedDays ?? DEFAULT_BILLING_BLOCK_DAYS));
+    const blockedUntil = new Date(Date.now() + blockedDays * DAY_MS);
+    const defaultMessage = buildDefaultBillingBlockedMessage(blockedDays, blockedUntil);
+    const normalizedMessage = input.message?.trim() || defaultMessage;
 
     await prisma.user.updateMany({
       where: { id: { in: targetUserIds } },
-      data: { billingBlocked: input.blocked },
+      data: input.blocked
+        ? {
+            billingBlocked: true,
+            billingBlockedMessage: normalizedMessage,
+            billingBlockedUntil: blockedUntil,
+          }
+        : {
+            billingBlocked: false,
+            billingBlockedMessage: null,
+            billingBlockedUntil: null,
+          },
     });
   }
 
   async setCompanyStatus(actorUserId: string, input: SetCompanyStatusInput) {
     await assertAdminActor(actorUserId);
-    const targetUserIds = await this.resolveCompanyUsers(input.stateOwnerUserId);
+    const companyUsers = await this.resolveCompanyUsers(input.stateOwnerUserId);
+    const targetUserIds = companyUsers.map((user) => user.id);
 
     await prisma.user.updateMany({
       where: { id: { in: targetUserIds } },
       data: { isActive: input.isActive },
+    });
+  }
+
+  async deleteCompanyPermanently(actorUserId: string, input: DeleteCompanyPermanentlyInput) {
+    await assertAdminActor(actorUserId);
+
+    if (
+      input.firstConfirmation !== DELETE_CONFIRMATION_PHRASE ||
+      input.secondConfirmation !== DELETE_CONFIRMATION_PHRASE
+    ) {
+      throw new HttpError(
+        400,
+        `Confirmação inválida. Digite ${DELETE_CONFIRMATION_PHRASE} duas vezes para excluir definitivamente.`
+      );
+    }
+
+    const companyUsers = await this.resolveCompanyUsers(input.stateOwnerUserId);
+    const targetUserIds = companyUsers.map((user) => user.id);
+    const targetUserIdSet = new Set(targetUserIds);
+
+    const ownerUserIds = [...new Set(
+      companyUsers.map((user) => {
+        const owner = user.stateOwnerUserId?.trim();
+        if (owner && targetUserIdSet.has(owner)) return owner;
+        return user.id;
+      })
+    )];
+
+    return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const [deletedBackups, deletedStates, deletedAuditLogs, deletedUsers] = await Promise.all([
+        tx.appStateBackup.deleteMany({
+          where: {
+            ownerUserId: { in: ownerUserIds },
+          },
+        }),
+        tx.appState.deleteMany({
+          where: {
+            ownerUserId: { in: ownerUserIds },
+          },
+        }),
+        tx.auditLog.deleteMany({
+          where: {
+            actorUserId: { in: targetUserIds },
+          },
+        }),
+        tx.user.deleteMany({
+          where: {
+            id: { in: targetUserIds },
+          },
+        }),
+      ]);
+
+      return {
+        deletedUsersCount: deletedUsers.count,
+        deletedAppStatesCount: deletedStates.count,
+        deletedBackupsCount: deletedBackups.count,
+        deletedAuditLogsCount: deletedAuditLogs.count,
+      };
     });
   }
 }

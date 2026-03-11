@@ -51,8 +51,34 @@ export const companyUsersLinkSchema = z
 
 export const companyBillingSchema = z.object({
   blocked: z.boolean(),
+  message: z.string().trim().min(4).max(600).optional(),
+  blockedDays: z.number().int().min(1).max(3650).optional(),
 });
 
 export const companyStatusSchema = z.object({
   isActive: z.boolean(),
 });
+
+export const COMPANY_PURGE_CONFIRMATION_PHRASE = 'EXCLUIRUSER';
+
+export const companyPurgeSchema = z
+  .object({
+    firstConfirmation: z.string().trim().min(1),
+    secondConfirmation: z.string().trim().min(1),
+  })
+  .superRefine((value, ctx) => {
+    if (value.firstConfirmation !== COMPANY_PURGE_CONFIRMATION_PHRASE) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['firstConfirmation'],
+        message: `Digite exatamente ${COMPANY_PURGE_CONFIRMATION_PHRASE} para confirmar.`,
+      });
+    }
+    if (value.secondConfirmation !== COMPANY_PURGE_CONFIRMATION_PHRASE) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['secondConfirmation'],
+        message: `Digite exatamente ${COMPANY_PURGE_CONFIRMATION_PHRASE} para confirmar.`,
+      });
+    }
+  });

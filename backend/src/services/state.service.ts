@@ -7,6 +7,7 @@ import type { RequestContext } from '../types/request-context.js';
 import { HttpError } from '../utils/http-error.js';
 import type { StateCommandInput } from '../validators/state-command.validator.js';
 import { AuditService } from './audit.service.js';
+import { resolveBillingBlockSnapshot, toBillingBlockErrorDetails } from './billing-block.service.js';
 import { addDays, toBackupDay, toDateOnlyKey } from './state-backup.utils.js';
 import { applyStateCommand, commandTouchesArchiveState } from './state-command.service.js';
 
@@ -133,6 +134,8 @@ export class StateService {
         email: true,
         isActive: true,
         billingBlocked: true,
+        billingBlockedMessage: true,
+        billingBlockedUntil: true,
         stateOwnerUserId: true,
       },
     });
@@ -141,8 +144,13 @@ export class StateService {
       throw new HttpError(401, 'Usuário autenticado não encontrado para acessar o estado.');
     }
     const isAdminGeral = actor.email.trim().toLowerCase() === ADMIN_GERAL_EMAIL;
-    if (actor.billingBlocked && !isAdminGeral) {
-      throw new HttpError(402, 'Empresa bloqueada por inadimplência. Regularize o pagamento para liberar o acesso.');
+    const billingBlock = resolveBillingBlockSnapshot(actor);
+    if (billingBlock.isBlocked && !isAdminGeral) {
+      throw new HttpError(
+        402,
+        billingBlock.message || 'Empresa bloqueada por inadimplência.',
+        toBillingBlockErrorDetails(billingBlock)
+      );
     }
 
     const ownerUserId = actor.stateOwnerUserId?.trim() || actor.id;

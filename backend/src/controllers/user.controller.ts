@@ -4,6 +4,7 @@ import { UserRole } from '@prisma/client';
 import { UserService } from '../services/user.service.js';
 import {
   companyBillingSchema,
+  companyPurgeSchema,
   companyUsersLinkSchema,
   companyStatusSchema,
   companyUsersCreateSchema,
@@ -87,6 +88,8 @@ export const userController = {
     await userService.setCompanyBilling(actorUserId, {
       stateOwnerUserId: req.params.stateOwnerUserId,
       blocked: payload.blocked,
+      message: payload.message,
+      blockedDays: payload.blockedDays,
     });
 
     res.status(204).send();
@@ -120,6 +123,23 @@ export const userController = {
       companyName: payload.companyName,
       managerEmail: payload.managerEmail,
       operatorEmail: payload.operatorEmail,
+    });
+
+    res.status(200).json(result);
+  },
+
+  deleteCompanyPermanently: async (req: Request, res: Response) => {
+    const actorUserId = req.authUserId;
+    if (!actorUserId) {
+      res.status(401).json({ error: 'Usuário não autenticado.' });
+      return;
+    }
+
+    const payload = companyPurgeSchema.parse(req.body);
+    const result = await userService.deleteCompanyPermanently(actorUserId, {
+      stateOwnerUserId: req.params.stateOwnerUserId,
+      firstConfirmation: payload.firstConfirmation,
+      secondConfirmation: payload.secondConfirmation,
     });
 
     res.status(200).json(result);

@@ -31,7 +31,12 @@ import {
   RecipeItem,
 } from './types';
 import { DEFAULT_APP_STATE, loadAppState, type AppState } from './data/appStorage';
-import { hasAdminAuthToken, persistAdminAuthToken, readAdminAuthToken } from './data/adminAuthToken';
+import {
+  clearAdminAuthToken,
+  hasAdminAuthToken,
+  persistAdminAuthToken,
+  readAdminAuthToken,
+} from './data/adminAuthToken';
 import { getScopedAuthStorageKey } from './data/authScope';
 import {
   runStateCommand,
@@ -85,6 +90,17 @@ interface StockUpdateOptions {
 type AuthRole = 'ADMIN' | 'OPERATOR' | 'AUDITOR';
 interface AuthMePayload {
   role: AuthRole;
+  billingBlocked: boolean;
+  billingBlockedMessage?: string | null;
+  billingBlockedUntil?: string | null;
+  billingBlockedDaysRemaining?: number | null;
+}
+
+interface BillingBlockState {
+  isBlocked: boolean;
+  message: string;
+  blockedUntil: string | null;
+  daysRemaining: number | null;
 }
 
 const DEFAULT_API_BASE_URL = 'https://xburger-saas-backend.onrender.com';
@@ -397,6 +413,26 @@ const getStateSyncErrorMessage = (error: unknown): string => {
   return 'Falha ao sincronizar com o servidor. Tente novamente.';
 };
 
+const DEFAULT_BILLING_BLOCK_NOTICE =
+  'Seu acesso foi bloqueado temporariamente. Regularize com o financeiro para liberar o sistema.';
+
+const normalizeBillingBlockPayload = (payload: AuthMePayload): BillingBlockState => ({
+  isBlocked: payload.billingBlocked === true,
+  message: payload.billingBlockedMessage?.trim() || DEFAULT_BILLING_BLOCK_NOTICE,
+  blockedUntil: payload.billingBlockedUntil ?? null,
+  daysRemaining:
+    typeof payload.billingBlockedDaysRemaining === 'number' && Number.isFinite(payload.billingBlockedDaysRemaining)
+      ? Math.max(0, Math.floor(payload.billingBlockedDaysRemaining))
+      : null,
+});
+
+const formatBillingBlockUntil = (value: string | null): string | null => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return null;
+  return parsed.toLocaleString('pt-BR');
+};
+
 const isRetryableSyncError = (error: unknown): boolean => {
   if (error instanceof StateCommandSyncError) {
     return error.retryable;
@@ -543,6 +579,12 @@ const App: React.FC = () => {
   const [view, setView] = useState<ViewMode>(ViewMode.POS);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [authRole, setAuthRole] = useState<AuthRole | null>(null);
+  const [billingBlockState, setBillingBlockState] = useState<BillingBlockState>({
+    isBlocked: false,
+    message: DEFAULT_BILLING_BLOCK_NOTICE,
+    blockedUntil: null,
+    daysRemaining: null,
+  });
   const [activeCategory, setActiveCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [isAccessVerified, setIsAccessVerified] = useState(false);
@@ -677,48 +719,77 @@ const App: React.FC = () => {
     setIsAccessVerified(true);
   }, []);
 
-  useEffect(() => {
-    if (!isAccessVerified) return;
+  const resetBillingBlockState = useCallback(() => {
+    setBillingBlockState({
+      isBlocked: false,
+      message: DEFAULT_BILLING_BLOCK_NOTICE,
+      blockedUntil: null,
+      daysRemaining: null,
+    });
+  }, []);
 
+  const refreshAuthProfile = useCallback(async () => {
     const token = readAdminAuthToken();
     if (!token) {
       setAuthRole(null);
       setIsAdminAuthenticated(false);
+      resetBillingBlockState();
       return;
     }
 
+    const response = await fetch(`${resolveApiBaseUrl()}/api/v1/auth/me`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Falha ao validar usuário autenticado.');
+    }
+
+    const payload = (await response.json()) as AuthMePayload;
+    setAuthRole(payload.role);
+    setBillingBlockState(normalizeBillingBlockPayload(payload));
+  }, [resetBillingBlockState]);
+
+  useEffect(() => {
+    if (!isAccessVerified) return;
     let cancelled = false;
     void (async () => {
       try {
-        const response = await fetch(`${resolveApiBaseUrl()}/api/v1/auth/me`, {
-          method: 'GET',
-          headers: {
-            Accept: 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error('Falha ao validar usuário autenticado.');
-        }
-
-        const payload = (await response.json()) as AuthMePayload;
-        if (cancelled) return;
-        setAuthRole(payload.role);
+        await refreshAuthProfile();
       } catch {
         if (cancelled) return;
         setAuthRole(null);
         setIsAdminAuthenticated(false);
+        resetBillingBlockState();
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [isAccessVerified]);
+  }, [isAccessVerified, refreshAuthProfile, resetBillingBlockState]);
 
   useEffect(() => {
     if (!isAccessVerified) return;
+    const intervalId = window.setInterval(() => {
+      void refreshAuthProfile().catch(() => undefined);
+    }, 30000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isAccessVerified, refreshAuthProfile]);
+
+  useEffect(() => {
+    if (!isAccessVerified) return;
+    if (billingBlockState.isBlocked) {
+      setIsAdminAuthenticated(false);
+      return;
+    }
     const session = loadAdminSessionBarrier();
     if (!session) return;
     setIsAdminAuthenticated(true);
@@ -726,10 +797,17 @@ const App: React.FC = () => {
       ...session,
       lastHeartbeatAt: Date.now(),
     });
-  }, [isAccessVerified]);
+  }, [billingBlockState.isBlocked, isAccessVerified]);
 
   useEffect(() => {
     if (!isAccessVerified) return;
+    if (billingBlockState.isBlocked) {
+      setIsAdminAuthenticated(false);
+      if (view !== ViewMode.POS) {
+        setView(ViewMode.POS);
+      }
+      return;
+    }
 
     if (authRole === null) {
       hasAppliedRoleLandingRef.current = false;
@@ -757,7 +835,7 @@ const App: React.FC = () => {
         message: 'Acesso restrito: somente ADMGERENTE pode abrir Administração.',
       });
     }
-  }, [authRole, isAccessVerified, setNotification, view]);
+  }, [authRole, billingBlockState.isBlocked, isAccessVerified, setNotification, view]);
 
   useEffect(() => {
     if (!isAccessVerified) return;
@@ -803,6 +881,15 @@ const App: React.FC = () => {
     };
   }, [isAccessVerified, isAdminAuthenticated]);
 
+  useEffect(() => {
+    if (!billingBlockState.isBlocked) return;
+    setIsCartOpen(false);
+    setIsPaymentOpen(false);
+    setIsUndoHistoryOpen(false);
+    setIsAppOriginModalOpen(false);
+    resetSplitState('PIX');
+  }, [billingBlockState.isBlocked, resetSplitState]);
+
   const applyCashHistorySnapshot = useCallback(
     (state: AppState) => {
       if (isCashHistoryLegacyModeRef.current) {
@@ -827,6 +914,10 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!isAccessVerified) return;
+    if (billingBlockState.isBlocked) {
+      setIsStateHydrating(false);
+      return;
+    }
 
     let cancelled = false;
     setIsStateHydrating(true);
@@ -856,12 +947,13 @@ const App: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [applyCashHistorySnapshot, isAccessVerified]);
+  }, [applyCashHistorySnapshot, billingBlockState.isBlocked, isAccessVerified]);
 
   useEffect(() => {
     if (!isAccessVerified) return;
+    if (billingBlockState.isBlocked) return;
     void warmupStateWriteContext();
-  }, [isAccessVerified]);
+  }, [billingBlockState.isBlocked, isAccessVerified]);
 
   const showNotification = useCallback((message: string) => {
     setNotification({ isVisible: true, message });
@@ -991,6 +1083,9 @@ const App: React.FC = () => {
       }
 
       const message = getStateSyncErrorMessage(result.error);
+      if (result.error instanceof StateCommandSyncError && result.error.statusCode === 402) {
+        void refreshAuthProfile().catch(() => undefined);
+      }
       const shouldQueueOfflineSale =
         !options.skipOfflineQueue &&
         isSaleRegisterCommand(normalizedCommand) &&
@@ -1007,7 +1102,7 @@ const App: React.FC = () => {
       showNotification(message);
       return false;
     },
-    [executeSyncedCommand, queueOfflineSale]
+    [executeSyncedCommand, queueOfflineSale, refreshAuthProfile]
   );
 
   const flushOfflineSalesQueue = useCallback(async (): Promise<void> => {
@@ -1061,13 +1156,14 @@ const App: React.FC = () => {
   }, [executeSyncedCommand, hydrateOfflineSalesQueue, isStateHydrating, products, replaceOfflineSalesQueue]);
 
   useEffect(() => {
-    if (!isAccessVerified || isStateHydrating) return;
+    if (!isAccessVerified || isStateHydrating || billingBlockState.isBlocked) return;
     if (offlineSalesQueueRef.current.length === 0) return;
     void flushOfflineSalesQueue();
-  }, [isAccessVerified, isStateHydrating, pendingOfflineSales, flushOfflineSalesQueue]);
+  }, [billingBlockState.isBlocked, isAccessVerified, isStateHydrating, pendingOfflineSales, flushOfflineSalesQueue]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    if (billingBlockState.isBlocked) return;
 
     const handleOnline = () => {
       void flushOfflineSalesQueue();
@@ -1083,7 +1179,7 @@ const App: React.FC = () => {
       window.removeEventListener('online', handleOnline);
       window.clearInterval(intervalId);
     };
-  }, [flushOfflineSalesQueue]);
+  }, [billingBlockState.isBlocked, flushOfflineSalesQueue]);
 
   const totalPendingOps = pendingStateOps + pendingOfflineSales;
   const isSyncIndicatorVisible = isStateHydrating || totalPendingOps > 0;
@@ -2612,6 +2708,18 @@ const App: React.FC = () => {
     'Combo': 'Combos',
   };
 
+  const blockedUntilLabel = formatBillingBlockUntil(billingBlockState.blockedUntil);
+
+  const handleBlockedLogout = () => {
+    clearAdminAuthToken();
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.removeItem(ADMIN_GATE_KEY);
+    window.localStorage.removeItem(ADMIN_GATE_KEY);
+    window.sessionStorage.removeItem(ADMIN_SESSION_BACKUP_KEY);
+    window.localStorage.removeItem(ADMIN_SESSION_KEY);
+    window.location.replace(resolveSiteRootUrl());
+  };
+
   if (!isAccessVerified) {
     return (
       <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center p-6">
@@ -2628,6 +2736,48 @@ const App: React.FC = () => {
         message={syncIndicatorMessage}
         pendingCount={Math.max(1, totalPendingOps)}
       />
+      {billingBlockState.isBlocked && (
+        <div className="fixed inset-0 z-[500] bg-white/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl rounded-[36px] border border-slate-200 bg-white/90 shadow-2xl p-6 sm:p-8">
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-red-600">
+              Acesso Bloqueado
+            </p>
+            <h2 className="mt-2 text-2xl sm:text-3xl font-black text-slate-900">
+              Seu acesso ao sistema está temporariamente bloqueado.
+            </h2>
+            <p className="mt-4 text-slate-700 leading-relaxed">
+              {billingBlockState.message}
+            </p>
+            {blockedUntilLabel && (
+              <p className="mt-3 text-sm font-semibold text-slate-600">
+                Bloqueio até: {blockedUntilLabel}
+              </p>
+            )}
+            {typeof billingBlockState.daysRemaining === 'number' && billingBlockState.daysRemaining > 0 && (
+              <p className="mt-1 text-sm text-slate-500">
+                Dias restantes do bloqueio: {billingBlockState.daysRemaining}
+              </p>
+            )}
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={handleBlockedLogout}
+                className="px-5 py-3 rounded-2xl bg-red-600 text-white font-black text-sm uppercase tracking-wider hover:bg-red-700 transition-colors"
+              >
+                Sair do Sistema
+              </button>
+              <button
+                type="button"
+                onClick={() => void refreshAuthProfile().catch(() => undefined)}
+                className="px-5 py-3 rounded-2xl border border-slate-300 text-slate-700 font-black text-sm uppercase tracking-wider hover:bg-slate-100 transition-colors"
+              >
+                Atualizar Status
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       
       <main className="qb-main flex-1 pb-20">
         {view === ViewMode.POS && (
