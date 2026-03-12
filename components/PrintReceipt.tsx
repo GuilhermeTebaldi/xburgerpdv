@@ -53,7 +53,7 @@ interface ReceiptViewModel {
 const DEFAULT_RESTAURANT_NAME = 'XBURGER PDV';
 const DEFAULT_RECEIPT_PAPER_WIDTH_MM = 58;
 const MIN_RECEIPT_PAPER_WIDTH_MM = 48;
-const MAX_RECEIPT_PAPER_WIDTH_MM = 80;
+const MAX_RECEIPT_PAPER_WIDTH_MM = 210;
 
 const moneyFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',

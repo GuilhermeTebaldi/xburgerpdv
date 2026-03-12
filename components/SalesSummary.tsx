@@ -3,6 +3,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { DailySalesHistoryEntry, Ingredient, Sale, SaleOrigin, StockEntry } from '../types';
 import { getScopedAuthStorageKey } from '../data/authScope';
+import {
+  PRINT_PRESET_OPTIONS_ALL,
+  resolvePaperWidthMmForPreset,
+  type PrintPresetId,
+} from '../data/printPreferences';
 import { APP_ORIGINS, AppOrigin, buildAppChannelSummary } from '../utils/appChannelSummary';
 import { formatStockQuantityByUnit, getRecipeQuantityUnitLabel } from '../utils/recipe';
 
@@ -13,6 +18,12 @@ interface SalesSummaryProps {
   stockEntries: StockEntry[];
   cashRegisterAmount: number;
   dailySalesHistory: DailySalesHistoryEntry[];
+  historyClosingPrintPreset: PrintPresetId;
+  cashReportPrintPreset: PrintPresetId;
+  isSavingHistoryClosingPrintPreset?: boolean;
+  isSavingCashReportPrintPreset?: boolean;
+  onChangeHistoryClosingPrintPreset?: (preset: PrintPresetId) => void;
+  onChangeCashReportPrintPreset?: (preset: PrintPresetId) => void;
   onSetCashRegister?: (amount: number) => Promise<boolean> | boolean;
   onCloseDay?: () => Promise<boolean> | boolean;
   onRegisterCashPurchase?: (
@@ -59,6 +70,9 @@ const APP_ORIGIN_STYLE: Record<AppOrigin, { card: string }> = {
     card: 'bg-emerald-600 text-white',
   },
 };
+
+const getPrintPresetLabel = (preset: PrintPresetId): string =>
+  PRINT_PRESET_OPTIONS_ALL.find((option) => option.id === preset)?.label || 'Padrao';
 
 const getSaleOriginLabel = (origin: SaleOrigin | null | undefined): string => {
   if (origin === 'IFOOD') return 'iFood';
@@ -150,21 +164,6 @@ const escapeHtml = (value: string): string =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-const DEFAULT_REPORT_PAPER_WIDTH_MM = 58;
-const MIN_REPORT_PAPER_WIDTH_MM = 48;
-const MAX_REPORT_PAPER_WIDTH_MM = 80;
-
-const clampReportPaperWidthMm = (value: number): number =>
-  Math.min(MAX_REPORT_PAPER_WIDTH_MM, Math.max(MIN_REPORT_PAPER_WIDTH_MM, Math.round(value)));
-
-const getReportPaperWidthMm = (): number => {
-  if (typeof window === 'undefined') return DEFAULT_REPORT_PAPER_WIDTH_MM;
-  const raw = window.localStorage.getItem('xburger_receipt_paper_width_mm');
-  const parsed = raw ? Number(raw) : NaN;
-  if (!Number.isFinite(parsed)) return DEFAULT_REPORT_PAPER_WIDTH_MM;
-  return clampReportPaperWidthMm(parsed);
-};
-
 const formatPrintCurrency = (value: number): string =>
   `R$ ${(Number.isFinite(value) ? value : 0).toFixed(2).replace('.', ',')}`;
 
@@ -220,6 +219,12 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
   stockEntries,
   cashRegisterAmount,
   dailySalesHistory,
+  historyClosingPrintPreset,
+  cashReportPrintPreset,
+  isSavingHistoryClosingPrintPreset = false,
+  isSavingCashReportPrintPreset = false,
+  onChangeHistoryClosingPrintPreset,
+  onChangeCashReportPrintPreset,
   onSetCashRegister,
   onCloseDay,
   onRegisterCashPurchase,
@@ -455,7 +460,8 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
     (
       report: DailySalesHistoryEntry,
       reportSales: Sale[] = [],
-      existingWindow?: Window | null
+      existingWindow?: Window | null,
+      paperPreset: PrintPresetId = 'PADRAO'
     ) => {
       const printWindow =
         existingWindow && !existingWindow.closed
@@ -463,7 +469,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
           : window.open('', '_blank', 'width=420,height=980');
       if (!printWindow) return false;
 
-      const paperWidthMm = getReportPaperWidthMm();
+      const paperWidthMm = resolvePaperWidthMmForPreset(paperPreset);
       const closedAt = toDate(report.closedAt);
       const cashExpenses = roundMoney(Math.max(0, Number(report.cashExpenses) || 0));
       const estimatedCash = roundMoney(
@@ -765,7 +771,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
         return;
       }
       setSelectedSaleId(null);
-      printReport(reportSnapshot, salesSnapshot, deferredPrintWindow);
+      printReport(reportSnapshot, salesSnapshot, deferredPrintWindow, cashReportPrintPreset);
     } finally {
       setIsClosing(false);
     }
@@ -875,20 +881,57 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
             className="fixed inset-0 z-[240] bg-transparent"
           />
           <aside className="fixed inset-y-0 right-0 z-[250] w-full sm:max-w-[500px] h-screen max-h-screen overflow-hidden bg-white border-l-2 border-slate-200 shadow-2xl p-5 sm:p-6 flex flex-col min-h-0">
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h3 className="text-lg font-black uppercase tracking-tight text-slate-800">Histórico de Fechamentos</h3>
                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
                   {orderedHistory.length} registro(s)
                 </p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mt-1">
+                  Modelo: {getPrintPresetLabel(historyClosingPrintPreset)}
+                </p>
               </div>
-              <button
-                onClick={() => setHistoryVisible(false)}
-                className="qb-btn-touch bg-slate-100 text-slate-700 p-2 rounded-xl hover:bg-slate-200 transition-colors"
-                title="Fechar histórico"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
-              </button>
+              <div className="flex items-center justify-end gap-2">
+                <div className="flex items-center gap-2 bg-slate-100 border border-slate-200 rounded-xl px-2 py-1.5">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-slate-500 shrink-0"
+                  >
+                    <path d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7Z" />
+                    <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h.01a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1Z" />
+                  </svg>
+                  <select
+                    value={historyClosingPrintPreset}
+                    onChange={(event) => {
+                      onChangeHistoryClosingPrintPreset?.(event.target.value as PrintPresetId);
+                    }}
+                    disabled={isSavingHistoryClosingPrintPreset}
+                    className="bg-transparent border-none text-[10px] font-black uppercase tracking-widest text-slate-700 pr-5 focus:outline-none"
+                    title="Modelo de impressão do histórico"
+                  >
+                    {PRINT_PRESET_OPTIONS_ALL.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  onClick={() => setHistoryVisible(false)}
+                  className="qb-btn-touch bg-slate-100 text-slate-700 p-2 rounded-xl hover:bg-slate-200 transition-colors"
+                  title="Fechar histórico"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+                </button>
+              </div>
             </div>
             <div className="mt-5 flex-1 min-h-0 overflow-y-auto overscroll-contain pr-1 scrollbar-hide space-y-3">
               {orderedHistory.length === 0 ? (
@@ -929,7 +972,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
                       </div>
                       <button
                         onClick={() => {
-                          printReport(entry, historySales);
+                          printReport(entry, historySales, undefined, historyClosingPrintPreset);
                         }}
                         className="qb-btn-touch bg-slate-900 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-colors w-full sm:w-auto sm:self-end"
                       >
@@ -975,8 +1018,45 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
                 Esse valor será usado no relatório ao fechar o dia.
               </p>
             </div>
-            <div className="bg-slate-900 text-white rounded-2xl p-4 space-y-2">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-300">Prévia do dia</p>
+            <div className="bg-slate-900 text-white rounded-2xl p-4 space-y-3">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-300">Prévia do dia</p>
+                <div className="flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-xl px-2 py-1.5">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-slate-300 shrink-0"
+                  >
+                    <path d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7Z" />
+                    <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h.01a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1Z" />
+                  </svg>
+                  <select
+                    value={cashReportPrintPreset}
+                    onChange={(event) => {
+                      onChangeCashReportPrintPreset?.(event.target.value as PrintPresetId);
+                    }}
+                    disabled={isSavingCashReportPrintPreset}
+                    className="bg-transparent border-none text-[10px] font-black uppercase tracking-widest text-slate-100 pr-5 focus:outline-none"
+                    title="Modelo de impressão da aba caixa"
+                  >
+                    {PRINT_PRESET_OPTIONS_ALL.map((option) => (
+                      <option key={option.id} value={option.id} className="text-slate-900 bg-white">
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                Modelo: {getPrintPresetLabel(cashReportPrintPreset)}
+              </p>
               <p className="text-sm font-black">Faturamento: {formatCurrency(totalRevenue)}</p>
               <p className="text-sm font-black">Compras: {formatCurrency(totalCost)}</p>
               <p className="text-sm font-black">Lucro: {formatCurrency(totalProfit)}</p>
@@ -988,7 +1068,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
               </p>
               <button
                 onClick={() => {
-                  printReport(currentDayReport, sales);
+                  printReport(currentDayReport, sales, undefined, cashReportPrintPreset);
                 }}
                 className="qb-btn-touch mt-3 bg-white text-slate-900 px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest"
               >

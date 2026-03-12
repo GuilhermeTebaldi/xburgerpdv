@@ -109,10 +109,24 @@ model User {
   auditLogsAuthored   AuditLog[]         @relation("AuditAuthor")
   appStateSnapshots   AppState[]         @relation("AppStateOwner")
   appStateBackups     AppStateBackup[]   @relation("AppStateBackupOwner")
+  printPreferences    UserPrintPreference?
 
   @@index([stateOwnerUserId])
   @@index([companyName])
   @@map("users")
+}
+
+model UserPrintPreference {
+  userId               String   @id @map("user_id") @db.Uuid
+  historyClosingPreset String?  @map("history_closing_preset") @db.VarChar(20)
+  cashReportPreset     String?  @map("cash_report_preset") @db.VarChar(20)
+  receiptHistoryPreset String?  @map("receipt_history_preset") @db.VarChar(20)
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@map("user_print_preferences")
 }
 
 model Ingredient {

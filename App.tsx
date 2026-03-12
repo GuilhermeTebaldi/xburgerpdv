@@ -44,6 +44,21 @@ import {
   warmupStateWriteContext,
   type StateCommand,
 } from './data/stateCommandClient';
+import {
+  buildLocalMigrationPatch,
+  DEFAULT_PRINT_PREFERENCES,
+  hasPrintPreferencesPatch,
+  PRINT_PRESET_OPTIONS_ALL,
+  readLocalPrintPreferences,
+  resolvePaperWidthMmForPreset,
+  resolvePrintPreferences,
+  syncLegacyReceiptPaperWidthFromPreset,
+  writeLocalPrintPreferences,
+  type PrintPreferenceField,
+  type PrintPresetId,
+  type ResolvedPrintPreferences,
+} from './data/printPreferences';
+import { fetchPrintPreferences, updatePrintPreferences } from './data/printPreferencesClient';
 
 const ADMIN_GATE_KEY = 'xburger_admin_gate';
 const ADMIN_SESSION_KEY = 'xburger_admin_session';
@@ -625,6 +640,12 @@ const App: React.FC = () => {
   const [dailySalesHistory, setDailySalesHistory] = useState<DailySalesHistoryEntry[]>(
     DEFAULT_APP_STATE.dailySalesHistory
   );
+  const [printPreferences, setPrintPreferences] = useState<ResolvedPrintPreferences>(
+    DEFAULT_PRINT_PREFERENCES
+  );
+  const [savingPrintPreferenceField, setSavingPrintPreferenceField] = useState<PrintPreferenceField | null>(
+    null
+  );
   
   const [isAddProductModalOpen, setIsAddProductModalOpen] = useState(false);
   const [isAddIngredientModalOpen, setIsAddIngredientModalOpen] = useState(false);
@@ -727,6 +748,81 @@ const App: React.FC = () => {
       daysRemaining: null,
     });
   }, []);
+
+  const applyPrintPreferences = useCallback((preferences: ResolvedPrintPreferences) => {
+    setPrintPreferences(preferences);
+    writeLocalPrintPreferences(preferences);
+    syncLegacyReceiptPaperWidthFromPreset(preferences.receiptHistoryPreset);
+  }, []);
+
+  const savePrintPreference = useCallback(
+    async (field: PrintPreferenceField, preset: PrintPresetId) => {
+      const previous = printPreferences;
+      const optimistic: ResolvedPrintPreferences = {
+        ...previous,
+        [field]: preset,
+      };
+
+      applyPrintPreferences(optimistic);
+      setSavingPrintPreferenceField(field);
+
+      try {
+        const remote = await updatePrintPreferences({ [field]: preset });
+        const resolved = resolvePrintPreferences(remote, readLocalPrintPreferences());
+        applyPrintPreferences(resolved);
+      } catch (error) {
+        applyPrintPreferences(previous);
+        setNotification({
+          isVisible: true,
+          message:
+            error instanceof Error && error.message.trim()
+              ? error.message
+              : 'Falha ao salvar padrão de impressão.',
+        });
+      } finally {
+        setSavingPrintPreferenceField((current) => (current === field ? null : current));
+      }
+    },
+    [applyPrintPreferences, printPreferences, setNotification]
+  );
+
+  useEffect(() => {
+    if (!isAccessVerified) return;
+    if (!hasAdminAuthToken()) {
+      setPrintPreferences(DEFAULT_PRINT_PREFERENCES);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const local = readLocalPrintPreferences();
+      let remote = null;
+      try {
+        remote = await fetchPrintPreferences();
+      } catch {
+        remote = null;
+      }
+
+      if (cancelled) return;
+      const resolved = resolvePrintPreferences(remote, local);
+      applyPrintPreferences(resolved);
+
+      const migrationPatch = buildLocalMigrationPatch(remote, local);
+      if (remote && hasPrintPreferencesPatch(migrationPatch)) {
+        void updatePrintPreferences(migrationPatch)
+          .then((updatedRemote) => {
+            if (cancelled) return;
+            const updated = resolvePrintPreferences(updatedRemote, local);
+            applyPrintPreferences(updated);
+          })
+          .catch(() => undefined);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyPrintPreferences, isAccessVerified]);
 
   const refreshAuthProfile = useCallback(async () => {
     const token = readAdminAuthToken();
@@ -2708,6 +2804,17 @@ const App: React.FC = () => {
     'Combo': 'Combos',
   };
 
+  const printPresetLabelById = useMemo(() => {
+    const map = new Map<PrintPresetId, string>();
+    PRINT_PRESET_OPTIONS_ALL.forEach((option) => {
+      map.set(option.id, option.label);
+    });
+    return map;
+  }, []);
+  const receiptHistoryPresetLabel =
+    printPresetLabelById.get(printPreferences.receiptHistoryPreset) || 'Padrao';
+  const receiptHistoryPaperWidthMm = resolvePaperWidthMmForPreset(printPreferences.receiptHistoryPreset);
+
   const blockedUntilLabel = formatBillingBlockUntil(billingBlockState.blockedUntil);
 
   const handleBlockedLogout = () => {
@@ -2924,6 +3031,16 @@ const App: React.FC = () => {
             stockEntries={stockEntries}
             cashRegisterAmount={cashRegisterAmount}
             dailySalesHistory={dailySalesHistory}
+            historyClosingPrintPreset={printPreferences.historyClosingPreset}
+            cashReportPrintPreset={printPreferences.cashReportPreset}
+            isSavingHistoryClosingPrintPreset={savingPrintPreferenceField === 'historyClosingPreset'}
+            isSavingCashReportPrintPreset={savingPrintPreferenceField === 'cashReportPreset'}
+            onChangeHistoryClosingPrintPreset={(preset) => {
+              void savePrintPreference('historyClosingPreset', preset);
+            }}
+            onChangeCashReportPrintPreset={(preset) => {
+              void savePrintPreference('cashReportPreset', preset);
+            }}
             onSetCashRegister={handleSetCashRegister}
             onCloseDay={handleCloseDay}
             onRegisterCashPurchase={handleRegisterCashPurchase}
@@ -3730,7 +3847,7 @@ const App: React.FC = () => {
       {isUndoHistoryOpen && (
         <div className="fixed inset-0 z-[220] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-3xl bg-white rounded-[36px] border-2 border-slate-100 shadow-2xl overflow-hidden">
-            <div className="p-5 bg-slate-900 text-white flex items-center justify-between">
+            <div className="p-5 bg-slate-900 text-white flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h3 className="text-xl font-black uppercase tracking-tight">
                   {`Histórico de Vendas ${new Date().toLocaleDateString('pt-BR')}`}
@@ -3738,14 +3855,52 @@ const App: React.FC = () => {
                 <p className="text-[10px] uppercase tracking-widest text-slate-300">
                   Apenas vendas do dia atual (até Fechar Dia / Reiniciar)
                 </p>
+                <p className="text-[10px] uppercase tracking-widest text-slate-400 mt-1">
+                  Cupom: {receiptHistoryPresetLabel}
+                  {printPreferences.receiptHistoryPreset !== 'PADRAO' && ` (${receiptHistoryPaperWidthMm} mm)`}
+                </p>
               </div>
-              <button
-                onClick={() => setIsUndoHistoryOpen(false)}
-                className="qb-btn-touch bg-slate-800 hover:bg-slate-700 p-2 rounded-full transition-colors"
-                title="Fechar"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-              </button>
+              <div className="flex items-center justify-end gap-2">
+                <div className="flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-xl px-2 py-2">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="text-slate-300 shrink-0"
+                  >
+                    <path d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7Z" />
+                    <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h.01a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1Z" />
+                  </svg>
+                  <select
+                    value={printPreferences.receiptHistoryPreset}
+                    onChange={(event) => {
+                      void savePrintPreference('receiptHistoryPreset', event.target.value as PrintPresetId);
+                    }}
+                    disabled={savingPrintPreferenceField === 'receiptHistoryPreset'}
+                    className="bg-transparent border-none text-[10px] font-black uppercase tracking-widest text-slate-100 pr-5 focus:outline-none"
+                    title="Modelo de impressão do cupom"
+                  >
+                    {PRINT_PRESET_OPTIONS_ALL.map((option) => (
+                      <option key={option.id} value={option.id} className="text-slate-900 bg-white">
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  onClick={() => setIsUndoHistoryOpen(false)}
+                  className="qb-btn-touch bg-slate-800 hover:bg-slate-700 p-2 rounded-full transition-colors"
+                  title="Fechar"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                </button>
+              </div>
             </div>
             <div className="p-4 max-h-[65vh] overflow-y-auto space-y-2 bg-slate-50">
               {recentUndoGroups.length === 0 && (
