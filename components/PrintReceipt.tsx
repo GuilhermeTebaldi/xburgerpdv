@@ -406,7 +406,7 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
       };
     }
 
-    loadAppState(DEFAULT_APP_STATE)
+    loadAppState(DEFAULT_APP_STATE, { preferLocalMirrorWhenNewer: false })
       .then((state) => {
         if (cancelled) return;
         const model = buildReceiptViewModel(state, receiptId);

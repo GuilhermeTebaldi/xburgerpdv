@@ -30,7 +30,13 @@ import {
   StockEntry,
   RecipeItem,
 } from './types';
-import { DEFAULT_APP_STATE, loadAppState, type AppState } from './data/appStorage';
+import {
+  DEFAULT_APP_STATE,
+  getRemoteStateVersion,
+  loadAppState,
+  readCachedRemoteStateVersion,
+  type AppState,
+} from './data/appStorage';
 import {
   clearAdminAuthToken,
   hasAdminAuthToken,
@@ -610,6 +616,8 @@ const App: React.FC = () => {
   const offlineSalesQueueRef = useRef<OfflineQueuedSale[]>([]);
   const isFlushingOfflineSalesRef = useRef(false);
   const isOfflineQueueHydratedRef = useRef(false);
+  const isRemoteStateSyncInFlightRef = useRef(false);
+  const lastRemoteStateVersionRef = useRef<string | null>(null);
   const activeDraftIdRef = useRef<string | null>(null);
   const saleDraftsRef = useRef<SaleDraft[]>(DEFAULT_APP_STATE.saleDrafts);
   const pendingDraftCreationRef = useRef<Promise<string | null> | null>(null);
@@ -1008,6 +1016,22 @@ const App: React.FC = () => {
     []
   );
 
+  const applyStateSnapshot = useCallback((state: AppState) => {
+    setIngredients(state.ingredients);
+    setProducts(state.products);
+    setSales(state.sales);
+    setStockEntries(state.stockEntries);
+    setCleaningMaterials(state.cleaningMaterials);
+    setCleaningStockEntries(state.cleaningStockEntries);
+    setGlobalSales(state.globalSales);
+    setGlobalCancelledSales(state.globalCancelledSales);
+    setGlobalStockEntries(state.globalStockEntries);
+    setGlobalCleaningStockEntries(state.globalCleaningStockEntries);
+    saleDraftsRef.current = state.saleDrafts;
+    setSaleDrafts(state.saleDrafts);
+    applyCashHistorySnapshot(state);
+  }, [applyCashHistorySnapshot]);
+
   useEffect(() => {
     if (!isAccessVerified) return;
     if (billingBlockState.isBlocked) {
@@ -1017,22 +1041,11 @@ const App: React.FC = () => {
 
     let cancelled = false;
     setIsStateHydrating(true);
-    loadAppState(DEFAULT_APP_STATE)
+    loadAppState(DEFAULT_APP_STATE, { preferLocalMirrorWhenNewer: false })
       .then((state) => {
         if (cancelled) return;
-        setIngredients(state.ingredients);
-        setProducts(state.products);
-        setSales(state.sales);
-        setStockEntries(state.stockEntries);
-        setCleaningMaterials(state.cleaningMaterials);
-        setCleaningStockEntries(state.cleaningStockEntries);
-        setGlobalSales(state.globalSales);
-        setGlobalCancelledSales(state.globalCancelledSales);
-        setGlobalStockEntries(state.globalStockEntries);
-        setGlobalCleaningStockEntries(state.globalCleaningStockEntries);
-        saleDraftsRef.current = state.saleDrafts;
-        setSaleDrafts(state.saleDrafts);
-        applyCashHistorySnapshot(state);
+        applyStateSnapshot(state);
+        lastRemoteStateVersionRef.current = readCachedRemoteStateVersion();
       })
       .catch(() => undefined)
       .finally(() => {
@@ -1043,7 +1056,7 @@ const App: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [applyCashHistorySnapshot, billingBlockState.isBlocked, isAccessVerified]);
+  }, [applyStateSnapshot, billingBlockState.isBlocked, isAccessVerified]);
 
   useEffect(() => {
     if (!isAccessVerified) return;
@@ -1113,21 +1126,66 @@ const App: React.FC = () => {
     hydrateOfflineSalesQueue();
   }, [hydrateOfflineSalesQueue]);
 
-  const applyStateSnapshot = useCallback((state: AppState) => {
-    setIngredients(state.ingredients);
-    setProducts(state.products);
-    setSales(state.sales);
-    setStockEntries(state.stockEntries);
-    setCleaningMaterials(state.cleaningMaterials);
-    setCleaningStockEntries(state.cleaningStockEntries);
-    setGlobalSales(state.globalSales);
-    setGlobalCancelledSales(state.globalCancelledSales);
-    setGlobalStockEntries(state.globalStockEntries);
-    setGlobalCleaningStockEntries(state.globalCleaningStockEntries);
-    saleDraftsRef.current = state.saleDrafts;
-    setSaleDrafts(state.saleDrafts);
-    applyCashHistorySnapshot(state);
-  }, [applyCashHistorySnapshot]);
+  const syncRemoteStateSnapshot = useCallback(async (): Promise<void> => {
+    if (!isAccessVerified) return;
+    if (billingBlockState.isBlocked) return;
+    if (isStateHydrating || pendingStateOps > 0 || pendingOfflineSales > 0) return;
+    if (!hasAdminAuthToken()) return;
+    if (isRemoteStateSyncInFlightRef.current) return;
+
+    isRemoteStateSyncInFlightRef.current = true;
+    try {
+      const remoteVersion = await getRemoteStateVersion();
+      if (!remoteVersion) return;
+      if (remoteVersion === lastRemoteStateVersionRef.current) return;
+
+      const remoteState = await loadAppState(DEFAULT_APP_STATE, {
+        preferLocalMirrorWhenNewer: false,
+      });
+      applyStateSnapshot(remoteState);
+      lastRemoteStateVersionRef.current = remoteVersion;
+    } catch {
+      // ignore background refresh failures
+    } finally {
+      isRemoteStateSyncInFlightRef.current = false;
+    }
+  }, [
+    applyStateSnapshot,
+    billingBlockState.isBlocked,
+    isAccessVerified,
+    isStateHydrating,
+    pendingOfflineSales,
+    pendingStateOps,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!isAccessVerified) return;
+    if (billingBlockState.isBlocked) return;
+
+    const syncNow = () => {
+      void syncRemoteStateSnapshot();
+    };
+
+    syncNow();
+    const intervalId = window.setInterval(syncNow, 15000);
+    const handleVisibility = () => {
+      if (!document.hidden) {
+        syncNow();
+      }
+    };
+
+    window.addEventListener('focus', syncNow);
+    window.addEventListener('pageshow', syncNow);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', syncNow);
+      window.removeEventListener('pageshow', syncNow);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [billingBlockState.isBlocked, isAccessVerified, syncRemoteStateSnapshot]);
 
   const executeSyncedCommand = useCallback(
     async (command: StateCommand): Promise<{ ok: true } | { ok: false; error: unknown }> => {

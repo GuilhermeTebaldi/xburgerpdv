@@ -32,6 +32,10 @@ interface LocalMirrorSnapshot {
   savedAtMs: number;
 }
 
+export interface LoadAppStateOptions {
+  preferLocalMirrorWhenNewer?: boolean;
+}
+
 const API_TIMEOUT_MS = 12000;
 const DEFAULT_API_BASE_URL = 'https://xburger-saas-backend.onrender.com';
 let hasRemoteHydratedState = false;
@@ -300,6 +304,51 @@ const syncStateMetaFromResponse = (response: Response): void => {
   }
 };
 
+export const readCachedRemoteStateVersion = (): string | null => {
+  ensureAuthScope();
+  return remoteStateVersion;
+};
+
+export const getRemoteStateVersion = async (): Promise<string | null> => {
+  ensureAuthScope();
+  const apiUrl = getStateApiUrl();
+  if (!apiUrl) return null;
+  const authorization = getAuthorizationHeader();
+  if (!authorization) return null;
+
+  try {
+    const headResponse = await fetchWithTimeout(apiUrl, {
+      method: 'HEAD',
+      headers: {
+        Authorization: authorization,
+      },
+    });
+
+    if (headResponse.ok) {
+      syncStateMetaFromResponse(headResponse);
+      return remoteStateVersion;
+    }
+
+    if (headResponse.status !== 404 && headResponse.status !== 405) {
+      return null;
+    }
+
+    const getResponse = await fetchWithTimeout(apiUrl, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: authorization,
+      },
+    });
+
+    if (!getResponse.ok) return null;
+    syncStateMetaFromResponse(getResponse);
+    return remoteStateVersion;
+  } catch {
+    return null;
+  }
+};
+
 const tryLoadRemoteState = async (defaults: AppState): Promise<AppState | null> => {
   const apiUrl = getStateApiUrl();
   if (!apiUrl) return null;
@@ -514,12 +563,16 @@ const clearLegacyStorage = () => {
   localStorage.removeItem(STORAGE_KEYS.metaVersion);
 };
 
-export const loadAppState = async (defaults: AppState = DEFAULT_APP_STATE): Promise<AppState> => {
+export const loadAppState = async (
+  defaults: AppState = DEFAULT_APP_STATE,
+  options: LoadAppStateOptions = {}
+): Promise<AppState> => {
   ensureAuthScope();
+  const preferLocalMirrorWhenNewer = options.preferLocalMirrorWhenNewer !== false;
   const remoteState = await tryLoadRemoteStateWithRetry(defaults);
   const localMirror = loadLocalMirrorState(defaults);
 
-  if (remoteState && localMirror) {
+  if (remoteState && localMirror && preferLocalMirrorWhenNewer) {
     const remoteVersionMs = remoteStateVersion ? Date.parse(remoteStateVersion) : Number.NaN;
     const shouldPreferLocal =
       Number.isFinite(localMirror.savedAtMs) &&
