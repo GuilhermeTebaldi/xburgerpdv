@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { DEFAULT_APP_STATE, loadAppState, type AppState } from '../data/appStorage';
 import { readActiveAuthSubject } from '../data/authScope';
+import { getReceiptPaperWidthMm } from '../utils/receiptPaper';
 import type {
   Sale,
   SaleBasePaymentMethod,
@@ -51,9 +52,6 @@ interface ReceiptViewModel {
 }
 
 const DEFAULT_RESTAURANT_NAME = 'XBURGER PDV';
-const DEFAULT_RECEIPT_PAPER_WIDTH_MM = 58;
-const MIN_RECEIPT_PAPER_WIDTH_MM = 48;
-const MAX_RECEIPT_PAPER_WIDTH_MM = 210;
 
 const moneyFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -90,18 +88,6 @@ const getRestaurantName = (): string => {
   if (typeof window === 'undefined') return DEFAULT_RESTAURANT_NAME;
   const local = normalizeText(window.localStorage.getItem('xburger_restaurant_name'));
   return local || DEFAULT_RESTAURANT_NAME;
-};
-
-const clampPaperWidthMm = (value: number): number =>
-  Math.min(MAX_RECEIPT_PAPER_WIDTH_MM, Math.max(MIN_RECEIPT_PAPER_WIDTH_MM, Math.round(value)));
-
-const getReceiptPaperWidthMm = (): number => {
-  if (typeof window === 'undefined') return DEFAULT_RECEIPT_PAPER_WIDTH_MM;
-
-  const raw = window.localStorage.getItem('xburger_receipt_paper_width_mm');
-  const parsed = raw ? Number(raw) : NaN;
-  if (!Number.isFinite(parsed)) return DEFAULT_RECEIPT_PAPER_WIDTH_MM;
-  return clampPaperWidthMm(parsed);
 };
 
 const toDate = (value: unknown): Date | null => {

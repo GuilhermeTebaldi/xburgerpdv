@@ -1,0 +1,17 @@
+const RECEIPT_PAPER_WIDTH_STORAGE_KEY = 'xburger_receipt_paper_width_mm';
+const DEFAULT_RECEIPT_PAPER_WIDTH_MM = 58;
+const MIN_RECEIPT_PAPER_WIDTH_MM = 48;
+const MAX_RECEIPT_PAPER_WIDTH_MM = 210;
+
+export const clampReceiptPaperWidthMm = (value: number): number =>
+  Math.min(MAX_RECEIPT_PAPER_WIDTH_MM, Math.max(MIN_RECEIPT_PAPER_WIDTH_MM, Math.round(value)));
+
+export const getReceiptPaperWidthMm = (): number => {
+  if (typeof window === 'undefined') return DEFAULT_RECEIPT_PAPER_WIDTH_MM;
+
+  const raw = window.localStorage.getItem(RECEIPT_PAPER_WIDTH_STORAGE_KEY);
+  const parsed = raw ? Number(raw) : NaN;
+  if (!Number.isFinite(parsed)) return DEFAULT_RECEIPT_PAPER_WIDTH_MM;
+
+  return clampReceiptPaperWidthMm(parsed);
+};

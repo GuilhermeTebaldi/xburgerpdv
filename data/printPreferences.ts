@@ -34,7 +34,7 @@ export const PRINT_PRESET_OPTIONS_ALL = PRINT_PRESET_OPTIONS;
 export const PRINT_PRESET_OPTIONS_NO_DEFAULT = PRINT_PRESET_OPTIONS.filter((option) => option.id !== 'PADRAO');
 
 export const DEFAULT_PRINT_PREFERENCES: ResolvedPrintPreferences = {
-  historyClosingPreset: 'PADRAO',
+  historyClosingPreset: '80x297',
   cashReportPreset: 'PADRAO',
   receiptHistoryPreset: 'PADRAO',
 };

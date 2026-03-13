@@ -9,7 +9,17 @@ import {
   type PrintPresetId,
 } from '../data/printPreferences';
 import { APP_ORIGINS, AppOrigin, buildAppChannelSummary } from '../utils/appChannelSummary';
+import { buildSalesReportPrintRoutePath } from '../utils/printRoutes';
 import { formatStockQuantityByUnit, getRecipeQuantityUnitLabel } from '../utils/recipe';
+import {
+  buildSalesReportPrintHash,
+  buildSalesReportPrintWindowName,
+  createSalesReportPrintPayloadId,
+  persistSalesReportPrintPayload,
+  removeSalesReportPrintPayload,
+  type SalesReportPrintMode,
+  type SalesReportPrintPayload,
+} from '../utils/salesReportPrintPayload';
 
 interface SalesSummaryProps {
   sales: Sale[];
@@ -156,24 +166,8 @@ const getHistoryEntryFingerprint = (entry: DailySalesHistoryEntry): string => {
   return `${closedAtIso}|${totalRevenue}|${totalPurchases}|${saleCount}|${cashExpenses}`;
 };
 
-const escapeHtml = (value: string): string =>
-  value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-
 const formatPrintCurrency = (value: number): string =>
   `R$ ${(Number.isFinite(value) ? value : 0).toFixed(2).replace('.', ',')}`;
-
-const renderPrintRows = (rows: { label: string; value: string }[]): string =>
-  rows
-    .map(
-      (row) =>
-        `<div class="receipt-row"><span class="receipt-label">${escapeHtml(row.label)}</span><span class="receipt-value">${escapeHtml(row.value)}</span></div>`
-    )
-    .join('');
 
 const summarizePaymentMethods = (
   reportSales: Sale[]
@@ -211,6 +205,15 @@ const summarizePaymentMethods = (
     unclassifiedValue: roundMoney(unclassifiedValue),
   };
 };
+
+const sumSalesRevenue = (reportSales: Sale[]): number =>
+  roundMoney(
+    reportSales.reduce((sum, sale) => {
+      const total = Number(sale.total);
+      if (!Number.isFinite(total) || total <= 0) return sum;
+      return sum + total;
+    }, 0)
+  );
 
 const SalesSummary: React.FC<SalesSummaryProps> = ({
   sales,
@@ -461,14 +464,11 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
       report: DailySalesHistoryEntry,
       reportSales: Sale[] = [],
       existingWindow?: Window | null,
-      paperPreset: PrintPresetId = 'PADRAO'
+      paperPreset: PrintPresetId = 'PADRAO',
+      mode: SalesReportPrintMode = 'FULL',
+      forcedPayloadId?: string
     ) => {
-      const printWindow =
-        existingWindow && !existingWindow.closed
-          ? existingWindow
-          : window.open('', '_blank', 'width=420,height=980');
-      if (!printWindow) return false;
-
+      const payloadId = forcedPayloadId?.trim() || createSalesReportPrintPayloadId();
       const paperWidthMm = resolvePaperWidthMmForPreset(paperPreset);
       const closedAt = toDate(report.closedAt);
       const cashExpenses = roundMoney(Math.max(0, Number(report.cashExpenses) || 0));
@@ -479,9 +479,11 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
         (a, b) => toDate(a.timestamp).getTime() - toDate(b.timestamp).getTime()
       );
       const hasDetailedSales = orderedSales.length > 0;
-      const paymentSummary = summarizePaymentMethods(orderedSales);
+      const localSales = orderedSales.filter((sale) => !isAppSaleOrigin(sale.saleOrigin));
+      const salesForPaymentSummary = mode === 'SUMMARY' ? localSales : orderedSales;
+      const paymentSummary = summarizePaymentMethods(salesForPaymentSummary);
       const appChannelSnapshot = buildAppChannelSummary(orderedSales);
-      const localRevenue = roundMoney(Math.max(0, report.totalRevenue - appChannelSnapshot.totalRevenue));
+      const localRevenue = sumSalesRevenue(localSales);
 
       const closedDate = closedAt.toLocaleDateString('pt-BR');
       const closedTime = closedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -489,7 +491,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
       const printedDate = printedAt.toLocaleDateString('pt-BR');
       const printedTime = printedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-      const summaryRowsHtml = renderPrintRows([
+      const summaryRows = [
         { label: 'Data do fechamento', value: `${closedDate} ${closedTime}` },
         { label: 'Caixa inicial', value: formatPrintCurrency(report.openingCash) },
         { label: 'Faturamento bruto', value: formatPrintCurrency(report.totalRevenue) },
@@ -498,7 +500,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
         { label: 'Lucro operacional', value: formatPrintCurrency(report.totalProfit) },
         { label: 'Caixa estimado', value: formatPrintCurrency(estimatedCash) },
         { label: 'Total de vendas', value: String(Math.max(0, Math.floor(Number(report.saleCount) || 0))) },
-      ]);
+      ];
 
       const paymentRows = paymentSummary.rows.map((row) => ({
         label: row.label,
@@ -511,152 +513,63 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
         });
       }
 
-      const paymentRowsHtml = hasDetailedSales
-        ? renderPrintRows(paymentRows)
-        : '<p class="receipt-note">Sem detalhamento por pagamento para este fechamento.</p>';
+      const channelRows = [
+        { label: 'Balcão', value: formatPrintCurrency(localRevenue) },
+        { label: 'iFood', value: formatPrintCurrency(appChannelSnapshot.byOrigin.IFOOD.revenue) },
+        { label: '99', value: formatPrintCurrency(appChannelSnapshot.byOrigin.APP99.revenue) },
+        { label: 'Keeta', value: formatPrintCurrency(appChannelSnapshot.byOrigin.KEETA.revenue) },
+      ];
 
-      const channelRowsHtml = hasDetailedSales
-        ? renderPrintRows([
-            { label: 'Balcão', value: formatPrintCurrency(localRevenue) },
-            { label: 'iFood', value: formatPrintCurrency(appChannelSnapshot.byOrigin.IFOOD.revenue) },
-            { label: '99', value: formatPrintCurrency(appChannelSnapshot.byOrigin.APP99.revenue) },
-            { label: 'Keeta', value: formatPrintCurrency(appChannelSnapshot.byOrigin.KEETA.revenue) },
-          ])
-        : '<p class="receipt-note">Sem detalhamento por canal para este fechamento.</p>';
+      const payload: SalesReportPrintPayload = {
+        id: payloadId,
+        mode,
+        paperWidthMm,
+        summaryRows,
+        paymentRows,
+        channelRows,
+        hasDetailedSales,
+        summarySectionTitle: 'RESUMO GERAL',
+        paymentSectionTitle:
+          mode === 'SUMMARY' ? 'VALORES INFORMADOS' : 'VALORES POR FORMA DE PAGAMENTO',
+        channelSectionTitle: 'CANAIS DE VENDA',
+        missingPaymentDetailsMessage: 'Sem detalhamento por pagamento para este fechamento.',
+        missingChannelDetailsMessage: 'Sem detalhamento por canal para este fechamento.',
+        missingDetailsMessage: 'Fechamento salvo sem itens detalhados de venda para impressão.',
+        printedAtLabel: `${printedDate} ${printedTime}`,
+      };
 
-      const html = `<!doctype html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8" />
-  <title>Fechamento de Caixa</title>
-  <style>
-    @page { size: ${paperWidthMm}mm auto; margin: 0; }
-    html, body {
-      margin: 0;
-      padding: 0;
-      background: #fff;
-      color: #000;
-      font-family: 'Courier New', Courier, monospace;
-    }
-    .receipt-shell {
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      background: #fff;
-    }
-    .receipt-paper {
-      width: ${paperWidthMm}mm;
-      max-width: ${paperWidthMm}mm;
-      padding: 3mm 2mm;
-      font-family: inherit;
-      font-size: 10px;
-      line-height: 1.28;
-      font-weight: 700;
-      letter-spacing: 0;
-    }
-    .receipt-center { text-align: center; }
-    .receipt-strong { font-weight: 900; }
-    .receipt-divider {
-      border-top: 2px dashed #000;
-      margin: 6px 0;
-    }
-    .receipt-section-title {
-      text-align: center;
-      text-transform: uppercase;
-      font-weight: 900;
-      letter-spacing: 0.4px;
-      margin: 4px 0;
-    }
-    .receipt-row {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: start;
-      column-gap: 6px;
-    }
-    .receipt-label {
-      min-width: 0;
-      word-break: break-word;
-    }
-    .receipt-value {
-      text-align: right;
-      white-space: nowrap;
-    }
-    .receipt-note {
-      margin-top: 2px;
-      font-size: 10px;
-      font-weight: 700;
-    }
-    @media print {
-      html, body {
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-      }
-      .receipt-shell { min-height: auto; }
-      .receipt-paper {
-        margin: 0;
-        padding: 2.5mm 2mm;
-        font-size: 10px;
-        line-height: 1.25;
-        font-weight: 700;
-      }
-      .receipt-paper * {
-        color: #000 !important;
-        text-shadow: none;
-        -webkit-text-stroke: 0;
-        text-rendering: optimizeLegibility;
-      }
-      .receipt-paper .receipt-strong {
-        font-weight: 900 !important;
-      }
-    }
-  </style>
-</head>
-<body>
-  <div class="receipt-shell">
-    <div class="receipt-paper">
-      <div class="receipt-center">
-        <div class="receipt-strong">VALORES DE FECHAMENTO</div>
-        <div class="receipt-strong">FECHAMENTO DE CAIXA</div>
-      </div>
+      persistSalesReportPrintPayload(payload);
 
-      <div class="receipt-divider"></div>
+      const hash = buildSalesReportPrintHash(payload);
+      const printRoute = `${buildSalesReportPrintRoutePath(payload.id)}${hash}`;
+      const windowNamePayload = buildSalesReportPrintWindowName(payload);
 
-      <div class="receipt-section-title">Resumo Geral</div>
-      ${summaryRowsHtml}
+      const assignWindowPayload = (targetWindow: Window): void => {
+        if (!windowNamePayload) return;
+        try {
+          targetWindow.name = windowNamePayload;
+        } catch {
+          // ignore assignment failures
+        }
+      };
 
-      <div class="receipt-divider"></div>
-
-      <div class="receipt-section-title">Valores por Forma de Pagamento</div>
-      ${paymentRowsHtml}
-
-      <div class="receipt-divider"></div>
-
-      <div class="receipt-section-title">Valores por Canal de Venda</div>
-      ${channelRowsHtml}
-
-      ${
-        hasDetailedSales
-          ? ''
-          : '<p class="receipt-note">Fechamento salvo sem itens detalhados de venda para impressão.</p>'
+      if (existingWindow && !existingWindow.closed) {
+        assignWindowPayload(existingWindow);
+        try {
+          existingWindow.location.replace(printRoute);
+          return true;
+        } catch {
+          // fallback to opening a new window below
+        }
       }
 
-      <div class="receipt-divider"></div>
+      const printWindow = window.open(printRoute, '_blank', 'width=420,height=980');
+      if (!printWindow) {
+        removeSalesReportPrintPayload(payload.id);
+        return false;
+      }
 
-      ${renderPrintRows([{ label: 'Impresso em', value: `${printedDate} ${printedTime}` }])}
-    </div>
-  </div>
-</body>
-</html>`;
-
-      printWindow.document.open();
-      printWindow.document.write(html);
-      printWindow.document.close();
-      window.setTimeout(() => {
-        if (printWindow.closed) return;
-        printWindow.focus();
-        printWindow.print();
-      }, 120);
+      assignWindowPayload(printWindow);
       return true;
     },
     []
@@ -759,7 +672,12 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
       closedAt: new Date(),
     };
     const salesSnapshot = [...sales];
-    const deferredPrintWindow = window.open('', '_blank', 'width=420,height=980');
+    const deferredPayloadId = createSalesReportPrintPayloadId();
+    const deferredPrintWindow = window.open(
+      buildSalesReportPrintRoutePath(deferredPayloadId),
+      '_blank',
+      'width=420,height=980'
+    );
 
     setIsClosing(true);
     try {
@@ -771,7 +689,14 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
         return;
       }
       setSelectedSaleId(null);
-      printReport(reportSnapshot, salesSnapshot, deferredPrintWindow, cashReportPrintPreset);
+      printReport(
+        reportSnapshot,
+        salesSnapshot,
+        deferredPrintWindow,
+        cashReportPrintPreset,
+        'FULL',
+        deferredPayloadId
+      );
     } finally {
       setIsClosing(false);
     }
@@ -972,7 +897,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
                       </div>
                       <button
                         onClick={() => {
-                          printReport(entry, historySales, undefined, historyClosingPrintPreset);
+                          printReport(entry, historySales, undefined, historyClosingPrintPreset, 'SUMMARY');
                         }}
                         className="qb-btn-touch bg-slate-900 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-colors w-full sm:w-auto sm:self-end"
                       >
@@ -1068,7 +993,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
               </p>
               <button
                 onClick={() => {
-                  printReport(currentDayReport, sales, undefined, cashReportPrintPreset);
+                  printReport(currentDayReport, sales, undefined, cashReportPrintPreset, 'FULL');
                 }}
                 className="qb-btn-touch mt-3 bg-white text-slate-900 px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest"
               >
