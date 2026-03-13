@@ -563,7 +563,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
         }
       }
 
-      const printWindow = window.open(printRoute, '_blank', 'width=420,height=980');
+      const printWindow = window.open(printRoute, '_blank');
       if (!printWindow) {
         removeSalesReportPrintPayload(payload.id);
         return false;
@@ -673,11 +673,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
     };
     const salesSnapshot = [...sales];
     const deferredPayloadId = createSalesReportPrintPayloadId();
-    const deferredPrintWindow = window.open(
-      buildSalesReportPrintRoutePath(deferredPayloadId),
-      '_blank',
-      'width=420,height=980'
-    );
+    const deferredPrintWindow = window.open(buildSalesReportPrintRoutePath(deferredPayloadId), '_blank');
 
     setIsClosing(true);
     try {
