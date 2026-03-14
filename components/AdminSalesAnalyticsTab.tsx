@@ -195,7 +195,7 @@ const AdminSalesAnalyticsTab: React.FC<AdminSalesAnalyticsTabProps> = ({ sales, 
 
   if (analytics.totals.sales === 0) {
     return (
-      <div className="qb-admin-panel qb-admin-analytics bg-gradient-to-br from-slate-100 via-white to-cyan-50 p-8 rounded-[40px] border-2 border-slate-200 min-h-[600px]">
+      <div className="qb-admin-panel qb-admin-analytics bg-gradient-to-br from-slate-100 via-white to-cyan-50 p-4 sm:p-8 rounded-[28px] sm:rounded-[40px] border-2 border-slate-200 min-h-[600px]">
         <div className="qb-admin-panel-head flex items-center gap-3 mb-8">
           <div className="bg-gradient-to-br from-emerald-500 to-cyan-600 p-3 rounded-2xl shadow-lg">
             <svg
@@ -212,7 +212,7 @@ const AdminSalesAnalyticsTab: React.FC<AdminSalesAnalyticsTabProps> = ({ sales, 
             </svg>
           </div>
           <div>
-            <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">
+            <h3 className="text-xl sm:text-2xl font-black text-slate-800 uppercase tracking-tighter">
               Inteligencia de Vendas
             </h3>
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
@@ -231,7 +231,7 @@ const AdminSalesAnalyticsTab: React.FC<AdminSalesAnalyticsTabProps> = ({ sales, 
   }
 
   return (
-    <div className="qb-admin-panel qb-admin-analytics bg-gradient-to-br from-slate-100 via-white to-cyan-50 p-6 md:p-8 rounded-[40px] border-2 border-slate-200 min-h-[600px] space-y-6">
+    <div className="qb-admin-panel qb-admin-analytics bg-gradient-to-br from-slate-100 via-white to-cyan-50 p-4 sm:p-8 rounded-[28px] sm:rounded-[40px] border-2 border-slate-200 min-h-[600px] space-y-6">
       <div className="qb-admin-panel-head flex items-center gap-3">
         <div className="bg-gradient-to-br from-emerald-500 to-cyan-600 p-3 rounded-2xl shadow-lg">
           <svg
@@ -248,7 +248,7 @@ const AdminSalesAnalyticsTab: React.FC<AdminSalesAnalyticsTabProps> = ({ sales, 
           </svg>
         </div>
         <div>
-          <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">
+          <h3 className="text-xl sm:text-2xl font-black text-slate-800 uppercase tracking-tighter">
             Inteligencia de Vendas
           </h3>
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">
@@ -527,7 +527,7 @@ const AdminSalesAnalyticsTab: React.FC<AdminSalesAnalyticsTabProps> = ({ sales, 
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
           {analytics.momentsOfDay.map((moment) => (
             <div key={moment.key} className="bg-white border border-slate-200 rounded-2xl p-3">
               <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">{moment.label}</p>
@@ -614,7 +614,7 @@ const AdminSalesAnalyticsTab: React.FC<AdminSalesAnalyticsTabProps> = ({ sales, 
                       {selectedProduct.sales} vendas | {formatCurrency(selectedProduct.revenue)}
                     </p>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
                       <p className="text-[10px] font-black uppercase tracking-wider text-blue-700">Melhor Dia</p>
                       <p className="text-xs font-black text-blue-900">{selectedProduct.bestWeekdayLabel}</p>
@@ -916,7 +916,7 @@ const AdminSalesAnalyticsTab: React.FC<AdminSalesAnalyticsTabProps> = ({ sales, 
             <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">
               Estabilidade de Vendas
             </p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="bg-white border border-slate-200 rounded-xl p-3">
                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Media diaria</p>
                 <p className="text-lg font-black text-slate-900">{analytics.intelligence.salesStability.dailyAverage.toFixed(1)}</p>
@@ -957,7 +957,7 @@ const AdminSalesAnalyticsTab: React.FC<AdminSalesAnalyticsTabProps> = ({ sales, 
                 {formatPercent(analytics.intelligence.weeklyTrend.changePercent)}
               </p>
             </div>
-            <div className="grid grid-cols-2 gap-3 mt-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
               <div className="bg-white border border-slate-200 rounded-xl p-3">
                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Semana atual</p>
                 <p className="text-sm font-black text-slate-900">

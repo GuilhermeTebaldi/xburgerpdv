@@ -892,3 +892,107 @@
     font-size: 0.75rem;
   }
 }
+
+/* Admin mobile hardening */
+@media (max-width: 1024px) {
+  .qb-admin-tabs {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    white-space: nowrap;
+    width: 100%;
+  }
+
+  .qb-admin-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .qb-admin-tabs .qb-btn-touch {
+    flex: 0 0 auto !important;
+    white-space: nowrap;
+  }
+
+  .qb-admin-panel,
+  .qb-admin-config,
+  .qb-admin-summary,
+  .qb-admin-cash {
+    border-radius: 1.5rem !important;
+    padding: 1rem !important;
+  }
+
+  .qb-admin-panel-head {
+    gap: 0.625rem;
+  }
+
+  .qb-admin-panel-head p {
+    font-size: 0.56rem;
+  }
+
+  .qb-admin-stat-card h4 {
+    font-size: 1.5rem;
+  }
+
+  .qb-admin-month-toggle,
+  .qb-admin-day-toggle {
+    gap: 0.5rem;
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+
+  .qb-admin-month-toggle span,
+  .qb-admin-day-toggle span {
+    font-size: 0.74rem;
+    line-height: 1.1rem;
+  }
+
+  .qb-archive-tile {
+    border-radius: 1.25rem !important;
+    padding: 1rem !important;
+  }
+
+  .qb-archive-tile > span:first-of-type {
+    font-size: 0.62rem;
+    line-height: 0.95rem;
+  }
+
+  .qb-admin-panel table,
+  .qb-cleaning-history-table table {
+    min-width: 560px !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .qb-admin-tabs {
+    margin-top: 0.5rem;
+    padding: 0.25rem;
+  }
+
+  .qb-admin-analytics .grid[class*='xl:grid-cols-2'],
+  .qb-admin-analytics .grid[class*='md:grid-cols-2'] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .qb-admin-analytics .h-\[330px\],
+  .qb-admin-analytics .h-\[280px\],
+  .qb-admin-analytics .h-\[260px\],
+  .qb-admin-analytics .h-\[250px\] {
+    height: 220px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .qb-admin-tabs .qb-btn-touch {
+    flex: 0 0 auto !important;
+    font-size: 0.56rem;
+    letter-spacing: 0.08em;
+    padding: 0.5rem 0.7rem;
+    width: auto !important;
+  }
+
+  .qb-admin-panel-head h3 {
+    font-size: 1.3rem !important;
+    line-height: 1.45rem !important;
+  }
+}

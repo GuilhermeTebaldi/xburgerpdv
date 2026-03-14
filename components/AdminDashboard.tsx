@@ -130,6 +130,60 @@ const formatCurrency = (value: number): string => CURRENCY_FORMATTER.format(Numb
 
 const roundMoney = (value: number): number => Number(value.toFixed(2));
 
+interface ConsolidatedArchiveFinance {
+  revenue: number;
+  cost: number;
+  profit: number;
+}
+
+const isAppOrigin = (origin: SaleOrigin | undefined): origin is 'IFOOD' | 'APP99' | 'KEETA' =>
+  origin === 'IFOOD' || origin === 'APP99' || origin === 'KEETA';
+
+const buildConsolidatedArchiveFinance = (entries: Sale[]): ConsolidatedArchiveFinance => {
+  const grouped = new Map<
+    string,
+    {
+      fallbackRevenue: number;
+      appRevenue: number | null;
+      cost: number;
+    }
+  >();
+
+  entries.forEach((sale) => {
+    const key = sale.saleDraftId ? `draft:${sale.saleDraftId}` : `sale:${sale.id}`;
+    const current = grouped.get(key) || {
+      fallbackRevenue: 0,
+      appRevenue: null,
+      cost: 0,
+    };
+
+    current.fallbackRevenue += Number(sale.total) || 0;
+    current.cost += Number(sale.totalCost) || 0;
+
+    const appTotal = Number(sale.appOrderTotal);
+    if (isAppOrigin(sale.saleOrigin) && Number.isFinite(appTotal) && appTotal > 0) {
+      current.appRevenue = appTotal;
+    }
+
+    grouped.set(key, current);
+  });
+
+  let revenue = 0;
+  let cost = 0;
+  grouped.forEach((group) => {
+    revenue += group.appRevenue ?? group.fallbackRevenue;
+    cost += group.cost;
+  });
+
+  const roundedRevenue = roundMoney(revenue);
+  const roundedCost = roundMoney(cost);
+  return {
+    revenue: roundedRevenue,
+    cost: roundedCost,
+    profit: roundMoney(roundedRevenue - roundedCost),
+  };
+};
+
 const pad2 = (value: number): string => value.toString().padStart(2, '0');
 
 const toDayKey = (value: Date | string): string => {
@@ -591,7 +645,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     <div className="qb-admin p-4 sm:p-6 max-w-6xl mx-auto space-y-6">
       <div className="qb-admin-header flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h2 className="text-4xl font-black text-slate-900 tracking-tighter uppercase leading-none">ADMINISTRAÇÃO</h2>
+          <h2 className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tighter uppercase leading-none">ADMINISTRAÇÃO</h2>
           <p className="text-slate-500 font-bold mt-1">Controle total e arquivos permanentes.</p>
         </div>
         
@@ -1107,7 +1161,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {activeTab === 'analytics' && <AdminSalesAnalyticsTab sales={sales} products={allProducts} />}
 
       {activeTab === 'estornos' && (
-        <div className="qb-admin-panel qb-admin-estornos bg-slate-100 p-8 rounded-[40px] border-2 border-slate-200 min-h-[600px]">
+        <div className="qb-admin-panel qb-admin-estornos bg-slate-100 p-4 sm:p-8 rounded-[28px] sm:rounded-[40px] border-2 border-slate-200 min-h-[600px]">
           <div className="qb-admin-panel-head flex items-center gap-3 mb-8">
              <div className="bg-orange-500 p-3 rounded-2xl shadow-lg">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
@@ -1165,7 +1219,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   {filteredMonths.map(month => (
                     <div key={month} className="bg-white rounded-[32px] overflow-hidden border border-slate-200 shadow-sm">
                       <button 
-                        className="qb-btn-touch w-full p-6 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                        className="qb-admin-month-toggle qb-btn-touch w-full p-6 flex items-center justify-between hover:bg-slate-50 transition-colors"
                         onClick={() => setExpandedMonths({...expandedMonths, [`estorno_${month}`]: !expandedMonths[`estorno_${month}`]})}
                       >
                         <span className="font-black text-lg text-slate-800 uppercase">{month}</span>
@@ -1176,7 +1230,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           {Object.keys(estornoGroups[month]).reverse().map(day => (
                             <div key={day} className="bg-slate-50 rounded-2xl overflow-hidden border border-slate-200">
                               <button 
-                                className="qb-btn-touch w-full p-4 flex items-center justify-between hover:bg-slate-100 transition-colors"
+                                className="qb-admin-day-toggle qb-btn-touch w-full p-4 flex items-center justify-between hover:bg-slate-100 transition-colors"
                                 onClick={() => setExpandedDays({...expandedDays, [`estorno_${day}`]: !expandedDays[`estorno_${day}`]})}
                               >
                                 <span className="font-black text-slate-700 text-sm uppercase">{day}</span>
@@ -1218,7 +1272,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       )}
 
       {activeTab === 'arquivos' && (
-        <div className="qb-admin-panel qb-admin-arquivos bg-slate-100 p-8 rounded-[40px] border-2 border-slate-200 min-h-[600px] animate-in slide-in-from-bottom-4 relative">
+        <div className="qb-admin-panel qb-admin-arquivos bg-slate-100 p-4 sm:p-8 rounded-[28px] sm:rounded-[40px] border-2 border-slate-200 min-h-[600px] animate-in slide-in-from-bottom-4 relative">
           <div className="qb-admin-panel-head flex items-center gap-3 mb-8">
              <div className="bg-slate-900 p-3 rounded-2xl shadow-lg">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
@@ -1233,19 +1287,17 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <div className="qb-archive-month-grid grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6">
               {Object.keys(archives).map(month => {
                 const monthSales = Object.values(archives[month]).flat() as Sale[];
-                const monthRevenue: number = monthSales.reduce((s: number, v: Sale) => s + v.total, 0);
-                const monthCost: number = monthSales.reduce((s: number, v: Sale) => s + (v.totalCost || 0), 0);
-                const monthProfit: number = monthRevenue - monthCost;
+                const monthFinance = buildConsolidatedArchiveFinance(monthSales);
                 const monthAppSummary = buildAppChannelSummary(monthSales);
                 return (
                 <div key={month} className="relative group">
                   <button 
                     onClick={() => setSelectedArchiveMonth(month)}
-                    className="qb-btn-touch w-full flex flex-col items-center p-6 bg-white rounded-3xl border-2 border-transparent hover:border-blue-500 hover:shadow-xl transition-all"
+                    className="qb-archive-tile qb-btn-touch w-full flex flex-col items-center p-6 bg-white rounded-3xl border-2 border-transparent hover:border-blue-500 hover:shadow-xl transition-all"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="1.5" className="group-hover:stroke-blue-500 transition-colors"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
-                    <span className="font-black text-[10px] uppercase text-slate-600 text-center group-hover:text-slate-900 mt-2 mb-2">{month}</span>
-                    <span className="font-black text-sm text-green-600">R$ {monthProfit.toFixed(2)}</span>
+                    <span className="font-black text-[10px] sm:text-xs uppercase text-slate-600 text-center group-hover:text-slate-900 mt-2 mb-2">{month}</span>
+                    <span className="font-black text-sm text-green-600">R$ {monthFinance.profit.toFixed(2)}</span>
                     <span className="text-[9px] font-black uppercase tracking-widest text-amber-700 mt-2">
                       Apps: {monthAppSummary.totalOrders} • R$ {monthAppSummary.totalRevenue.toFixed(2)}
                     </span>
@@ -1268,19 +1320,17 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="qb-archive-day-grid grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
                 {Object.keys(archives[selectedArchiveMonth]).map(day => {
                   const daySales = archives[selectedArchiveMonth][day] as Sale[];
-                  const dayRevenue: number = daySales.reduce((s: number, v: Sale) => s + v.total, 0);
-                  const dayCost: number = daySales.reduce((s: number, v: Sale) => s + (v.totalCost || 0), 0);
-                  const dayProfit: number = dayRevenue - dayCost;
+                  const dayFinance = buildConsolidatedArchiveFinance(daySales);
                   const dayAppSummary = buildAppChannelSummary(daySales);
                   return (
                   <div key={day} className="relative group">
                     <button 
                       onClick={() => setSelectedArchiveDay(day)}
-                      className="qb-btn-touch w-full flex flex-col items-center p-6 bg-white rounded-3xl border border-slate-200 hover:border-blue-500 transition-all shadow-sm"
+                      className="qb-archive-tile qb-btn-touch w-full flex flex-col items-center p-6 bg-white rounded-3xl border border-slate-200 hover:border-blue-500 transition-all shadow-sm"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" className="mb-2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
-                      <span className="font-black text-xs text-slate-800 mb-2">{day}</span>
-                      <span className="font-black text-sm text-green-600">R$ {dayProfit.toFixed(2)}</span>
+                      <span className="font-black text-[11px] sm:text-xs text-slate-800 mb-2 text-center">{day}</span>
+                      <span className="font-black text-sm text-green-600">R$ {dayFinance.profit.toFixed(2)}</span>
                       <span className="text-[9px] font-black uppercase tracking-widest text-amber-700 mt-2">
                         Apps: {dayAppSummary.totalOrders} • R$ {dayAppSummary.totalRevenue.toFixed(2)}
                       </span>
@@ -1301,7 +1351,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <button onClick={() => setSelectedArchiveDay(null)} className="qb-btn-touch flex items-center gap-2 text-blue-600 font-black text-xs uppercase">
                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m15 18-6-6 6-6"/></svg> Voltar
               </button>
-              <div className="qb-archive-detail bg-white p-8 rounded-[40px] shadow-xl border border-slate-200 relative">
+              <div className="qb-archive-detail bg-white p-4 sm:p-8 rounded-[28px] sm:rounded-[40px] shadow-xl border border-slate-200 relative">
                 <button 
                   onClick={(e) => handleDeleteDay(e, selectedArchiveDay)}
                   className="qb-archive-delete-day-btn qb-btn-touch absolute top-8 right-8 bg-red-600 text-white px-4 py-2 rounded-2xl font-black text-[10px] uppercase shadow-lg shadow-red-200 hover:scale-105 active:scale-95 transition-all"
@@ -1315,12 +1365,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <p className="text-4xl font-black text-slate-900">{selectedArchiveDay}</p>
                       {(() => {
                         const selectedSales = archives[selectedArchiveMonth!][selectedArchiveDay] as Sale[];
-                        const selectedRevenue: number = selectedSales.reduce((s: number, v: Sale) => s + v.total, 0);
-                        const selectedCost: number = selectedSales.reduce((s: number, v: Sale) => s + (v.totalCost || 0), 0);
-                        const selectedProfit: number = selectedRevenue - selectedCost;
+                        const selectedFinance = buildConsolidatedArchiveFinance(selectedSales);
                         return (
                           <>
-                            <p className="text-3xl font-black text-green-600">R$ {selectedProfit.toFixed(2)}</p>
+                            <p className="text-3xl font-black text-green-600">R$ {selectedFinance.profit.toFixed(2)}</p>
                           </>
                         );
                       })()}
@@ -1330,14 +1378,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <div className="qb-archive-detail-grid grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                    {(() => {
                      const selectedSales = archives[selectedArchiveMonth!][selectedArchiveDay] as Sale[];
-                     const selectedRevenue: number = selectedSales.reduce((s: number, v: Sale) => s + v.total, 0);
-                     const selectedCost: number = selectedSales.reduce((s: number, v: Sale) => s + (v.totalCost || 0), 0);
-                     const selectedProfit: number = selectedRevenue - selectedCost;
+                     const selectedFinance = buildConsolidatedArchiveFinance(selectedSales);
                      const selectedAppSummary = buildAppChannelSummary(selectedSales);
                      return (
                        <>
-                         <div className="bg-slate-50 p-6 rounded-3xl"><p className="text-[10px] font-bold text-slate-400 uppercase">Receita</p><p className="text-2xl font-black">R$ {selectedRevenue.toFixed(2)}</p></div>
-                         <div className="bg-slate-50 p-6 rounded-3xl"><p className="text-[10px] font-bold text-slate-400 uppercase">Lucro</p><p className="text-2xl font-black text-green-600">R$ {selectedProfit.toFixed(2)}</p></div>
+                         <div className="bg-slate-50 p-6 rounded-3xl"><p className="text-[10px] font-bold text-slate-400 uppercase">Receita</p><p className="text-2xl font-black">R$ {selectedFinance.revenue.toFixed(2)}</p></div>
+                         <div className="bg-slate-50 p-6 rounded-3xl"><p className="text-[10px] font-bold text-slate-400 uppercase">Lucro</p><p className="text-2xl font-black text-green-600">R$ {selectedFinance.profit.toFixed(2)}</p></div>
                          <div className="bg-slate-50 p-6 rounded-3xl">
                            <p className="text-[10px] font-bold text-slate-400 uppercase">Apps no dia</p>
                            <p className="text-2xl font-black text-amber-700">R$ {selectedAppSummary.totalRevenue.toFixed(2)}</p>
@@ -1406,7 +1452,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       )}
 
       {activeTab === 'configuracao' && (
-        <div className="qb-admin-config bg-white p-8 rounded-[40px] border-2 border-slate-100 shadow-sm min-h-[500px] flex flex-col items-center justify-center text-center">
+        <div className="qb-admin-config bg-white p-4 sm:p-8 rounded-[28px] sm:rounded-[40px] border-2 border-slate-100 shadow-sm min-h-[500px] flex flex-col items-center justify-center text-center">
           {!showDangerZone ? (
             <div className="max-w-md w-full animate-in zoom-in duration-300">
                <div className="bg-slate-900 w-20 h-20 rounded-[32px] flex items-center justify-center mx-auto mb-6 shadow-2xl">
@@ -1444,7 +1490,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <p className="text-slate-600 font-bold text-sm mb-8">Zera somente as quantidades atuais de estoque (insumos e materiais), sem apagar cadastros nem valores.</p>
                   <button 
                     onClick={handleClearStockConfirm}
-                    className="qb-btn-touch bg-amber-600 text-white px-10 py-5 rounded-[24px] font-black uppercase tracking-tighter shadow-2xl shadow-amber-200 hover:bg-amber-700 active:scale-95 transition-all flex items-center justify-center gap-3 mx-auto"
+                    className="qb-btn-touch w-full sm:w-auto bg-amber-600 text-white px-10 py-5 rounded-[24px] font-black uppercase tracking-tighter shadow-2xl shadow-amber-200 hover:bg-amber-700 active:scale-95 transition-all flex items-center justify-center gap-3 mx-auto"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><path d="M3 7h18"/><path d="M4 12h16"/><path d="M5 17h14"/></svg>
                     ZERAR SOMENTE O ESTOQUE
@@ -1456,7 +1502,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <p className="text-slate-600 font-bold text-sm mb-8">Remove cálculos e histórico operacional (vendas, estornos e movimentações), preservando produtos, insumos e materiais já cadastrados.</p>
                   <button 
                     onClick={handleOperationalResetConfirm}
-                    className="qb-btn-touch bg-blue-600 text-white px-10 py-5 rounded-[24px] font-black uppercase tracking-tighter shadow-2xl shadow-blue-200 hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center gap-3 mx-auto"
+                    className="qb-btn-touch w-full sm:w-auto bg-blue-600 text-white px-10 py-5 rounded-[24px] font-black uppercase tracking-tighter shadow-2xl shadow-blue-200 hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center gap-3 mx-auto"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/></svg>
                     LIMPAR APENAS DADOS OPERACIONAIS
@@ -1468,7 +1514,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <p className="text-slate-600 font-bold text-sm mb-8">Essa ação é IRREVERSÍVEL. O sistema voltará ao estado original, apagando todos os produtos criados, estoque, vendas e arquivos históricos.</p>
                   <button 
                     onClick={handleFactoryResetConfirm}
-                    className="qb-btn-touch bg-red-600 text-white px-10 py-5 rounded-[24px] font-black uppercase tracking-tighter shadow-2xl shadow-red-200 hover:bg-red-700 active:scale-95 transition-all flex items-center justify-center gap-3 mx-auto"
+                    className="qb-btn-touch w-full sm:w-auto bg-red-600 text-white px-10 py-5 rounded-[24px] font-black uppercase tracking-tighter shadow-2xl shadow-red-200 hover:bg-red-700 active:scale-95 transition-all flex items-center justify-center gap-3 mx-auto"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                     LIMPAR TUDO (PADRÃO DE FÁBRICA)
@@ -1487,7 +1533,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       )}
 
       {activeTab === 'vendas' && (
-        <div className="qb-admin-panel qb-admin-vendas bg-slate-100 p-8 rounded-[40px] border-2 border-slate-200 min-h-[600px]">
+        <div className="qb-admin-panel qb-admin-vendas bg-slate-100 p-4 sm:p-8 rounded-[28px] sm:rounded-[40px] border-2 border-slate-200 min-h-[600px]">
           <div className="qb-admin-panel-head flex items-center gap-3 mb-8">
             <div className="bg-blue-600 p-3 rounded-2xl shadow-lg">
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m0 18h10a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-4m0 18v-7a2 2 0 0 0-2-2H3m4-7h10"/></svg>
@@ -1581,7 +1627,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       return (
                         <>
                     <button 
-                      className="qb-btn-touch w-full p-6 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                      className="qb-admin-month-toggle qb-btn-touch w-full p-6 flex items-center justify-between hover:bg-slate-50 transition-colors"
                       onClick={() => setExpandedMonths({...expandedMonths, [month]: !expandedMonths[month]})}
                     >
                       <div className="text-left">
@@ -1602,7 +1648,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               return (
                                 <>
                             <button 
-                              className="qb-btn-touch w-full p-4 flex items-center justify-between hover:bg-slate-100 transition-colors"
+                              className="qb-admin-day-toggle qb-btn-touch w-full p-4 flex items-center justify-between hover:bg-slate-100 transition-colors"
                               onClick={() => setExpandedDays({...expandedDays, [`vendas_${day}`]: !expandedDays[`vendas_${day}`]})}
                             >
                               <div className="text-left">
@@ -1680,7 +1726,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       )}
 
       {activeTab === 'materiais' && (
-        <div className="qb-admin-panel qb-admin-materiais bg-slate-100 p-8 rounded-[40px] border-2 border-slate-200 min-h-[600px]">
+        <div className="qb-admin-panel qb-admin-materiais bg-slate-100 p-4 sm:p-8 rounded-[28px] sm:rounded-[40px] border-2 border-slate-200 min-h-[600px]">
           <div className="qb-admin-panel-head flex items-center gap-3 mb-8">
             <div className="bg-indigo-600 p-3 rounded-2xl shadow-lg">
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M3 7h18"/><path d="M7 7v13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V7"/><path d="M10 11h4"/><path d="M10 15h4"/><path d="M9 3h6l1 4H8l1-4Z"/></svg>
@@ -1760,7 +1806,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 {filteredMonths.map(month => (
                   <div key={month} className="bg-white rounded-[32px] overflow-hidden border border-slate-200 shadow-sm">
                     <button
-                      className="qb-btn-touch w-full p-6 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                      className="qb-admin-month-toggle qb-btn-touch w-full p-6 flex items-center justify-between hover:bg-slate-50 transition-colors"
                       onClick={() => setExpandedMonths({...expandedMonths, [`materiais_${month}`]: !expandedMonths[`materiais_${month}`]})}
                     >
                       <span className="font-black text-lg text-slate-800 uppercase">{month}</span>
@@ -1771,7 +1817,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         {Object.keys(materialsGroups[month]).reverse().map(day => (
                           <div key={day} className="bg-slate-50 rounded-2xl overflow-hidden border border-slate-200">
                             <button
-                              className="qb-btn-touch w-full p-4 flex items-center justify-between hover:bg-slate-100 transition-colors"
+                              className="qb-admin-day-toggle qb-btn-touch w-full p-4 flex items-center justify-between hover:bg-slate-100 transition-colors"
                               onClick={() => setExpandedDays({...expandedDays, [`materiais_${day}`]: !expandedDays[`materiais_${day}`]})}
                             >
                               <span className="font-black text-slate-700 text-sm uppercase">{day}</span>
@@ -1829,7 +1875,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       )}
 
       {activeTab === 'estoque' && (
-        <div className="qb-admin-panel qb-admin-estoque bg-slate-100 p-8 rounded-[40px] border-2 border-slate-200 min-h-[600px]">
+        <div className="qb-admin-panel qb-admin-estoque bg-slate-100 p-4 sm:p-8 rounded-[28px] sm:rounded-[40px] border-2 border-slate-200 min-h-[600px]">
           <div className="qb-admin-panel-head flex items-center gap-3 mb-8">
             <div className="bg-slate-900 p-3 rounded-2xl shadow-lg">
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><polyline points="12 22.08 12 12"/></svg>
@@ -1887,7 +1933,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 {filteredMonths.map(month => (
                   <div key={month} className="bg-white rounded-[32px] overflow-hidden border border-slate-200 shadow-sm">
                     <button 
-                      className="qb-btn-touch w-full p-6 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                      className="qb-admin-month-toggle qb-btn-touch w-full p-6 flex items-center justify-between hover:bg-slate-50 transition-colors"
                       onClick={() => setExpandedMonths({...expandedMonths, [`estoque_${month}`]: !expandedMonths[`estoque_${month}`]})}
                     >
                       <span className="font-black text-lg text-slate-800 uppercase">{month}</span>
@@ -1898,7 +1944,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         {Object.keys(stockGroups[month]).reverse().map(day => (
                           <div key={day} className="bg-slate-50 rounded-2xl overflow-hidden border border-slate-200">
                             <button 
-                              className="qb-btn-touch w-full p-4 flex items-center justify-between hover:bg-slate-100 transition-colors"
+                              className="qb-admin-day-toggle qb-btn-touch w-full p-4 flex items-center justify-between hover:bg-slate-100 transition-colors"
                               onClick={() => setExpandedDays({...expandedDays, [`estoque_${day}`]: !expandedDays[`estoque_${day}`]})}
                             >
                               <span className="font-black text-slate-700 text-sm uppercase">{day}</span>
