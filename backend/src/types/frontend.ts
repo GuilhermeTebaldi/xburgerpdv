@@ -144,6 +144,8 @@ export interface FrontDailySalesHistoryEntry {
   cashExpenses?: number;
 }
 
+export type FrontLayoutThemeId = 'red' | 'orange' | 'amber' | 'blue' | 'emerald' | 'violet';
+
 export interface FrontAppState {
   ingredients: FrontIngredient[];
   products: FrontProduct[];
@@ -158,4 +160,5 @@ export interface FrontAppState {
   saleDrafts?: FrontSaleDraft[];
   cashRegisterAmount?: number;
   dailySalesHistory?: FrontDailySalesHistoryEntry[];
+  layoutThemeId?: FrontLayoutThemeId | null;
 }

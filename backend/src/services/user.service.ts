@@ -41,6 +41,11 @@ interface SetCompanyStatusInput {
   isActive: boolean;
 }
 
+interface SetCompanyLayoutThemeInput {
+  stateOwnerUserId: string;
+  layoutThemeId: BrandThemeId;
+}
+
 interface LinkExistingCompanyUsersInput {
   companyName: string;
   managerEmail: string;
@@ -52,6 +57,8 @@ interface DeleteCompanyPermanentlyInput {
   firstConfirmation: string;
   secondConfirmation: string;
 }
+
+type BrandThemeId = 'red' | 'orange' | 'amber' | 'blue' | 'emerald' | 'violet';
 
 const EMPTY_APP_STATE = {
   ingredients: [],
@@ -67,12 +74,48 @@ const EMPTY_APP_STATE = {
   saleDrafts: [],
   cashRegisterAmount: 0,
   dailySalesHistory: [],
+  layoutThemeId: null,
 } satisfies Record<string, unknown>;
 
 const ADMIN_GERAL_EMAIL = 'xburger.admin@geral.com';
 const DELETE_CONFIRMATION_PHRASE = 'EXCLUIRUSER';
 const DEFAULT_BILLING_BLOCK_DAYS = 15;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const BRAND_THEME_IDS = ['red', 'orange', 'amber', 'blue', 'emerald', 'violet'] as const;
+const BRAND_THEME_ID_SET = new Set<string>(BRAND_THEME_IDS);
+
+const normalizeLayoutThemeId = (value: unknown): BrandThemeId | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  if (!BRAND_THEME_ID_SET.has(normalized)) return null;
+  return normalized as BrandThemeId;
+};
+
+const extractLayoutThemeIdFromStateJson = (stateJson: Prisma.JsonValue): BrandThemeId | null => {
+  if (!stateJson || typeof stateJson !== 'object' || Array.isArray(stateJson)) return null;
+  const record = stateJson as Record<string, unknown>;
+  return normalizeLayoutThemeId(record.layoutThemeId);
+};
+
+const mergeLayoutThemeIntoStateJson = (
+  stateJson: Prisma.JsonValue | null | undefined,
+  layoutThemeId: BrandThemeId
+): Record<string, unknown> => {
+  if (!stateJson || typeof stateJson !== 'object' || Array.isArray(stateJson)) {
+    return { ...EMPTY_APP_STATE, layoutThemeId };
+  }
+
+  const record = stateJson as Record<string, unknown>;
+  return {
+    ...record,
+    layoutThemeId,
+  };
+};
+
+const isMissingAppStateTableError = (error: unknown): boolean =>
+  error instanceof Prisma.PrismaClientKnownRequestError &&
+  (error.code === 'P2021' || error.code === 'P2022');
 
 const assertAdminActor = async (actorUserId: string) => {
   const actor = await prisma.user.findUnique({
@@ -116,13 +159,43 @@ export class UserService {
       },
     });
 
+    const ownerUserIds = [...new Set(users.map((user) => user.stateOwnerUserId?.trim() || user.id))];
+    let appStates: Array<{ ownerUserId: string | null; stateJson: Prisma.JsonValue }> = [];
+    if (ownerUserIds.length) {
+      try {
+        appStates = await prisma.appState.findMany({
+          where: {
+            ownerUserId: {
+              in: ownerUserIds,
+            },
+          },
+          select: {
+            ownerUserId: true,
+            stateJson: true,
+          },
+        });
+      } catch (error) {
+        if (!isMissingAppStateTableError(error)) {
+          throw error;
+        }
+      }
+    }
+
+    const themeByOwnerId = new Map(
+      appStates
+        .filter((entry): entry is { ownerUserId: string; stateJson: Prisma.JsonValue } => Boolean(entry.ownerUserId))
+        .map((entry) => [entry.ownerUserId, extractLayoutThemeIdFromStateJson(entry.stateJson)])
+    );
+
     return users.map((user) => {
       const billing = resolveBillingBlockSnapshot(user);
+      const ownerUserId = user.stateOwnerUserId?.trim() || user.id;
       return {
         ...user,
         billingBlocked: billing.isBlocked,
         billingBlockedMessage: billing.message,
         billingBlockedUntil: billing.blockedUntil,
+        layoutThemeId: themeByOwnerId.get(ownerUserId) ?? null,
       };
     });
   }
@@ -509,6 +582,53 @@ export class UserService {
       where: { id: { in: targetUserIds } },
       data: { isActive: input.isActive },
     });
+  }
+
+  async setCompanyLayoutTheme(actorUserId: string, input: SetCompanyLayoutThemeInput) {
+    await assertAdminActor(actorUserId);
+    const companyUsers = await this.resolveCompanyUsers(input.stateOwnerUserId);
+    const targetUserIds = companyUsers.map((user) => user.id);
+    const targetUserIdSet = new Set(targetUserIds);
+
+    const ownerUserIds = [
+      ...new Set(
+        companyUsers.map((user) => {
+          const owner = user.stateOwnerUserId?.trim();
+          if (owner && targetUserIdSet.has(owner)) return owner;
+          return user.id;
+        })
+      ),
+    ];
+
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      for (const ownerUserId of ownerUserIds) {
+        const current = await tx.appState.findUnique({
+          where: { ownerUserId },
+          select: {
+            stateJson: true,
+          },
+        });
+
+        const nextStateJson = mergeLayoutThemeIntoStateJson(current?.stateJson, input.layoutThemeId);
+
+        await tx.appState.upsert({
+          where: { ownerUserId },
+          create: {
+            ownerUserId,
+            stateJson: nextStateJson as Prisma.InputJsonValue,
+          },
+          update: {
+            stateJson: nextStateJson as Prisma.InputJsonValue,
+          },
+        });
+      }
+    });
+
+    return {
+      layoutThemeId: input.layoutThemeId,
+      updatedOwnersCount: ownerUserIds.length,
+      updatedOwnerUserIds: ownerUserIds,
+    };
   }
 
   async deleteCompanyPermanently(actorUserId: string, input: DeleteCompanyPermanentlyInput) {

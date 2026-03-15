@@ -25,6 +25,7 @@ const EMPTY_APP_STATE: FrontAppState = {
   saleDrafts: [],
   cashRegisterAmount: 0,
   dailySalesHistory: [],
+  layoutThemeId: null,
 };
 
 const arrayOrEmpty = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
@@ -32,6 +33,21 @@ const toNonNegativeNumber = (value: unknown): number => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return 0;
   return parsed;
+};
+
+const VALID_LAYOUT_THEME_IDS = new Set(['red', 'orange', 'amber', 'blue', 'emerald', 'violet']);
+
+const toLayoutThemeId = (value: unknown): FrontAppState['layoutThemeId'] => {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') {
+    throw new HttpError(400, 'Tema de layout inválido.');
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  if (!VALID_LAYOUT_THEME_IDS.has(normalized)) {
+    throw new HttpError(400, 'Tema de layout inválido.');
+  }
+  return normalized as NonNullable<FrontAppState['layoutThemeId']>;
 };
 
 const normalizeStatePayload = (value: unknown): FrontAppState => {
@@ -54,6 +70,7 @@ const normalizeStatePayload = (value: unknown): FrontAppState => {
     saleDrafts: arrayOrEmpty(payload.saleDrafts),
     cashRegisterAmount: toNonNegativeNumber(payload.cashRegisterAmount),
     dailySalesHistory: arrayOrEmpty(payload.dailySalesHistory),
+    layoutThemeId: toLayoutThemeId(payload.layoutThemeId),
   };
 };
 
@@ -73,6 +90,7 @@ const normalizeStatePayloadSafe = (value: unknown): FrontAppState => {
       saleDrafts: [],
       cashRegisterAmount: 0,
       dailySalesHistory: [],
+      layoutThemeId: null,
     };
   }
   return normalizeStatePayload(value);

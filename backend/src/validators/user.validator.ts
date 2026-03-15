@@ -59,6 +59,10 @@ export const companyStatusSchema = z.object({
   isActive: z.boolean(),
 });
 
+export const companyLayoutThemeSchema = z.object({
+  layoutThemeId: z.enum(['red', 'orange', 'amber', 'blue', 'emerald', 'violet']),
+});
+
 export const COMPANY_PURGE_CONFIRMATION_PHRASE = 'EXCLUIRUSER';
 
 export const companyPurgeSchema = z

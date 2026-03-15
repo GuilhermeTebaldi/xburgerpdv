@@ -11,5 +11,6 @@ userRouter.post('/', authRequired, asyncHandler(userController.create));
 userRouter.post('/company', authRequired, asyncHandler(userController.createCompanyUsers));
 userRouter.post('/company/link', authRequired, asyncHandler(userController.linkExistingCompanyUsers));
 userRouter.patch('/company/:stateOwnerUserId/billing', authRequired, asyncHandler(userController.setCompanyBilling));
+userRouter.patch('/company/:stateOwnerUserId/layout-theme', authRequired, asyncHandler(userController.setCompanyLayoutTheme));
 userRouter.patch('/company/:stateOwnerUserId/status', authRequired, asyncHandler(userController.setCompanyStatus));
 userRouter.delete('/company/:stateOwnerUserId', authRequired, asyncHandler(userController.deleteCompanyPermanently));

@@ -387,6 +387,7 @@ const cloneState = (state: FrontAppState): FrontAppState => ({
         Boolean(entry && typeof entry === 'object' && !Array.isArray(entry))
     )
     .map(cloneDailySalesHistoryEntry),
+  layoutThemeId: state.layoutThemeId ?? null,
 });
 
 const emptyAppState = (): FrontAppState => ({
@@ -403,6 +404,7 @@ const emptyAppState = (): FrontAppState => ({
   saleDrafts: [],
   cashRegisterAmount: 0,
   dailySalesHistory: [],
+  layoutThemeId: null,
 });
 
 const requireIngredient = (state: FrontAppState, ingredientId: string): FrontIngredient => {
