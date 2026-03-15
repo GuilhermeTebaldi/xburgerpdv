@@ -112,6 +112,17 @@ const readPrintScopeHint = (): string | null => {
   }
 };
 
+const readPendingPrintFlag = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const value = params.get('pending');
+    return value === '1' || value === 'true';
+  } catch {
+    return false;
+  }
+};
+
 const resolveReturnPath = (): string => {
   if (typeof window === 'undefined') return '/';
   const fallbackPath = resolveSystemBasePath() || '/';
@@ -128,6 +139,11 @@ const resolveReturnPath = (): string => {
     return fallbackPath;
   }
 };
+
+const wait = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 
 const isSameCalendarDay = (a: Date, b: Date): boolean =>
   a.getFullYear() === b.getFullYear() &&
@@ -422,6 +438,7 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const hasTriggeredPrintRef = useRef(false);
   const paperWidthMm = useMemo(() => getReceiptPaperWidthMm(), []);
+  const waitForPendingConfirmation = useMemo(() => readPendingPrintFlag(), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -430,31 +447,41 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
     setReceipt(null);
     hasTriggeredPrintRef.current = false;
     setAuthScopeHint(readPrintScopeHint());
-
-    loadAppState(DEFAULT_APP_STATE, { preferLocalMirrorWhenNewer: false })
-      .then((state) => {
-        if (cancelled) return;
-        const model = buildReceiptViewModel(state, receiptId);
-        if (!model) {
-          setErrorMessage('Pedido não encontrado para impressão.');
-          return;
+    void (async () => {
+      const startedAt = Date.now();
+      const maxWaitMs = waitForPendingConfirmation ? 16000 : 0;
+      while (!cancelled) {
+        try {
+          const state = await loadAppState(DEFAULT_APP_STATE, { preferLocalMirrorWhenNewer: false });
+          if (cancelled) return;
+          const model = buildReceiptViewModel(state, receiptId);
+          if (model) {
+            setReceipt(model);
+            setErrorMessage(null);
+            break;
+          }
+          if (Date.now() - startedAt >= maxWaitMs) {
+            setErrorMessage('Pedido não encontrado para impressão.');
+            break;
+          }
+        } catch {
+          if (Date.now() - startedAt >= maxWaitMs) {
+            setErrorMessage('Falha ao carregar dados do cupom.');
+            break;
+          }
         }
-        setReceipt(model);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setErrorMessage('Falha ao carregar dados do cupom.');
-      })
-      .finally(() => {
-        if (cancelled) return;
+        await wait(320);
+      }
+      if (!cancelled) {
         setIsLoading(false);
-      });
+      }
+    })();
 
     return () => {
       cancelled = true;
       setAuthScopeHint(null);
     };
-  }, [receiptId]);
+  }, [receiptId, waitForPendingConfirmation]);
 
   useEffect(() => {
     if (!receipt) return;
@@ -629,7 +656,11 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
       `}</style>
 
       <div className="receipt-paper">
-        {isLoading && <p className="receipt-center">Carregando cupom...</p>}
+        {isLoading && (
+          <p className="receipt-center">
+            {waitForPendingConfirmation ? 'Aguardando confirmação do pagamento...' : 'Carregando cupom...'}
+          </p>
+        )}
 
         {!isLoading && errorMessage && (
           <>

@@ -1828,7 +1828,8 @@ const App: React.FC = () => {
     preparedReceiptWindowRef.current = null;
   }, []);
 
-  const buildReceiptPrintTarget = useCallback((receiptId: string): string => {
+  const buildReceiptPrintTarget = useCallback(
+    (receiptId: string, options: { pending?: boolean } = {}): string => {
     const normalizedId = receiptId.trim();
     if (!normalizedId) return '';
     const basePath = buildReceiptPrintRoutePath(normalizedId);
@@ -1843,63 +1844,44 @@ const App: React.FC = () => {
         params.set('returnTo', returnTo);
       }
     }
+      if (options.pending) {
+        params.set('pending', '1');
+      }
     const query = params.toString();
     return query ? `${basePath}?${query}` : basePath;
-  }, []);
-
-  const prepareReceiptPrintWindow = useCallback((): boolean => {
-    if (typeof window === 'undefined') return false;
-    closePreparedReceiptWindow();
-    const preparedWindow = window.open('about:blank', '_blank');
-    if (!preparedWindow) return false;
-    try {
-      preparedWindow.document.title = 'Preparando impressão...';
-      preparedWindow.document.body.innerHTML =
-        '<div style="font-family:Arial,sans-serif;padding:24px;color:#111827;">Aguardando confirmação do pagamento...</div>';
-    } catch {
-      // ignore document write failures
-    }
-    preparedReceiptWindowRef.current = preparedWindow;
-    return true;
-  }, [closePreparedReceiptWindow]);
-
-  const navigatePreparedReceiptWindow = useCallback((receiptId: string): boolean => {
-    const normalizedId = receiptId.trim();
-    if (!normalizedId) return false;
-    const preparedWindow = preparedReceiptWindowRef.current;
-    if (!preparedWindow || preparedWindow.closed) {
-      preparedReceiptWindowRef.current = null;
-      return false;
-    }
-    preparedWindow.location.replace(buildReceiptPrintTarget(normalizedId));
-    preparedReceiptWindowRef.current = null;
-    return true;
-  }, [buildReceiptPrintTarget]);
+    },
+    []
+  );
 
   const openReceiptPrintWindow = useCallback(
-    (receiptId: string): boolean => {
+    (receiptId: string, options: { pending?: boolean } = {}): boolean => {
       if (typeof window === 'undefined') return false;
       const normalizedId = receiptId.trim();
       if (!normalizedId) return false;
-      const printRoute = buildReceiptPrintTarget(normalizedId);
+      const printRoute = buildReceiptPrintTarget(normalizedId, options);
       if (!printRoute) return false;
+      if (options.pending) {
+        closePreparedReceiptWindow();
+      }
       const printWindow = window.open(printRoute, '_blank');
       if (printWindow) {
+        if (options.pending) {
+          preparedReceiptWindowRef.current = printWindow;
+        }
         return true;
       }
       return false;
     },
-    [buildReceiptPrintTarget]
+    [buildReceiptPrintTarget, closePreparedReceiptWindow]
   );
 
   const handleConfirmPaid = () => {
     if (!activeDraft) return;
     if (isConfirmingPaid) return;
     const draftId = activeDraft.id;
-    prepareReceiptPrintWindow();
+    const openedPendingPrintWindow = openReceiptPrintWindow(draftId, { pending: true });
     setIsConfirmingPaid(true);
     void (async () => {
-      let shouldClosePreparedWindow = true;
       const finalized = await handleSavePaymentMethod();
       if (!finalized) {
         closePreparedReceiptWindow();
@@ -1918,10 +1900,7 @@ const App: React.FC = () => {
         return;
       }
 
-      const navigated = navigatePreparedReceiptWindow(draftId);
-      if (navigated) {
-        shouldClosePreparedWindow = false;
-      } else {
+      if (!openedPendingPrintWindow) {
         const opened = openReceiptPrintWindow(draftId);
         if (!opened) {
           showNotification(
@@ -1929,10 +1908,7 @@ const App: React.FC = () => {
           );
         }
       }
-
-      if (shouldClosePreparedWindow) {
-        closePreparedReceiptWindow();
-      }
+      preparedReceiptWindowRef.current = null;
 
       setIsAppOriginModalOpen(false);
       resetSplitState('PIX');
