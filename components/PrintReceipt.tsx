@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { DEFAULT_APP_STATE, loadAppState, setAuthScopeHint, type AppState } from '../data/appStorage';
 import { getReceiptPaperWidthMm } from '../utils/receiptPaper';
+import { resolveSystemBasePath } from '../utils/printRoutes';
 import type {
   Sale,
   SaleBasePaymentMethod,
@@ -108,6 +109,23 @@ const readPrintScopeHint = (): string | null => {
     return normalized || null;
   } catch {
     return null;
+  }
+};
+
+const resolveReturnPath = (): string => {
+  if (typeof window === 'undefined') return '/';
+  const fallbackPath = resolveSystemBasePath() || '/';
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const returnTo = params.get('returnTo');
+    if (!returnTo) return fallbackPath;
+    const normalized = returnTo.trim();
+    if (!normalized.startsWith('/') || normalized.startsWith('//')) {
+      return fallbackPath;
+    }
+    return normalized;
+  } catch {
+    return fallbackPath;
   }
 };
 
@@ -450,15 +468,34 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
     };
   }, [receipt]);
 
+  const closeOrReturnToCashier = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    const returnPath = resolveReturnPath();
+    const opener = window.opener;
+    if (opener && !opener.closed) {
+      try {
+        opener.focus();
+      } catch {
+        // ignore focus failures
+      }
+    }
+    try {
+      window.close();
+    } catch {
+      // ignore close failures
+    }
+    window.setTimeout(() => {
+      if (!window.closed) {
+        window.location.replace(returnPath);
+      }
+    }, 120);
+  }, []);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const previousAfterPrint = window.onafterprint;
     window.onafterprint = (event: Event) => {
-      try {
-        window.close();
-      } catch {
-        // ignore close failures
-      }
+      closeOrReturnToCashier();
       if (typeof previousAfterPrint === 'function') {
         previousAfterPrint.call(window, event);
       }
@@ -466,7 +503,7 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
     return () => {
       window.onafterprint = previousAfterPrint;
     };
-  }, []);
+  }, [closeOrReturnToCashier]);
 
   const printedAt = useMemo(() => new Date(), []);
 
@@ -740,7 +777,7 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
           type="button"
           className="secondary"
           onClick={() => {
-            window.close();
+            closeOrReturnToCashier();
           }}
         >
           Fechar

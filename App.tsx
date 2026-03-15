@@ -1829,11 +1829,22 @@ const App: React.FC = () => {
   }, []);
 
   const buildReceiptPrintTarget = useCallback((receiptId: string): string => {
-    const basePath = buildReceiptPrintRoutePath(receiptId.trim());
+    const normalizedId = receiptId.trim();
+    if (!normalizedId) return '';
+    const basePath = buildReceiptPrintRoutePath(normalizedId);
+    const params = new URLSearchParams();
     const subject = readAuthSubjectFromToken(readAdminAuthToken());
-    if (!subject) return basePath;
-    const joiner = basePath.includes('?') ? '&' : '?';
-    return `${basePath}${joiner}scope=${encodeURIComponent(subject)}`;
+    if (subject) {
+      params.set('scope', subject);
+    }
+    if (typeof window !== 'undefined') {
+      const returnTo = `${window.location.pathname}${window.location.search}`.trim();
+      if (returnTo) {
+        params.set('returnTo', returnTo);
+      }
+    }
+    const query = params.toString();
+    return query ? `${basePath}?${query}` : basePath;
   }, []);
 
   const prepareReceiptPrintWindow = useCallback((): boolean => {
@@ -1841,11 +1852,6 @@ const App: React.FC = () => {
     closePreparedReceiptWindow();
     const preparedWindow = window.open('about:blank', '_blank');
     if (!preparedWindow) return false;
-    try {
-      preparedWindow.opener = null;
-    } catch {
-      // ignore opener assignment failures
-    }
     try {
       preparedWindow.document.title = 'Preparando impressão...';
       preparedWindow.document.body.innerHTML =
@@ -1876,12 +1882,12 @@ const App: React.FC = () => {
       const normalizedId = receiptId.trim();
       if (!normalizedId) return false;
       const printRoute = buildReceiptPrintTarget(normalizedId);
+      if (!printRoute) return false;
       const printWindow = window.open(printRoute, '_blank');
       if (printWindow) {
         return true;
       }
-      window.location.assign(printRoute);
-      return true;
+      return false;
     },
     [buildReceiptPrintTarget]
   );
