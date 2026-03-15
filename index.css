@@ -13,6 +13,18 @@
   }
 }
 
+@keyframes qb-corner-sync-pulse {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+    box-shadow: 0 8px 16px rgba(15, 23, 42, 0.14);
+  }
+  50% {
+    transform: translateY(-1px) scale(1.02);
+    box-shadow: 0 10px 20px rgba(15, 23, 42, 0.22);
+  }
+}
+
 @keyframes qb-cart-jump-a {
   0% {
     transform: translateY(0) scale(1) rotate(0deg);
@@ -206,6 +218,16 @@
   animation: qb-payment-confirm-ready-blink 1s ease-in-out infinite;
 }
 
+.qb-payment-confirm-ready {
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.24);
+  filter: brightness(1.04);
+}
+
+.qb-split-method-attention {
+  box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.18);
+  border-color: #f87171 !important;
+}
+
 .qb-sync-spinner {
   width: 20px;
   height: 20px;
@@ -218,6 +240,10 @@
 
 .qb-sync-progress-bar {
   animation: qb-progress-slide 1.2s ease-in-out infinite;
+}
+
+.qb-corner-sync-pulse {
+  animation: qb-corner-sync-pulse 1.15s ease-in-out infinite;
 }
 
 .qb-payment-modal {

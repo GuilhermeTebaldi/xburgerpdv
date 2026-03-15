@@ -215,6 +215,16 @@ const sumSalesRevenue = (reportSales: Sale[]): number =>
     }, 0)
   );
 
+const countOrders = (entries: Sale[]): number => {
+  if (!Array.isArray(entries) || entries.length === 0) return 0;
+  const groups = new Set<string>();
+  entries.forEach((sale) => {
+    const key = sale.saleDraftId ? `draft:${sale.saleDraftId}` : `sale:${sale.id}`;
+    groups.add(key);
+  });
+  return groups.size;
+};
+
 const SalesSummary: React.FC<SalesSummaryProps> = ({
   sales,
   archivedSales = [],
@@ -349,10 +359,10 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
       totalRevenue,
       totalPurchases: totalCost,
       totalProfit,
-      saleCount: sales.length,
+      saleCount: countOrders(sales),
       cashExpenses: cashRegisterExpenses,
     }),
-    [cashRegisterAmount, cashRegisterExpenses, totalCost, totalProfit, totalRevenue, sales.length]
+    [cashRegisterAmount, cashRegisterExpenses, sales, totalCost, totalProfit, totalRevenue]
   );
 
   const archiveSalesByDay = useMemo(() => {
@@ -448,7 +458,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
           totalRevenue,
           totalPurchases,
           totalProfit: roundMoney(totalRevenue - totalPurchases),
-          saleCount: daySales.length,
+          saleCount: countOrders(daySales),
           cashExpenses: 0,
         },
       });
@@ -1128,7 +1138,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
             </div>
             <div className="qb-sales-stat-card bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">
               <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Pedidos</p>
-              <h4 className="text-3xl font-black text-slate-800">{sales.length}</h4>
+              <h4 className="text-3xl font-black text-slate-800">{countOrders(sales)}</h4>
             </div>
           </div>
           {appOriginRows.length > 0 && (

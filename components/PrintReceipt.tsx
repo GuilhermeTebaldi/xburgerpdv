@@ -3,6 +3,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_APP_STATE, loadAppState, setAuthScopeHint, type AppState } from '../data/appStorage';
 import { getReceiptPaperWidthMm } from '../utils/receiptPaper';
 import { resolveSystemBasePath } from '../utils/printRoutes';
+import {
+  consumeReceiptPrintPayload,
+  removeReceiptPrintPayload,
+  type ReceiptPrintPayload,
+} from '../utils/receiptPrintPayload';
 import type {
   Sale,
   SaleBasePaymentMethod,
@@ -432,6 +437,39 @@ const buildReceiptViewModel = (state: AppState, receiptId: string): ReceiptViewM
   };
 };
 
+const buildReceiptViewModelFromPayload = (payload: ReceiptPrintPayload): ReceiptViewModel => ({
+  restaurantName: payload.restaurantName,
+  orderNumber: payload.orderNumber,
+  orderId: payload.orderId,
+  paidAt: toDate(payload.paidAt),
+  lines: payload.lines.map((line) => ({
+    id: line.id,
+    qty: line.qty,
+    name: line.name,
+    unitPrice: line.unitPrice,
+    subtotal: line.subtotal,
+    note: line.note,
+  })),
+  itemsTotal: payload.itemsTotal,
+  total: payload.total,
+  paymentMethodLabel: payload.paymentMethodLabel,
+  paymentCashReceived: payload.paymentCashReceived,
+  paymentChange: payload.paymentChange,
+  paymentSplits: payload.paymentSplits.map((entry) => ({
+    sequence: entry.sequence,
+    label: entry.label,
+    method: entry.method,
+    amount: entry.amount,
+    cashReceived: entry.cashReceived,
+    change: entry.change,
+  })),
+  saleOriginLabel: payload.saleOriginLabel,
+  saleOriginShortLabel: payload.saleOriginShortLabel,
+  appOrderTotal: payload.appOrderTotal,
+  isAppSale: payload.isAppSale,
+  observations: payload.observations,
+});
+
 const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
   const [receipt, setReceipt] = useState<ReceiptViewModel | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -448,8 +486,18 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
     hasTriggeredPrintRef.current = false;
     setAuthScopeHint(readPrintScopeHint());
     void (async () => {
+      const fromPayload = consumeReceiptPrintPayload(receiptId);
+      if (fromPayload) {
+        if (!cancelled) {
+          setReceipt(buildReceiptViewModelFromPayload(fromPayload));
+          setErrorMessage(null);
+          setIsLoading(false);
+        }
+        return;
+      }
+
       const startedAt = Date.now();
-      const maxWaitMs = waitForPendingConfirmation ? 16000 : 0;
+      const maxWaitMs = 15000;
       while (!cancelled) {
         try {
           const state = await loadAppState(DEFAULT_APP_STATE, { preferLocalMirrorWhenNewer: false });
@@ -522,6 +570,7 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
     if (typeof window === 'undefined') return;
     const previousAfterPrint = window.onafterprint;
     window.onafterprint = (event: Event) => {
+      removeReceiptPrintPayload(receiptId);
       closeOrReturnToCashier();
       if (typeof previousAfterPrint === 'function') {
         previousAfterPrint.call(window, event);
@@ -530,7 +579,7 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
     return () => {
       window.onafterprint = previousAfterPrint;
     };
-  }, [closeOrReturnToCashier]);
+  }, [closeOrReturnToCashier, receiptId]);
 
   const printedAt = useMemo(() => new Date(), []);
 

@@ -13,7 +13,7 @@ import type {
   StockEntry,
 } from '../types';
 import { DEFAULT_APP_STATE, type AppState } from './appStorage';
-import { readAdminAuthToken } from './adminAuthToken';
+import { invalidateAdminSession, readAdminAuthToken } from './adminAuthToken';
 
 const API_TIMEOUT_MS = 12000;
 const DEFAULT_API_BASE_URL = 'https://xburger-saas-backend.onrender.com';
@@ -143,6 +143,13 @@ interface StateWriteContext {
 let writeContext: StateWriteContext | null = null;
 let writeContextRefreshInFlight: Promise<void> | null = null;
 let activeWriteScope: string | null = null;
+
+const invalidateSessionContext = (): void => {
+  writeContext = null;
+  writeContextRefreshInFlight = null;
+  activeWriteScope = null;
+  invalidateAdminSession();
+};
 
 const getApiBaseUrl = (): string | null => {
   const raw = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
@@ -466,6 +473,9 @@ const refreshWriteContext = async (): Promise<void> => {
       return;
     }
   } else if (headResponse.status !== 404 && headResponse.status !== 405) {
+    if (headResponse.status === 401) {
+      invalidateSessionContext();
+    }
     throw await toApiError(headResponse);
   }
 
@@ -478,6 +488,9 @@ const refreshWriteContext = async (): Promise<void> => {
   });
 
   if (!getResponse.ok) {
+    if (getResponse.status === 401) {
+      invalidateSessionContext();
+    }
     throw await toApiError(getResponse);
   }
 
@@ -535,7 +548,12 @@ export const runStateCommand = async (command: StateCommand): Promise<AppState> 
       return normalizeAppState(payload);
     }
 
-    if ((response.status === 401 || response.status === 412 || response.status === 428) && attempt === 0) {
+    if (response.status === 401) {
+      invalidateSessionContext();
+      throw await toApiError(response);
+    }
+
+    if ((response.status === 412 || response.status === 428) && attempt === 0) {
       writeContext = null;
       continue;
     }

@@ -9,7 +9,7 @@ import {
   StockEntry,
 } from '../types';
 import { clearStore } from './localDb';
-import { readAdminAuthToken } from './adminAuthToken';
+import { invalidateAdminSession, readAdminAuthToken } from './adminAuthToken';
 
 export interface AppState {
   ingredients: Ingredient[];
@@ -45,6 +45,7 @@ let remoteSaveQueue: Promise<void> = Promise.resolve();
 let isDefaultFallbackBootstrap = false;
 let activeAuthSubject: string | null = null;
 let authScopeHint: string | null = null;
+let hasLoggedUnauthorizedWarning = false;
 
 const STORAGE_KEYS = {
   ingredients: 'xburger_ingredients',
@@ -127,6 +128,22 @@ const getAuthorizationHeader = (): string | null => {
   return `Bearer ${token}`;
 };
 
+const handleUnauthorizedResponse = (): void => {
+  remoteStateToken = null;
+  remoteStateVersion = null;
+  hasRemoteHydratedState = false;
+  remoteSaveQueue = Promise.resolve();
+  isDefaultFallbackBootstrap = false;
+  activeAuthSubject = null;
+  authScopeHint = null;
+  invalidateAdminSession();
+
+  if (!hasLoggedUnauthorizedWarning) {
+    hasLoggedUnauthorizedWarning = true;
+    console.warn('[appStorage] Sessao expirada/invalida. Operando com espelho local ate novo login.');
+  }
+};
+
 const decodeBase64Url = (value: string): string | null => {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
   const padLength = (4 - (normalized.length % 4)) % 4;
@@ -178,6 +195,9 @@ const ensureAuthScope = (): string | null => {
 export const setAuthScopeHint = (subject: string | null): void => {
   const normalized = typeof subject === 'string' ? subject.trim() : '';
   authScopeHint = normalized || null;
+  if (normalized) {
+    hasLoggedUnauthorizedWarning = false;
+  }
 };
 
 const getScopedStorageKey = (baseKey: string): string => {
@@ -338,6 +358,10 @@ export const getRemoteStateVersion = async (): Promise<string | null> => {
       syncStateMetaFromResponse(headResponse);
       return remoteStateVersion;
     }
+    if (headResponse.status === 401) {
+      handleUnauthorizedResponse();
+      return null;
+    }
 
     if (headResponse.status !== 404 && headResponse.status !== 405) {
       return null;
@@ -351,7 +375,12 @@ export const getRemoteStateVersion = async (): Promise<string | null> => {
       },
     });
 
-    if (!getResponse.ok) return null;
+    if (!getResponse.ok) {
+      if (getResponse.status === 401) {
+        handleUnauthorizedResponse();
+      }
+      return null;
+    }
     syncStateMetaFromResponse(getResponse);
     return remoteStateVersion;
   } catch {
@@ -373,7 +402,12 @@ const tryLoadRemoteState = async (defaults: AppState): Promise<AppState | null> 
         Authorization: authorization,
       },
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      if (response.status === 401) {
+        handleUnauthorizedResponse();
+      }
+      return null;
+    }
     syncStateMetaFromResponse(response);
 
     const payload = (await response.json()) as unknown;
@@ -430,7 +464,12 @@ const trySaveRemoteState = async (state: AppState): Promise<boolean> => {
       return true;
     }
 
-    if (response.status === 401 || response.status === 412 || response.status === 428) {
+    if (response.status === 401) {
+      handleUnauthorizedResponse();
+      return false;
+    }
+
+    if (response.status === 412 || response.status === 428) {
       remoteStateToken = null;
       remoteStateVersion = null;
     }
@@ -461,7 +500,12 @@ const tryClearRemoteState = async (): Promise<boolean> => {
       return true;
     }
 
-    if (response.status === 401 || response.status === 412 || response.status === 428) {
+    if (response.status === 401) {
+      handleUnauthorizedResponse();
+      return false;
+    }
+
+    if (response.status === 412 || response.status === 428) {
       remoteStateToken = null;
       remoteStateVersion = null;
     }

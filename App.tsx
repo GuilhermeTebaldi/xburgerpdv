@@ -40,6 +40,7 @@ import {
 import {
   clearAdminAuthToken,
   hasAdminAuthToken,
+  invalidateAdminSession,
   persistAdminAuthToken,
   readAdminAuthToken,
 } from './data/adminAuthToken';
@@ -66,11 +67,19 @@ import {
 } from './data/printPreferences';
 import { fetchPrintPreferences, updatePrintPreferences } from './data/printPreferencesClient';
 import { buildReceiptPrintRoutePath } from './utils/printRoutes';
+import {
+  cleanupExpiredReceiptPrintPayloads,
+  createReceiptPrintPayloadId,
+  saveReceiptPrintPayload,
+  setReceiptPrintPayloadOnWindow,
+  type ReceiptPrintPayload,
+} from './utils/receiptPrintPayload';
 
 const ADMIN_GATE_KEY = 'xburger_admin_gate';
 const ADMIN_SESSION_KEY = 'xburger_admin_session';
 const ADMIN_SESSION_BACKUP_KEY = 'xburger_admin_session_backup';
 const OFFLINE_SALE_QUEUE_KEY = 'xburger_offline_sale_queue_v1';
+const PENDING_DRAFT_ADDS_KEY = 'qb_pending_draft_adds_v1';
 const CASH_HISTORY_LEGACY_MODE_KEY = 'xburger_cash_history_legacy_mode_v1';
 const LOCAL_CASH_REGISTER_KEY = 'xburger_cash_register_local_v1';
 const LOCAL_DAILY_HISTORY_KEY = 'xburger_daily_sales_history_local_v1';
@@ -87,6 +96,11 @@ interface OfflineQueuedSale {
 interface RunCommandOptions {
   skipOfflineQueue?: boolean;
   silentSuccessNotification?: boolean;
+  trackPendingState?: boolean;
+}
+
+interface ExecuteSyncedCommandOptions {
+  trackPendingState?: boolean;
 }
 
 interface UndoSaleGroup {
@@ -107,6 +121,50 @@ interface AdminSessionBarrier {
 interface StockUpdateOptions {
   useCashRegister?: boolean;
   purchaseDescription?: string;
+}
+
+interface PendingDraftAdd {
+  id: string;
+  draftId: string;
+  productId: string;
+  quantity: number;
+  recipeOverride?: RecipeItem[];
+  priceOverride?: number;
+  note?: string;
+  nameSnapshot?: string;
+  unitPriceSnapshot?: number;
+  customerType?: SaleCustomerType;
+  createdAt: string;
+  updatedAt: string;
+}
+
+type PendingDraftAddsByDraftId = Record<string, PendingDraftAdd[]>;
+
+interface CornerSyncState {
+  status: 'syncing' | 'success' | 'error';
+  message: string;
+}
+
+interface PaymentCommitSnapshot {
+  draftId: string;
+  customerType: SaleCustomerType;
+  draftItems: SaleDraft['items'];
+  draftTotal: number;
+  saleOrigin: SaleOrigin;
+  appOrderTotal: number | null;
+  paymentMethod: SaleBasePaymentMethod;
+  isSplitModeEnabled: boolean;
+  splitPayload: {
+    splitMode: SalePaymentSplitMode;
+    splitCount: number;
+    splitPayments: SalePaymentSplitEntry[];
+  } | null;
+  cashReceived: number | null;
+}
+
+interface PaymentCommitQueueItem {
+  snapshot: PaymentCommitSnapshot;
+  printWindowOpened: boolean;
 }
 
 type AuthRole = 'ADMIN' | 'OPERATOR' | 'AUDITOR';
@@ -376,6 +434,14 @@ const getSaleDayKey = (timestamp: Date | string): string | null => {
   return saleDate.toLocaleDateString('pt-BR');
 };
 
+const getSaleOrderGroupKey = (sale: Sale): string =>
+  sale.saleDraftId ? `draft:${sale.saleDraftId}` : `sale:${sale.id}`;
+
+const countSaleOrders = (entries: Sale[]): number => {
+  if (!Array.isArray(entries) || entries.length === 0) return 0;
+  return new Set(entries.map((sale) => getSaleOrderGroupKey(sale))).size;
+};
+
 const formatMoney = (value: number): string => value.toFixed(2);
 
 const parseMoneyInput = (raw: string): number | null => {
@@ -552,6 +618,107 @@ const normalizeQueuedSale = (value: unknown): OfflineQueuedSale | null => {
   };
 };
 
+const normalizePendingDraftAdd = (value: unknown): PendingDraftAdd | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+
+  const id = typeof source.id === 'string' ? source.id.trim() : '';
+  const draftId = typeof source.draftId === 'string' ? source.draftId.trim() : '';
+  const productId = typeof source.productId === 'string' ? source.productId.trim() : '';
+  if (!id || !draftId || !productId) return null;
+
+  const quantityRaw = Number(source.quantity);
+  const quantity = Number.isFinite(quantityRaw) ? Math.max(1, Math.floor(quantityRaw)) : 1;
+  const recipeOverride = normalizeRecipeOverride(source.recipeOverride);
+  const priceOverrideRaw = Number(source.priceOverride);
+  const priceOverride =
+    Number.isFinite(priceOverrideRaw) && priceOverrideRaw >= 0 ? roundMoney(priceOverrideRaw) : undefined;
+  const unitPriceSnapshotRaw = Number(source.unitPriceSnapshot);
+  const unitPriceSnapshot =
+    Number.isFinite(unitPriceSnapshotRaw) && unitPriceSnapshotRaw >= 0
+      ? roundMoney(unitPriceSnapshotRaw)
+      : undefined;
+  const customerType =
+    source.customerType === 'BALCAO' || source.customerType === 'ENTREGA' ? source.customerType : undefined;
+  const note = typeof source.note === 'string' && source.note.trim() ? source.note.trim() : undefined;
+  const nameSnapshot =
+    typeof source.nameSnapshot === 'string' && source.nameSnapshot.trim() ? source.nameSnapshot.trim() : undefined;
+  const createdAt =
+    typeof source.createdAt === 'string' && !Number.isNaN(Date.parse(source.createdAt))
+      ? source.createdAt
+      : new Date().toISOString();
+  const updatedAt =
+    typeof source.updatedAt === 'string' && !Number.isNaN(Date.parse(source.updatedAt))
+      ? source.updatedAt
+      : createdAt;
+
+  return {
+    id,
+    draftId,
+    productId,
+    quantity,
+    recipeOverride,
+    priceOverride,
+    note,
+    nameSnapshot,
+    unitPriceSnapshot,
+    customerType,
+    createdAt,
+    updatedAt,
+  };
+};
+
+const loadPendingDraftAdds = (): PendingDraftAddsByDraftId => {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(getScopedAuthStorageKey(PENDING_DRAFT_ADDS_KEY));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+
+    const normalized: PendingDraftAddsByDraftId = {};
+    Object.entries(parsed as Record<string, unknown>).forEach(([draftId, entries]) => {
+      if (typeof draftId !== 'string' || !draftId.trim() || !Array.isArray(entries)) return;
+      const normalizedEntries = entries
+        .map((entry) => normalizePendingDraftAdd(entry))
+        .filter((entry): entry is PendingDraftAdd => entry !== null);
+      if (normalizedEntries.length > 0) {
+        normalized[draftId] = normalizedEntries;
+      }
+    });
+
+    return normalized;
+  } catch {
+    return {};
+  }
+};
+
+const savePendingDraftAdds = (value: PendingDraftAddsByDraftId): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(getScopedAuthStorageKey(PENDING_DRAFT_ADDS_KEY), JSON.stringify(value));
+  } catch {
+    // ignore storage write failures
+  }
+};
+
+const buildRecipeSignature = (recipe: RecipeItem[] | undefined): string => {
+  if (!Array.isArray(recipe) || recipe.length === 0) return '';
+  const grouped = new Map<string, number>();
+  recipe.forEach((entry) => {
+    const ingredientId =
+      typeof entry?.ingredientId === 'string' ? entry.ingredientId.trim() : '';
+    const quantity = Number(entry?.quantity);
+    if (!ingredientId || !Number.isFinite(quantity) || quantity <= 0) return;
+    const current = grouped.get(ingredientId) || 0;
+    grouped.set(ingredientId, Number((current + quantity).toFixed(6)));
+  });
+  return [...grouped.entries()]
+    .sort((left, right) => left[0].localeCompare(right[0]))
+    .map(([ingredientId, quantity]) => `${ingredientId}:${quantity}`)
+    .join('|');
+};
+
 const loadOfflineSaleQueue = (): OfflineQueuedSale[] => {
   if (typeof window === 'undefined') return [];
   try {
@@ -596,13 +763,18 @@ const App: React.FC = () => {
   const [pendingOfflineSales, setPendingOfflineSales] = useState(0);
   const commandQueueRef = useRef<Promise<void>>(Promise.resolve());
   const offlineSalesQueueRef = useRef<OfflineQueuedSale[]>([]);
+  const pendingDraftAddsByDraftIdRef = useRef<PendingDraftAddsByDraftId>({});
+  const confirmingPaidDraftIdsRef = useRef<Set<string>>(new Set());
+  const paymentCommitQueueRef = useRef<PaymentCommitQueueItem[]>([]);
+  const isProcessingPaymentCommitQueueRef = useRef(false);
   const isFlushingOfflineSalesRef = useRef(false);
   const isOfflineQueueHydratedRef = useRef(false);
+  const isPendingDraftAddsHydratedRef = useRef(false);
   const isRemoteStateSyncInFlightRef = useRef(false);
   const lastRemoteStateVersionRef = useRef<string | null>(null);
   const activeDraftIdRef = useRef<string | null>(null);
   const saleDraftsRef = useRef<SaleDraft[]>(DEFAULT_APP_STATE.saleDrafts);
-  const pendingDraftCreationRef = useRef<Promise<string | null> | null>(null);
+  const saleDraftsWithPendingRef = useRef<SaleDraft[]>(DEFAULT_APP_STATE.saleDrafts);
   
   const [ingredients, setIngredients] = useState<Ingredient[]>(DEFAULT_APP_STATE.ingredients);
   const [products, setProducts] = useState<Product[]>(DEFAULT_APP_STATE.products);
@@ -622,6 +794,9 @@ const App: React.FC = () => {
     DEFAULT_APP_STATE.globalCleaningStockEntries
   );
   const [saleDrafts, setSaleDrafts] = useState<SaleDraft[]>(DEFAULT_APP_STATE.saleDrafts);
+  const [pendingDraftAddsByDraftId, setPendingDraftAddsByDraftId] = useState<PendingDraftAddsByDraftId>({});
+  const [locallyCancelledDraftIds, setLocallyCancelledDraftIds] = useState<string[]>([]);
+  const [confirmingPaidDraftIds, setConfirmingPaidDraftIds] = useState<string[]>([]);
   const [isCashHistoryLegacyMode, setIsCashHistoryLegacyMode] = useState<boolean>(() =>
     readCashHistoryLegacyMode()
   );
@@ -645,13 +820,13 @@ const App: React.FC = () => {
     isVisible: false,
     message: '',
   });
+  const [cornerSyncState, setCornerSyncState] = useState<CornerSyncState | null>(null);
   const [isUndoHistoryOpen, setIsUndoHistoryOpen] = useState(false);
   const [expandedUndoGroupId, setExpandedUndoGroupId] = useState<string | null>(null);
   const [isUndoProcessing, setIsUndoProcessing] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [isCancellingDraft, setIsCancellingDraft] = useState(false);
-  const [isConfirmingPaid, setIsConfirmingPaid] = useState(false);
   const [cartBumpTick, setCartBumpTick] = useState(-1);
   const [cartEntryFx, setCartEntryFx] = useState<{ id: number; label: string } | null>(null);
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
@@ -670,9 +845,9 @@ const App: React.FC = () => {
   const [appOrderTotalInput, setAppOrderTotalInput] = useState('');
   const [cashReceivedInput, setCashReceivedInput] = useState('');
   const cartEntryFxTimeoutRef = useRef<number | null>(null);
+  const cornerSyncTimeoutRef = useRef<number | null>(null);
   const appOrderTotalInputRef = useRef<HTMLInputElement | null>(null);
   const splitCurrentAmountInputRef = useRef<HTMLInputElement | null>(null);
-  const preparedReceiptWindowRef = useRef<Window | null>(null);
   const hasAppliedRoleLandingRef = useRef(false);
   const canAccessAdmin = authRole === 'ADMIN';
 
@@ -829,6 +1004,17 @@ const App: React.FC = () => {
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        invalidateAdminSession();
+        setAuthRole(null);
+        setIsAdminAuthenticated(false);
+        resetBillingBlockState();
+        setNotification({
+          isVisible: true,
+          message: 'Sessão expirada. Faça login novamente.',
+        });
+        return;
+      }
       throw new Error('Falha ao validar usuário autenticado.');
     }
 
@@ -1047,6 +1233,198 @@ const App: React.FC = () => {
     setNotification({ isVisible: true, message });
   }, []);
 
+  const showCornerSync = useCallback((status: CornerSyncState['status'], message: string) => {
+    if (cornerSyncTimeoutRef.current !== null) {
+      window.clearTimeout(cornerSyncTimeoutRef.current);
+      cornerSyncTimeoutRef.current = null;
+    }
+
+    setCornerSyncState({ status, message });
+    if (status !== 'syncing') {
+      cornerSyncTimeoutRef.current = window.setTimeout(() => {
+        setCornerSyncState((current) => {
+          if (current?.status !== status) return current;
+          return null;
+        });
+      }, status === 'error' ? 4200 : 2200);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (cornerSyncTimeoutRef.current !== null) {
+        window.clearTimeout(cornerSyncTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const replacePendingDraftAdds = useCallback((nextPendingAdds: PendingDraftAddsByDraftId) => {
+    const normalized: PendingDraftAddsByDraftId = {};
+    Object.entries(nextPendingAdds).forEach(([draftId, entries]) => {
+      if (!Array.isArray(entries) || entries.length === 0) return;
+      const normalizedEntries = entries
+        .map((entry) => normalizePendingDraftAdd(entry))
+        .filter((entry): entry is PendingDraftAdd => entry !== null);
+      if (normalizedEntries.length > 0) {
+        normalized[draftId] = normalizedEntries;
+      }
+    });
+
+    pendingDraftAddsByDraftIdRef.current = normalized;
+    setPendingDraftAddsByDraftId(normalized);
+    savePendingDraftAdds(normalized);
+    isPendingDraftAddsHydratedRef.current = true;
+  }, []);
+
+  const hydratePendingDraftAdds = useCallback(() => {
+    if (isPendingDraftAddsHydratedRef.current) return;
+    const loaded = loadPendingDraftAdds();
+    pendingDraftAddsByDraftIdRef.current = loaded;
+    setPendingDraftAddsByDraftId(loaded);
+    isPendingDraftAddsHydratedRef.current = true;
+  }, []);
+
+  const clearPendingDraftAddsForDraft = useCallback(
+    (draftId: string) => {
+      const normalizedDraftId = draftId.trim();
+      if (!normalizedDraftId) return;
+      hydratePendingDraftAdds();
+      if (!pendingDraftAddsByDraftIdRef.current[normalizedDraftId]) return;
+      const next = { ...pendingDraftAddsByDraftIdRef.current };
+      delete next[normalizedDraftId];
+      replacePendingDraftAdds(next);
+    },
+    [hydratePendingDraftAdds, replacePendingDraftAdds]
+  );
+
+  const queuePendingDraftAdd = useCallback(
+    (params: {
+      draftId: string;
+      product: Product;
+      recipeOverride?: RecipeItem[];
+      priceOverride?: number;
+      quantity?: number;
+      customerType?: SaleCustomerType;
+    }) => {
+      const normalizedDraftId = params.draftId.trim();
+      if (!normalizedDraftId) return;
+
+      hydratePendingDraftAdds();
+      const nowIso = new Date().toISOString();
+      const quantity = Number.isFinite(Number(params.quantity)) ? Math.max(1, Math.floor(Number(params.quantity))) : 1;
+      const recipe = normalizeRecipeOverride(params.recipeOverride || params.product.recipe) || params.product.recipe;
+      const recipeSignature = buildRecipeSignature(recipe);
+      const unitPriceSnapshot = roundMoney(
+        Number.isFinite(Number(params.priceOverride)) && Number(params.priceOverride) >= 0
+          ? Number(params.priceOverride)
+          : Number(params.product.price) || 0
+      );
+      const next = { ...pendingDraftAddsByDraftIdRef.current };
+      const entries = [...(next[normalizedDraftId] || [])];
+
+      const mergeable = entries.find(
+        (entry) =>
+          entry.productId === params.product.id &&
+          roundMoney(Number(entry.unitPriceSnapshot) || 0) === unitPriceSnapshot &&
+          (entry.note || '').trim() === '' &&
+          buildRecipeSignature(entry.recipeOverride || []) === recipeSignature
+      );
+
+      if (mergeable) {
+        mergeable.quantity += quantity;
+        mergeable.updatedAt = nowIso;
+        if (params.customerType) {
+          mergeable.customerType = params.customerType;
+        }
+      } else {
+        entries.push({
+          id: createClientId('pdraft-item'),
+          draftId: normalizedDraftId,
+          productId: params.product.id,
+          quantity,
+          recipeOverride: recipe,
+          priceOverride: unitPriceSnapshot,
+          unitPriceSnapshot,
+          note: undefined,
+          nameSnapshot: params.product.name,
+          customerType: params.customerType,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        });
+      }
+
+      next[normalizedDraftId] = entries;
+      replacePendingDraftAdds(next);
+      setLocallyCancelledDraftIds((current) => current.filter((id) => id !== normalizedDraftId));
+    },
+    [hydratePendingDraftAdds, replacePendingDraftAdds]
+  );
+
+  const updatePendingDraftItemQuantity = useCallback(
+    (draftId: string, itemId: string, nextQty: number): boolean => {
+      const normalizedDraftId = draftId.trim();
+      const normalizedItemId = itemId.trim();
+      if (!normalizedDraftId || !normalizedItemId) return false;
+      hydratePendingDraftAdds();
+
+      const entries = pendingDraftAddsByDraftIdRef.current[normalizedDraftId];
+      if (!entries || entries.length === 0) return false;
+
+      const nextEntries = entries.map((entry) => ({ ...entry }));
+      const target = nextEntries.find((entry) => entry.id === normalizedItemId);
+      if (!target) return false;
+
+      if (nextQty <= 0) {
+        const filtered = nextEntries.filter((entry) => entry.id !== normalizedItemId);
+        const next = { ...pendingDraftAddsByDraftIdRef.current };
+        if (filtered.length > 0) {
+          next[normalizedDraftId] = filtered;
+        } else {
+          delete next[normalizedDraftId];
+        }
+        replacePendingDraftAdds(next);
+        return true;
+      }
+
+      target.quantity = Math.max(1, Math.floor(nextQty));
+      target.updatedAt = new Date().toISOString();
+      const next = { ...pendingDraftAddsByDraftIdRef.current, [normalizedDraftId]: nextEntries };
+      replacePendingDraftAdds(next);
+      return true;
+    },
+    [hydratePendingDraftAdds, replacePendingDraftAdds]
+  );
+
+  const updatePendingDraftItemNote = useCallback(
+    (draftId: string, itemId: string, note: string): boolean => {
+      const normalizedDraftId = draftId.trim();
+      const normalizedItemId = itemId.trim();
+      if (!normalizedDraftId || !normalizedItemId) return false;
+      hydratePendingDraftAdds();
+
+      const entries = pendingDraftAddsByDraftIdRef.current[normalizedDraftId];
+      if (!entries || entries.length === 0) return false;
+
+      const nextEntries = entries.map((entry) => ({ ...entry }));
+      const target = nextEntries.find((entry) => entry.id === normalizedItemId);
+      if (!target) return false;
+
+      const normalizedNote = note.trim();
+      target.note = normalizedNote || undefined;
+      target.updatedAt = new Date().toISOString();
+
+      const next = { ...pendingDraftAddsByDraftIdRef.current, [normalizedDraftId]: nextEntries };
+      replacePendingDraftAdds(next);
+      return true;
+    },
+    [hydratePendingDraftAdds, replacePendingDraftAdds]
+  );
+
+  useEffect(() => {
+    hydratePendingDraftAdds();
+    cleanupExpiredReceiptPrintPayloads();
+  }, [hydratePendingDraftAdds]);
+
   const enableCashHistoryLegacyMode = useCallback(() => {
     writeCashHistoryLegacyMode(true);
     setIsCashHistoryLegacyMode(true);
@@ -1167,8 +1545,14 @@ const App: React.FC = () => {
   }, [billingBlockState.isBlocked, isAccessVerified, syncRemoteStateSnapshot]);
 
   const executeSyncedCommand = useCallback(
-    async (command: StateCommand): Promise<{ ok: true } | { ok: false; error: unknown }> => {
-      setPendingStateOps((current) => current + 1);
+    async (
+      command: StateCommand,
+      options: ExecuteSyncedCommandOptions = {}
+    ): Promise<{ ok: true } | { ok: false; error: unknown }> => {
+      const shouldTrackPendingState = options.trackPendingState !== false;
+      if (shouldTrackPendingState) {
+        setPendingStateOps((current) => current + 1);
+      }
 
       const executeCommand = async (): Promise<{ ok: true } | { ok: false; error: unknown }> => {
         try {
@@ -1178,7 +1562,9 @@ const App: React.FC = () => {
         } catch (error) {
           return { ok: false, error };
         } finally {
-          setPendingStateOps((current) => Math.max(0, current - 1));
+          if (shouldTrackPendingState) {
+            setPendingStateOps((current) => Math.max(0, current - 1));
+          }
         }
       };
 
@@ -1206,7 +1592,9 @@ const App: React.FC = () => {
       const normalizedCommand = isSaleRegisterCommand(command)
         ? ensureSaleCommandIdentifiers(command)
         : command;
-      const result = await executeSyncedCommand(normalizedCommand);
+      const result = await executeSyncedCommand(normalizedCommand, {
+        trackPendingState: options.trackPendingState,
+      });
 
       if (result.ok) {
         if (successMessage && !options.silentSuccessNotification) {
@@ -1315,14 +1703,8 @@ const App: React.FC = () => {
   }, [billingBlockState.isBlocked, flushOfflineSalesQueue]);
 
   const totalPendingOps = pendingStateOps + pendingOfflineSales;
-  const isSyncIndicatorVisible = isStateHydrating || totalPendingOps > 0;
-  const syncIndicatorMessage = isStateHydrating
-    ? 'Carregando dados do servidor...'
-    : pendingStateOps > 0
-      ? 'Aguardando resposta do banco/API...'
-      : pendingOfflineSales > 0
-        ? `Sem internet estável. ${pendingOfflineSales} venda(s) aguardando envio.`
-        : 'Sistema sincronizado.';
+  const isSyncIndicatorVisible = isStateHydrating;
+  const syncIndicatorMessage = 'Carregando dados do servidor...';
 
   const handleAdminLogin = useCallback(
     (result: { success: boolean; token?: string; role?: AuthRole }) => {
@@ -1347,9 +1729,93 @@ const App: React.FC = () => {
     [setAuthRole, showNotification]
   );
 
+  const saleDraftsWithPendingAdds = useMemo(() => {
+    const productById = new Map<string, Product>(products.map((product) => [product.id, product]));
+    const orderedDrafts: SaleDraft[] = saleDrafts.map((draft) => ({
+      ...draft,
+      items: draft.items.map((item) => ({ ...item })),
+      payment: {
+        ...draft.payment,
+        splitPayments: draft.payment.splitPayments?.map((entry) => ({ ...entry })) || [],
+      },
+    }));
+    const byId = new Map<string, SaleDraft>(orderedDrafts.map((draft) => [draft.id, draft]));
+
+    Object.entries(pendingDraftAddsByDraftId).forEach(([draftId, pendingAdds]) => {
+      if (!Array.isArray(pendingAdds) || pendingAdds.length === 0) return;
+
+      const pendingItems: SaleDraft['items'] = pendingAdds.map((pending) => {
+        const product = productById.get(pending.productId);
+        const recipe = pending.recipeOverride || product?.recipe || [];
+        const unitPrice =
+          Number.isFinite(Number(pending.unitPriceSnapshot)) && Number(pending.unitPriceSnapshot) >= 0
+            ? Number(pending.unitPriceSnapshot)
+            : Number.isFinite(Number(pending.priceOverride)) && Number(pending.priceOverride) >= 0
+              ? Number(pending.priceOverride)
+              : Number(product?.price) || 0;
+
+        return {
+          id: pending.id,
+          productId: pending.productId,
+          nameSnapshot: pending.nameSnapshot || product?.name || pending.productId,
+          qty: Math.max(1, Math.floor(Number(pending.quantity) || 1)),
+          unitPriceSnapshot: roundMoney(unitPrice),
+          note: pending.note,
+          recipe,
+        };
+      });
+
+      if (pendingItems.length === 0) return;
+      const pendingTotal = roundMoney(
+        pendingItems.reduce((sum, item) => sum + (item.unitPriceSnapshot || 0) * item.qty, 0)
+      );
+      const targetDraft = byId.get(draftId);
+      if (targetDraft) {
+        targetDraft.items = [...targetDraft.items, ...pendingItems];
+        targetDraft.total = roundMoney((Number(targetDraft.total) || 0) + pendingTotal);
+        return;
+      }
+
+      const timestamps = pendingAdds
+        .flatMap((entry) => [entry.createdAt, entry.updatedAt])
+        .filter((value): value is string => typeof value === 'string' && !Number.isNaN(Date.parse(value)));
+      const createdAt = timestamps[0] || new Date().toISOString();
+      const updatedAt = timestamps[timestamps.length - 1] || createdAt;
+      const customerType = pendingAdds.find((entry) => entry.customerType)?.customerType || 'BALCAO';
+      orderedDrafts.push({
+        id: draftId,
+        createdAt,
+        updatedAt,
+        items: pendingItems,
+        total: pendingTotal,
+        customerType,
+        saleOrigin: 'LOCAL',
+        appOrderTotal: null,
+        status: 'DRAFT',
+        payment: {
+          method: null,
+          cashReceived: null,
+          change: null,
+          splitMode: null,
+          splitCount: null,
+          splitPayments: [],
+          confirmedAt: null,
+        },
+        stockDebited: false,
+      });
+    });
+
+    return orderedDrafts;
+  }, [pendingDraftAddsByDraftId, products, saleDrafts]);
   const openSaleDrafts = useMemo(
-    () => saleDrafts.filter((draft) => draft.status === 'DRAFT' || draft.status === 'PENDING_PAYMENT'),
-    [saleDrafts]
+    () =>
+      saleDraftsWithPendingAdds.filter(
+        (draft) =>
+          (draft.status === 'DRAFT' || draft.status === 'PENDING_PAYMENT') &&
+          !locallyCancelledDraftIds.includes(draft.id) &&
+          !confirmingPaidDraftIds.includes(draft.id)
+      ),
+    [confirmingPaidDraftIds, locallyCancelledDraftIds, saleDraftsWithPendingAdds]
   );
   useEffect(() => {
     activeDraftIdRef.current = activeDraftId;
@@ -1357,6 +1823,51 @@ const App: React.FC = () => {
   useEffect(() => {
     saleDraftsRef.current = saleDrafts;
   }, [saleDrafts]);
+  useEffect(() => {
+    saleDraftsWithPendingRef.current = saleDraftsWithPendingAdds;
+  }, [saleDraftsWithPendingAdds]);
+  useEffect(() => {
+    if (saleDrafts.length === 0 && locallyCancelledDraftIds.length === 0) return;
+
+    const nextPending = { ...pendingDraftAddsByDraftIdRef.current };
+    let pendingChanged = false;
+    saleDrafts.forEach((draft) => {
+      if ((draft.status === 'PAID' || draft.status === 'CANCELLED') && nextPending[draft.id]) {
+        delete nextPending[draft.id];
+        pendingChanged = true;
+      }
+    });
+    if (pendingChanged) {
+      replacePendingDraftAdds(nextPending);
+    }
+
+    setLocallyCancelledDraftIds((current) => {
+      const next = current.filter((draftId) => {
+        const draft = saleDrafts.find((entry) => entry.id === draftId);
+        return Boolean(draft && (draft.status === 'DRAFT' || draft.status === 'PENDING_PAYMENT'));
+      });
+      if (next.length === current.length && next.every((draftId, index) => draftId === current[index])) {
+        return current;
+      }
+      return next;
+    });
+  }, [replacePendingDraftAdds, saleDrafts]);
+  useEffect(() => {
+    const currentIds = Array.from(confirmingPaidDraftIdsRef.current);
+    if (currentIds.length === 0) return;
+
+    const draftsById = new Map(saleDraftsWithPendingAdds.map((draft) => [draft.id, draft]));
+    const nextIds = currentIds.filter((draftId) => {
+      const draft = draftsById.get(draftId);
+      return Boolean(draft && (draft.status === 'DRAFT' || draft.status === 'PENDING_PAYMENT'));
+    });
+    if (nextIds.length === currentIds.length && nextIds.every((draftId, index) => draftId === currentIds[index])) {
+      return;
+    }
+
+    confirmingPaidDraftIdsRef.current = new Set(nextIds);
+    setConfirmingPaidDraftIds(nextIds);
+  }, [saleDraftsWithPendingAdds]);
   const activeDraft = useMemo(() => {
     if (activeDraftId) {
       const selected = openSaleDrafts.find((draft) => draft.id === activeDraftId);
@@ -1378,8 +1889,11 @@ const App: React.FC = () => {
   }, [activeDraft, activeDraftId]);
 
   const resolveEditableDraftId = useCallback((): string | null => {
-    const currentOpenDrafts = saleDraftsRef.current.filter(
-      (draft) => draft.status === 'DRAFT' || draft.status === 'PENDING_PAYMENT'
+    const currentOpenDrafts = saleDraftsWithPendingRef.current.filter(
+      (draft) =>
+        (draft.status === 'DRAFT' || draft.status === 'PENDING_PAYMENT') &&
+        !confirmingPaidDraftIdsRef.current.has(draft.id) &&
+        !locallyCancelledDraftIds.includes(draft.id)
     );
     const selected = activeDraftIdRef.current
       ? currentOpenDrafts.find((draft) => draft.id === activeDraftIdRef.current)
@@ -1396,44 +1910,23 @@ const App: React.FC = () => {
     activeDraftIdRef.current = fallback.id;
     setActiveDraftId(fallback.id);
     return fallback.id;
+  }, [locallyCancelledDraftIds]);
+
+  const markDraftAsConfirming = useCallback((draftId: string) => {
+    const normalizedDraftId = draftId.trim();
+    if (!normalizedDraftId) return;
+    confirmingPaidDraftIdsRef.current.add(normalizedDraftId);
+    setConfirmingPaidDraftIds((current) =>
+      current.includes(normalizedDraftId) ? current : [...current, normalizedDraftId]
+    );
   }, []);
 
-  const ensureActiveDraft = useCallback(
-    async (customerType: SaleCustomerType = 'BALCAO'): Promise<string | null> => {
-      const existingDraftId = resolveEditableDraftId();
-      if (existingDraftId) {
-        return existingDraftId;
-      }
-
-      if (pendingDraftCreationRef.current) {
-        return pendingDraftCreationRef.current;
-      }
-
-      const draftId = createClientId('draft');
-      const creationPromise = (async () => {
-        const created = await runCommandWithSync(
-          {
-            type: 'SALE_DRAFT_CREATE',
-            draftId,
-            customerType,
-          },
-          undefined,
-          { silentSuccessNotification: true }
-        );
-
-        if (!created) return null;
-        activeDraftIdRef.current = draftId;
-        setActiveDraftId(draftId);
-        return draftId;
-      })().finally(() => {
-        pendingDraftCreationRef.current = null;
-      });
-
-      pendingDraftCreationRef.current = creationPromise;
-      return creationPromise;
-    },
-    [resolveEditableDraftId, runCommandWithSync]
-  );
+  const unmarkDraftAsConfirming = useCallback((draftId: string) => {
+    const normalizedDraftId = draftId.trim();
+    if (!normalizedDraftId) return;
+    confirmingPaidDraftIdsRef.current.delete(normalizedDraftId);
+    setConfirmingPaidDraftIds((current) => current.filter((entry) => entry !== normalizedDraftId));
+  }, []);
 
   const handleCreateNewDraft = (customerType: SaleCustomerType) => {
     void (async () => {
@@ -1480,49 +1973,53 @@ const App: React.FC = () => {
   }, []);
 
   const handleOpenCart = () => {
-    void (async () => {
-      const draftId = await ensureActiveDraft('BALCAO');
-      if (!draftId) return;
-      activeDraftIdRef.current = draftId;
-      setActiveDraftId(draftId);
-      setIsCartOpen(true);
-    })();
+    const draftId = resolveEditableDraftId();
+    activeDraftIdRef.current = draftId;
+    setActiveDraftId(draftId);
+    setIsCartOpen(true);
   };
 
   const handleSale = useCallback((product: Product, recipeOverride?: RecipeItem[], priceOverride?: number) => {
-    void (async () => {
-      let draftId = resolveEditableDraftId();
-      let shouldSetActiveDraft = false;
-      if (!draftId) {
-        draftId = createClientId('draft');
-        shouldSetActiveDraft = true;
-      }
+    let draftId = resolveEditableDraftId();
+    let shouldSetActiveDraft = false;
+    if (!draftId) {
+      draftId = createClientId('draft');
+      shouldSetActiveDraft = true;
+    }
 
-      const ok = await runCommandWithSync(
-        {
-          type: 'SALE_DRAFT_ADD_ITEM',
-          draftId,
-          productId: product.id,
-          quantity: 1,
-          recipeOverride,
-          priceOverride,
-        },
-        `${product.name} adicionado ao carrinho!`,
-        { silentSuccessNotification: false }
-      );
-      if (!ok) return;
+    const existingDraft = saleDraftsWithPendingRef.current.find((draft) => draft.id === draftId);
+    queuePendingDraftAdd({
+      draftId,
+      product,
+      recipeOverride,
+      priceOverride,
+      quantity: 1,
+      customerType: existingDraft?.customerType || 'BALCAO',
+    });
 
-      if (shouldSetActiveDraft) {
-        activeDraftIdRef.current = draftId;
-        setActiveDraftId(draftId);
-      }
+    if (shouldSetActiveDraft) {
+      activeDraftIdRef.current = draftId;
+      setActiveDraftId(draftId);
+    }
 
-      triggerCartEntryEffect(product.name);
-    })();
-  }, [resolveEditableDraftId, runCommandWithSync, triggerCartEntryEffect]);
+    showNotification(`${product.name} adicionado ao carrinho!`);
+    triggerCartEntryEffect(product.name);
+  }, [queuePendingDraftAdd, resolveEditableDraftId, showNotification, triggerCartEntryEffect]);
 
   const handleUpdateDraftCustomerType = (customerType: SaleCustomerType) => {
     if (!activeDraft) return;
+    const persistedDraft = saleDraftsRef.current.find((draft) => draft.id === activeDraft.id);
+    if (!persistedDraft) {
+      hydratePendingDraftAdds();
+      const entries = pendingDraftAddsByDraftIdRef.current[activeDraft.id];
+      if (!entries || entries.length === 0) return;
+      const next = {
+        ...pendingDraftAddsByDraftIdRef.current,
+        [activeDraft.id]: entries.map((entry) => ({ ...entry, customerType })),
+      };
+      replacePendingDraftAdds(next);
+      return;
+    }
     void runCommandWithSync(
       {
         type: 'SALE_DRAFT_SET_CUSTOMER_TYPE',
@@ -1538,6 +2035,11 @@ const App: React.FC = () => {
     if (!activeDraft) return;
     if (activeDraft.status !== 'DRAFT') {
       showNotification('Edite os itens apenas com a venda em DRAFT.');
+      return;
+    }
+
+    const handledPending = updatePendingDraftItemQuantity(activeDraft.id, itemId, nextQty);
+    if (handledPending) {
       return;
     }
 
@@ -1568,6 +2070,11 @@ const App: React.FC = () => {
 
   const handleUpdateDraftItemNote = (itemId: string, note: string) => {
     if (!activeDraft || activeDraft.status !== 'DRAFT') return;
+    const handledPending = updatePendingDraftItemNote(activeDraft.id, itemId, note);
+    if (handledPending) {
+      return;
+    }
+
     void runCommandWithSync(
       {
         type: 'SALE_DRAFT_UPDATE_ITEM',
@@ -1587,6 +2094,29 @@ const App: React.FC = () => {
     void (async () => {
       setIsCancellingDraft(true);
       try {
+        hydratePendingDraftAdds();
+        const persistedDraft = saleDraftsRef.current.find((draft) => draft.id === draftId);
+        const hasPersistedItems = Boolean(persistedDraft && persistedDraft.items.length > 0);
+
+        if (!persistedDraft || !hasPersistedItems) {
+          clearPendingDraftAddsForDraft(draftId);
+          if (persistedDraft && !hasPersistedItems) {
+            setLocallyCancelledDraftIds((current) =>
+              current.includes(draftId) ? current : [...current, draftId]
+            );
+          }
+          showNotification('Venda cancelada.');
+          if (activeDraftIdRef.current === draftId) {
+            activeDraftIdRef.current = null;
+          }
+          setActiveDraftId(null);
+          setIsPaymentOpen(false);
+          setIsCartOpen(false);
+          setIsAppOriginModalOpen(false);
+          resetSplitState('PIX');
+          return;
+        }
+
         const ok = await runCommandWithSync(
           {
             type: 'SALE_DRAFT_CANCEL',
@@ -1743,93 +2273,263 @@ const App: React.FC = () => {
     [activeDraft, appOrderTotalInput, closeAppSaleOriginPanel, saleOrigin]
   );
 
-  const handleSavePaymentMethod = async (): Promise<boolean> => {
-    if (!activeDraft) return false;
-    if (activeDraft.items.length === 0) {
-      showNotification('Carrinho vazio. Não é possível finalizar.');
-      return false;
-    }
+  const flushPendingDraftAdds = useCallback(
+    async (draftId: string, customerType: SaleCustomerType): Promise<boolean> => {
+      const normalizedDraftId = draftId.trim();
+      if (!normalizedDraftId) return false;
+      hydratePendingDraftAdds();
 
+      const pendingAdds = pendingDraftAddsByDraftIdRef.current[normalizedDraftId] || [];
+      if (pendingAdds.length === 0) {
+        return true;
+      }
+
+      const persistedDraft = saleDraftsRef.current.find((draft) => draft.id === normalizedDraftId);
+      if (!persistedDraft) {
+        const created = await runCommandWithSync(
+          {
+            type: 'SALE_DRAFT_CREATE',
+            draftId: normalizedDraftId,
+            customerType,
+          },
+          undefined,
+          { silentSuccessNotification: true, trackPendingState: false }
+        );
+        if (!created) return false;
+      } else if (persistedDraft.status === 'PAID' || persistedDraft.status === 'CANCELLED') {
+        showNotification('Não foi possível sincronizar itens em um pedido já encerrado.');
+        return false;
+      }
+
+      for (const pendingAdd of pendingAdds) {
+        const ok = await runCommandWithSync(
+          {
+            type: 'SALE_DRAFT_ADD_ITEM',
+            draftId: normalizedDraftId,
+            productId: pendingAdd.productId,
+            quantity: pendingAdd.quantity,
+            recipeOverride: pendingAdd.recipeOverride,
+            priceOverride: pendingAdd.priceOverride,
+            note: pendingAdd.note,
+          },
+          undefined,
+          { silentSuccessNotification: true, trackPendingState: false }
+        );
+        if (!ok) return false;
+
+        const next = { ...pendingDraftAddsByDraftIdRef.current };
+        const currentEntries = next[normalizedDraftId] || [];
+        const remainingEntries = currentEntries.filter((entry) => entry.id !== pendingAdd.id);
+        if (remainingEntries.length > 0) {
+          next[normalizedDraftId] = remainingEntries;
+        } else {
+          delete next[normalizedDraftId];
+        }
+        replacePendingDraftAdds(next);
+      }
+
+      return true;
+    },
+    [hydratePendingDraftAdds, replacePendingDraftAdds, runCommandWithSync, showNotification]
+  );
+
+  const buildPaymentCommitSnapshot = (): PaymentCommitSnapshot | null => {
+    if (!activeDraft) return null;
     const appOrderTotalParsed = isAppSaleOrigin(saleOrigin) ? parseMoneyInput(appOrderTotalInput) : null;
-    if (isAppSaleOrigin(saleOrigin) && (appOrderTotalParsed === null || appOrderTotalParsed <= 0)) {
-      showNotification('Informe o valor real da venda no app (iFood/99).');
-      return false;
-    }
-
-    const splitPayload = isSplitModeEnabled ? splitValidation.payload : null;
-    if (isSplitModeEnabled && !splitPayload) {
-      showNotification(splitValidation.error || 'Finalize a divisão antes de confirmar o pagamento.');
-      return false;
-    }
-
+    const splitPayload = isSplitModeEnabled && splitValidation.payload
+      ? {
+          splitMode: splitValidation.payload.splitMode,
+          splitCount: splitValidation.payload.splitCount,
+          splitPayments: splitValidation.payload.splitPayments.map((entry) => ({ ...entry })),
+        }
+      : null;
     const cashReceivedParsed =
       !isSplitModeEnabled && paymentMethod === 'DINHEIRO' ? parseMoneyInput(cashReceivedInput) : null;
-    if (!isSplitModeEnabled && paymentMethod === 'DINHEIRO' && (cashReceivedParsed === null || cashReceivedParsed < 0)) {
-      showNotification('Informe um valor recebido válido em dinheiro.');
-      return false;
-    }
 
-    const finalizeCommand: StateCommand = {
-      type: 'SALE_DRAFT_FINALIZE',
+    return {
       draftId: activeDraft.id,
-      paymentMethod: isSplitModeEnabled ? 'DIVIDIDO' : paymentMethod,
-      cashReceived:
-        !isSplitModeEnabled && paymentMethod === 'DINHEIRO'
-          ? (cashReceivedParsed ?? undefined)
-          : undefined,
-      splitMode: splitPayload?.splitMode,
-      splitCount: splitPayload?.splitCount,
-      splitPayments: splitPayload?.splitPayments,
+      customerType: activeDraft.customerType || 'BALCAO',
+      draftItems: activeDraft.items.map((item) => ({ ...item, recipe: [...item.recipe] })),
+      draftTotal: roundMoney(Number(activeDraft.total) || 0),
       saleOrigin,
-      appOrderTotal: isAppSaleOrigin(saleOrigin) ? (appOrderTotalParsed ?? undefined) : undefined,
+      appOrderTotal: appOrderTotalParsed,
+      paymentMethod,
+      isSplitModeEnabled,
+      splitPayload,
+      cashReceived: cashReceivedParsed,
     };
-
-    // Defensive: backend must persist app-origin and app amount before allowing confirm.
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const ok = await runCommandWithSync(finalizeCommand, undefined, {
-        silentSuccessNotification: true,
-      });
-      if (!ok) return false;
-
-      if (!isAppSaleOrigin(saleOrigin)) {
-        showNotification('Forma de pagamento atualizada.');
-        return true;
-      }
-
-      const persistedDraft = saleDraftsRef.current.find((draft) => draft.id === activeDraft.id);
-      const persistedOrigin = persistedDraft?.saleOrigin || 'LOCAL';
-      const persistedAppTotal = Number(persistedDraft?.appOrderTotal);
-      const expectedAppTotal = Number(appOrderTotalParsed);
-      const hasPersistedAppTotal =
-        Number.isFinite(persistedAppTotal) &&
-        persistedAppTotal > 0 &&
-        Number.isFinite(expectedAppTotal) &&
-        expectedAppTotal > 0 &&
-        Math.abs(persistedAppTotal - expectedAppTotal) <= 0.009;
-
-      if (isAppSaleOrigin(persistedOrigin) && hasPersistedAppTotal) {
-        showNotification('Forma de pagamento atualizada.');
-        return true;
-      }
-    }
-
-    showNotification(
-      'O servidor não confirmou o valor do app. Atualize o backend/sessão antes de confirmar o pagamento.'
-    );
-    return false;
   };
 
-  const closePreparedReceiptWindow = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    const preparedWindow = preparedReceiptWindowRef.current;
-    if (preparedWindow && !preparedWindow.closed) {
-      preparedWindow.close();
-    }
-    preparedReceiptWindowRef.current = null;
-  }, []);
+  const buildReceiptPrintPayloadFromSnapshot = useCallback(
+    (snapshot: PaymentCommitSnapshot, receiptPrintId: string): ReceiptPrintPayload => {
+      const nowIso = new Date().toISOString();
+      const restaurantName = (() => {
+        if (typeof window === 'undefined') return 'XBURGER PDV';
+        try {
+          const local = window.localStorage.getItem('xburger_restaurant_name');
+          const normalized = typeof local === 'string' ? local.trim() : '';
+          return normalized || 'XBURGER PDV';
+        } catch {
+          return 'XBURGER PDV';
+        }
+      })();
+      const lines = snapshot.draftItems.map((item) => {
+        const unitPrice = roundMoney(Number(item.unitPriceSnapshot) || 0);
+        const qty = Math.max(1, Math.floor(Number(item.qty) || 1));
+        return {
+          id: item.id,
+          qty,
+          name: item.nameSnapshot || item.productId,
+          unitPrice,
+          subtotal: roundMoney(unitPrice * qty),
+          note: item.note?.trim() || undefined,
+        };
+      });
+      const itemsTotal = roundMoney(lines.reduce((sum, line) => sum + line.subtotal, 0));
+      const isAppSale = isAppSaleOrigin(snapshot.saleOrigin);
+      const appOrderTotal =
+        isAppSale && Number.isFinite(Number(snapshot.appOrderTotal)) && Number(snapshot.appOrderTotal) > 0
+          ? roundMoney(Number(snapshot.appOrderTotal))
+          : null;
+      const total = isAppSale ? appOrderTotal ?? snapshot.draftTotal : itemsTotal;
+      const paymentSplits =
+        snapshot.isSplitModeEnabled && snapshot.splitPayload
+          ? snapshot.splitPayload.splitPayments.map((entry) => {
+              const amount = roundMoney(Number(entry.amount) || 0);
+              const cashReceived =
+                entry.method === 'DINHEIRO' && Number.isFinite(Number(entry.cashReceived))
+                  ? roundMoney(Number(entry.cashReceived))
+                  : null;
+              return {
+                sequence: entry.sequence,
+                label: entry.label,
+                method: entry.method,
+                amount,
+                cashReceived,
+                change: entry.method === 'DINHEIRO' && cashReceived !== null ? roundMoney(cashReceived - amount) : null,
+              };
+            })
+          : [];
+      const paymentMethodLabel = snapshot.isSplitModeEnabled
+        ? (() => {
+            const methods = paymentSplits.reduce<SaleBasePaymentMethod[]>((acc, entry) => {
+              if (!acc.includes(entry.method)) acc.push(entry.method);
+              return acc;
+            }, []);
+            if (methods.length === 0) return 'DIVIDIDO';
+            return methods.join(' + ');
+          })()
+        : snapshot.paymentMethod;
+      const paymentChange =
+        !snapshot.isSplitModeEnabled && snapshot.paymentMethod === 'DINHEIRO' && snapshot.cashReceived !== null
+          ? roundMoney(snapshot.cashReceived - total)
+          : null;
+      const saleOriginShortLabel =
+        snapshot.saleOrigin === 'IFOOD' ? 'IF' : snapshot.saleOrigin === 'APP99' ? '99' : snapshot.saleOrigin === 'KEETA' ? 'KT' : null;
 
-  const buildReceiptPrintTarget = useCallback(
-    (receiptId: string, options: { pending?: boolean } = {}): string => {
+      return {
+        id: receiptPrintId,
+        createdAt: nowIso,
+        expiresAt: Date.now() + 1000 * 60 * 20,
+        restaurantName,
+        orderNumber: null,
+        orderId: snapshot.draftId,
+        paidAt: nowIso,
+        lines,
+        itemsTotal,
+        total,
+        paymentMethodLabel,
+        paymentCashReceived:
+          !snapshot.isSplitModeEnabled && snapshot.paymentMethod === 'DINHEIRO' ? snapshot.cashReceived : null,
+        paymentChange,
+        paymentSplits,
+        saleOriginLabel: isAppSale ? getSaleOriginLabel(snapshot.saleOrigin) : null,
+        saleOriginShortLabel,
+        appOrderTotal,
+        isAppSale,
+        observations: lines
+          .filter((line) => line.note)
+          .map((line) => `${line.name}: ${line.note}`),
+      };
+    },
+    []
+  );
+
+  const handleSavePaymentMethod = async (snapshot: PaymentCommitSnapshot): Promise<boolean> => {
+      if (snapshot.draftItems.length === 0) {
+        showNotification('Carrinho vazio. Não é possível finalizar.');
+        return false;
+      }
+
+      if (isAppSaleOrigin(snapshot.saleOrigin) && (snapshot.appOrderTotal === null || snapshot.appOrderTotal <= 0)) {
+        showNotification('Informe o valor real da venda no app (iFood/99).');
+        return false;
+      }
+
+      if (snapshot.isSplitModeEnabled && !snapshot.splitPayload) {
+        showNotification('Finalize a divisão antes de confirmar o pagamento.');
+        return false;
+      }
+
+      if (
+        !snapshot.isSplitModeEnabled &&
+        snapshot.paymentMethod === 'DINHEIRO' &&
+        (snapshot.cashReceived === null || snapshot.cashReceived < 0)
+      ) {
+        showNotification('Informe um valor recebido válido em dinheiro.');
+        return false;
+      }
+
+      const finalizeCommand: StateCommand = {
+        type: 'SALE_DRAFT_FINALIZE',
+        draftId: snapshot.draftId,
+        paymentMethod: snapshot.isSplitModeEnabled ? 'DIVIDIDO' : snapshot.paymentMethod,
+        cashReceived:
+          !snapshot.isSplitModeEnabled && snapshot.paymentMethod === 'DINHEIRO'
+            ? (snapshot.cashReceived ?? undefined)
+            : undefined,
+        splitMode: snapshot.splitPayload?.splitMode,
+        splitCount: snapshot.splitPayload?.splitCount,
+        splitPayments: snapshot.splitPayload?.splitPayments,
+        saleOrigin: snapshot.saleOrigin,
+        appOrderTotal: isAppSaleOrigin(snapshot.saleOrigin) ? (snapshot.appOrderTotal ?? undefined) : undefined,
+      };
+
+      // Defensive: backend must persist app-origin and app amount before allowing confirm.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const ok = await runCommandWithSync(finalizeCommand, undefined, {
+          silentSuccessNotification: true,
+          trackPendingState: false,
+        });
+        if (!ok) return false;
+
+        if (!isAppSaleOrigin(snapshot.saleOrigin)) {
+          return true;
+        }
+
+        const persistedDraft = saleDraftsRef.current.find((draft) => draft.id === snapshot.draftId);
+        const persistedOrigin = persistedDraft?.saleOrigin || 'LOCAL';
+        const persistedAppTotal = Number(persistedDraft?.appOrderTotal);
+        const expectedAppTotal = Number(snapshot.appOrderTotal);
+        const hasPersistedAppTotal =
+          Number.isFinite(persistedAppTotal) &&
+          persistedAppTotal > 0 &&
+          Number.isFinite(expectedAppTotal) &&
+          expectedAppTotal > 0 &&
+          Math.abs(persistedAppTotal - expectedAppTotal) <= 0.009;
+
+        if (isAppSaleOrigin(persistedOrigin) && hasPersistedAppTotal) {
+          return true;
+        }
+      }
+
+      showNotification(
+        'O servidor não confirmou o valor do app. Atualize o backend/sessão antes de confirmar o pagamento.'
+      );
+      return false;
+  };
+
+  const buildReceiptPrintTarget = useCallback((receiptId: string): string => {
     const normalizedId = receiptId.trim();
     if (!normalizedId) return '';
     const basePath = buildReceiptPrintRoutePath(normalizedId);
@@ -1844,90 +2544,141 @@ const App: React.FC = () => {
         params.set('returnTo', returnTo);
       }
     }
-      if (options.pending) {
-        params.set('pending', '1');
-      }
     const query = params.toString();
     return query ? `${basePath}?${query}` : basePath;
-    },
-    []
-  );
+  }, []);
 
   const openReceiptPrintWindow = useCallback(
-    (receiptId: string, options: { pending?: boolean } = {}): boolean => {
-      if (typeof window === 'undefined') return false;
+    (receiptId: string): Window | null => {
+      if (typeof window === 'undefined') return null;
       const normalizedId = receiptId.trim();
-      if (!normalizedId) return false;
-      const printRoute = buildReceiptPrintTarget(normalizedId, options);
-      if (!printRoute) return false;
-      if (options.pending) {
-        closePreparedReceiptWindow();
-      }
-      const printWindow = window.open(printRoute, '_blank');
-      if (printWindow) {
-        if (options.pending) {
-          preparedReceiptWindowRef.current = printWindow;
-        }
-        return true;
-      }
-      return false;
+      if (!normalizedId) return null;
+      const printRoute = buildReceiptPrintTarget(normalizedId);
+      if (!printRoute) return null;
+      return window.open(printRoute, '_blank');
     },
-    [buildReceiptPrintTarget, closePreparedReceiptWindow]
+    [buildReceiptPrintTarget]
+  );
+
+  const processPaymentCommitQueue = useCallback(() => {
+    if (isProcessingPaymentCommitQueueRef.current) return;
+    if (paymentCommitQueueRef.current.length === 0) return;
+
+    isProcessingPaymentCommitQueueRef.current = true;
+    void (async () => {
+      while (paymentCommitQueueRef.current.length > 0) {
+        const current = paymentCommitQueueRef.current[0];
+        const { snapshot } = current;
+        let shouldReopenCartOnError = false;
+
+        showCornerSync('syncing', 'Sincronizando pagamento no banco...');
+        try {
+          const flushed = await flushPendingDraftAdds(snapshot.draftId, snapshot.customerType);
+          if (!flushed) {
+            throw new Error('pending-flush-failed');
+          }
+
+          const finalized = await handleSavePaymentMethod(snapshot);
+          if (!finalized) {
+            throw new Error('finalize-failed');
+          }
+
+          const ok = await runCommandWithSync(
+            {
+              type: 'SALE_DRAFT_CONFIRM_PAID',
+              draftId: snapshot.draftId,
+            },
+            'Pagamento confirmado. Estoque debitado.',
+            { trackPendingState: false }
+          );
+          if (!ok) {
+            throw new Error('confirm-paid-failed');
+          }
+
+          showCornerSync('success', 'Pagamento sincronizado.');
+          if (!current.printWindowOpened) {
+            showNotification(
+              'Pagamento confirmado, mas o navegador bloqueou o cupom. Use o Histórico para segunda via.'
+            );
+          }
+
+          setLocallyCancelledDraftIds((draftIds) => draftIds.filter((id) => id !== snapshot.draftId));
+          resetSplitState('PIX');
+        } catch {
+          shouldReopenCartOnError = true;
+          showCornerSync('error', 'Falha ao sincronizar pagamento no banco.');
+          showNotification(
+            'Falha ao confirmar pagamento no banco. O cupom foi gerado no front e a sincronização pode ser tentada novamente.'
+          );
+        } finally {
+          paymentCommitQueueRef.current = paymentCommitQueueRef.current.slice(1);
+
+          if (shouldReopenCartOnError) {
+            unmarkDraftAsConfirming(snapshot.draftId);
+            activeDraftIdRef.current = snapshot.draftId;
+            setActiveDraftId(snapshot.draftId);
+            setIsCartOpen(true);
+          }
+        }
+      }
+    })().finally(() => {
+      isProcessingPaymentCommitQueueRef.current = false;
+      if (paymentCommitQueueRef.current.length > 0) {
+        processPaymentCommitQueue();
+      }
+    });
+  }, [
+    flushPendingDraftAdds,
+    handleSavePaymentMethod,
+    resetSplitState,
+    runCommandWithSync,
+    showCornerSync,
+    showNotification,
+    unmarkDraftAsConfirming,
+  ]);
+
+  const enqueuePaymentCommit = useCallback(
+    (item: PaymentCommitQueueItem) => {
+      paymentCommitQueueRef.current = [...paymentCommitQueueRef.current, item];
+      processPaymentCommitQueue();
+    },
+    [processPaymentCommitQueue]
   );
 
   const handleConfirmPaid = () => {
     if (!activeDraft) return;
-    if (isConfirmingPaid) return;
-    const draftId = activeDraft.id;
-    const openedPendingPrintWindow = openReceiptPrintWindow(draftId, { pending: true });
-    setIsConfirmingPaid(true);
-    void (async () => {
-      const finalized = await handleSavePaymentMethod();
-      if (!finalized) {
-        closePreparedReceiptWindow();
-        return;
-      }
+    const snapshot = buildPaymentCommitSnapshot();
+    if (!snapshot) return;
+    if (confirmingPaidDraftIdsRef.current.has(snapshot.draftId)) {
+      showNotification('Este pedido já está na fila de envio para o banco.');
+      return;
+    }
 
-      const ok = await runCommandWithSync(
-        {
-          type: 'SALE_DRAFT_CONFIRM_PAID',
-          draftId,
-        },
-        'Pagamento confirmado. Estoque debitado.'
-      );
-      if (!ok) {
-        closePreparedReceiptWindow();
-        return;
-      }
+    const receiptPrintId = createReceiptPrintPayloadId();
+    const receiptPayload = buildReceiptPrintPayloadFromSnapshot(snapshot, receiptPrintId);
+    saveReceiptPrintPayload(receiptPayload);
+    const printWindow = openReceiptPrintWindow(receiptPrintId);
+    if (printWindow) {
+      setReceiptPrintPayloadOnWindow(printWindow, receiptPayload);
+    }
 
-      if (!openedPendingPrintWindow) {
-        const opened = openReceiptPrintWindow(draftId);
-        if (!opened) {
-          showNotification(
-            'Pagamento confirmado, mas o navegador bloqueou o cupom. Use o Histórico para segunda via.'
-          );
-        }
-      }
-      preparedReceiptWindowRef.current = null;
+    markDraftAsConfirming(snapshot.draftId);
+    activeDraftIdRef.current = null;
+    setActiveDraftId(null);
+    setIsAppOriginModalOpen(false);
+    setIsSplitConfigOpen(false);
+    setIsPaymentOpen(false);
+    setIsCartOpen(false);
 
-      setIsAppOriginModalOpen(false);
-      resetSplitState('PIX');
-      setIsSplitConfigOpen(false);
-      setIsPaymentOpen(false);
-      setIsCartOpen(false);
-    })()
-      .catch(() => {
-        closePreparedReceiptWindow();
-        showNotification(
-          'Falha ao confirmar pagamento e gerar cupom automático. Tente novamente.'
-        );
-      })
-      .finally(() => {
-        setIsConfirmingPaid(false);
-      });
+    enqueuePaymentCommit({
+      snapshot,
+      printWindowOpened: Boolean(printWindow),
+    });
+    showCornerSync('syncing', 'Pedido entrou na fila de envio.');
   };
 
   const handleUndoLastSale = () => {
+    if (isUndoProcessing) return;
     if (sales.length === 0) {
       showNotification('Nenhuma venda para desfazer!');
       return;
@@ -1942,9 +2693,26 @@ const App: React.FC = () => {
         ? `Desfazer o último pedido do carrinho (${salesFromSameDraft.length} itens) e devolver insumos ao estoque?`
         : `Desfazer a última venda (${lastSale.productName}) e devolver insumos ao estoque?`;
 
-    if (confirm(confirmLabel)) {
-      void runCommandWithSync({ type: 'SALE_UNDO_LAST' }, 'Venda Estornada!');
-    }
+    if (!confirm(confirmLabel)) return;
+
+    setIsUndoProcessing(true);
+    showCornerSync('syncing', 'Desfazendo venda no banco...');
+    void (async () => {
+      const ok = await runCommandWithSync(
+        { type: 'SALE_UNDO_LAST' },
+        undefined,
+        { silentSuccessNotification: true, trackPendingState: false }
+      );
+      if (!ok) {
+        showCornerSync('error', 'Falha ao desfazer venda no banco.');
+        return;
+      }
+
+      showNotification('Venda Estornada!');
+      showCornerSync('success', 'Venda desfeita no banco.');
+    })().finally(() => {
+      setIsUndoProcessing(false);
+    });
   };
 
   const handleOpenUndoHistory = () => {
@@ -1970,16 +2738,21 @@ const App: React.FC = () => {
     if (!confirmed) return;
 
     setIsUndoProcessing(true);
+    showCornerSync('syncing', 'Desfazendo pedido no banco...');
     try {
       for (const sale of targetGroup.sales) {
         const ok = await runCommandWithSync(
           { type: 'SALE_UNDO_BY_ID', saleId: sale.id },
           undefined,
-          { silentSuccessNotification: true }
+          { silentSuccessNotification: true, trackPendingState: false }
         );
-        if (!ok) return;
+        if (!ok) {
+          showCornerSync('error', 'Falha ao desfazer pedido no banco.');
+          return;
+        }
       }
       showNotification('Pedido estornado!');
+      showCornerSync('success', 'Pedido desfeito no banco.');
       setIsUndoHistoryOpen(false);
     } finally {
       setIsUndoProcessing(false);
@@ -2217,7 +2990,7 @@ const App: React.FC = () => {
       totalRevenue,
       totalPurchases,
       totalProfit: roundMoney(totalRevenue - totalPurchases),
-      saleCount: sales.length,
+      saleCount: countSaleOrders(sales),
       cashExpenses,
     };
   }, [cashRegisterAmount, sales, stockEntries]);
@@ -2606,7 +3379,7 @@ const App: React.FC = () => {
     isAppSaleOriginActive &&
     (parsedAppOrderTotalInput === null || parsedAppOrderTotalInput <= 0);
   const isPaymentActionBlocked =
-    isConfirmingPaid || isStateHydrating || pendingStateOps > 0;
+    isStateHydrating || pendingStateOps > 0;
   const isConfirmPaidDisabled =
     (isSplitModeEnabled ? !splitValidation.isReady : isCashPaymentInsufficient) ||
     (isAppSaleOriginActive && isAppOrderTotalInvalid) ||
@@ -2841,6 +3614,33 @@ const App: React.FC = () => {
         message={syncIndicatorMessage}
         pendingCount={Math.max(1, totalPendingOps)}
       />
+      {cornerSyncState && (
+        <div
+          aria-live="polite"
+          className="pointer-events-none fixed bottom-3 right-3 z-[1260] max-w-[320px] sm:max-w-[360px]"
+        >
+          <div
+            className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-[10px] font-black uppercase tracking-widest shadow-lg backdrop-blur-sm ${
+              cornerSyncState.status === 'syncing'
+                ? 'qb-corner-sync-pulse border-slate-300 bg-white/90 text-slate-700'
+                : cornerSyncState.status === 'success'
+                  ? 'border-emerald-300 bg-emerald-50/95 text-emerald-700'
+                  : 'border-red-300 bg-red-50/95 text-red-700'
+            }`}
+          >
+            <span
+              className={`h-2 w-2 rounded-full ${
+                cornerSyncState.status === 'syncing'
+                  ? 'bg-slate-500'
+                  : cornerSyncState.status === 'success'
+                    ? 'bg-emerald-500'
+                    : 'bg-red-500'
+              }`}
+            />
+            <span className="leading-none">{cornerSyncState.message}</span>
+          </div>
+        </div>
+      )}
       {billingBlockState.isBlocked && (
         <div className="fixed inset-0 z-[500] bg-white/85 backdrop-blur-md flex items-center justify-center p-4">
           <div className="w-full max-w-2xl rounded-[36px] border border-slate-200 bg-white/90 shadow-2xl p-6 sm:p-8">
@@ -2955,16 +3755,16 @@ const App: React.FC = () => {
                 </div>
                 <button 
                   onClick={handleUndoLastSale}
-                  disabled={sales.length === 0}
+                  disabled={sales.length === 0 || isUndoProcessing}
                   className="qb-btn-touch bg-slate-900 text-yellow-400 px-5 py-3 rounded-2xl font-black text-[10px] uppercase tracking-tighter shadow-xl hover:bg-black active:scale-95 transition-all disabled:opacity-30 disabled:grayscale disabled:scale-100 whitespace-nowrap flex items-center gap-2 group"
                   title="Desfazer o último pedido"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="group-hover:-rotate-45 transition-transform"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-                  Desfazer Última
+                  {isUndoProcessing ? 'Desfazendo...' : 'Desfazer Última'}
                 </button>
                 <button
                   onClick={handleOpenUndoHistory}
-                  disabled={recentUndoGroups.length === 0}
+                  disabled={recentUndoGroups.length === 0 || isUndoProcessing}
                   className="qb-btn-touch bg-white text-slate-800 px-4 py-3 rounded-2xl font-black text-[10px] uppercase tracking-tighter shadow-sm border border-slate-200 hover:border-red-400 hover:text-red-600 active:scale-95 transition-all disabled:opacity-30 disabled:grayscale disabled:scale-100 whitespace-nowrap flex items-center gap-2"
                   title="Selecionar venda no histórico para desfazer"
                 >
@@ -3551,10 +4351,10 @@ const App: React.FC = () => {
                 onClick={handleConfirmPaid}
                 disabled={isConfirmPaidDisabled}
                 className={`qb-btn-touch bg-green-600 text-white px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-green-700 transition-colors disabled:opacity-40 ${
-                  isSplitConfirmReady ? 'qb-payment-confirm-ready-blink' : ''
+                  isSplitConfirmReady ? 'qb-payment-confirm-ready' : ''
                 }`}
               >
-                {isConfirmingPaid ? 'Confirmando...' : 'Confirmar Pago'}
+                Confirmar Pago
               </button>
             </div>
           </div>
@@ -3654,7 +4454,7 @@ const App: React.FC = () => {
                         paymentMethod === method
                           ? 'bg-red-600 border-red-700 text-white'
                           : 'bg-white border-slate-200 text-slate-700 hover:border-red-300'
-                      } ${shouldPulsePaymentMethods ? 'animate-pulse' : ''}`}
+                      } ${shouldPulsePaymentMethods ? 'qb-split-method-attention' : ''}`}
                     >
                       {getPaymentMethodLabel(method)}
                     </button>

@@ -1,4 +1,4 @@
-import { readAdminAuthToken } from './adminAuthToken';
+import { invalidateAdminSession, readAdminAuthToken } from './adminAuthToken';
 import { isPrintPresetId, type UserPrintPreferences } from './printPreferences';
 
 const API_TIMEOUT_MS = 12000;
@@ -51,6 +51,10 @@ const getAuthorizationHeader = (): string => {
 
 const assertResponseOk = async (response: Response, fallbackMessage: string): Promise<void> => {
   if (response.ok) return;
+  if (response.status === 401) {
+    invalidateAdminSession();
+    throw new Error('Sessão expirada. Faça login novamente para continuar.');
+  }
   try {
     const payload = (await response.json()) as { error?: unknown; message?: unknown };
     const message =
