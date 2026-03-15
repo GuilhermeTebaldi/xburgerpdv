@@ -1,6 +1,15 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { CleaningMaterial, CleaningStockEntry } from '../types';
-import { formatStockQuantityByUnit } from '../utils/recipe';
+import {
+  formatStockQuantityByUnit,
+  normalizeStockMovementByUnit,
+  normalizeStockQuantityByUnit,
+} from '../utils/recipe';
+import {
+  convertImageFileToDataUrl,
+  isCloudinaryUploadConfigured,
+  uploadImageToCloudinary,
+} from '../utils/cloudinaryUpload';
 
 interface CleaningMaterialsManagerProps {
   materials: CleaningMaterial[];
@@ -31,6 +40,9 @@ const INITIAL_FORM: MaterialFormState = {
   imageUrl: '',
 };
 
+const MAX_MATERIAL_IMAGE_BYTES = 6 * 1024 * 1024;
+const MAX_MATERIAL_IMAGE_URL_LENGTH = 200_000;
+
 const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
   materials,
   entries,
@@ -45,8 +57,13 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
   const [stockValues, setStockValues] = useState<Record<string, string>>({});
   const [isMaterialFormOpen, setIsMaterialFormOpen] = useState(false);
   const [deleteMenuId, setDeleteMenuId] = useState<string | null>(null);
+  const [isImageUrlVisible, setIsImageUrlVisible] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [uploadErrorMessage, setUploadErrorMessage] = useState('');
 
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const timerRef = useRef<number | null>(null);
+  const isCloudinaryConfigured = isCloudinaryUploadConfigured();
 
   const sortedEntries = useMemo(
     () => entries.slice().sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()),
@@ -56,6 +73,9 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
     () => new Map(materials.map((material) => [material.id, material])),
     [materials]
   );
+  const normalizedImageUrl = form.imageUrl.trim();
+  const hasImageSelected = normalizedImageUrl.length > 0;
+  const isLocalImagePreview = normalizedImageUrl.startsWith('data:image/');
 
   const handleFormChange = (field: keyof MaterialFormState, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -64,9 +84,18 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
   const resetForm = () => {
     setForm(INITIAL_FORM);
     setEditingMaterialId(null);
+    setIsImageUrlVisible(false);
+    setUploadErrorMessage('');
+    if (galleryInputRef.current) {
+      galleryInputRef.current.value = '';
+    }
   };
 
   const closeMaterialForm = () => {
+    if (isUploadingImage) {
+      alert('Aguarde o envio da imagem para finalizar.');
+      return;
+    }
     setIsMaterialFormOpen(false);
     resetForm();
   };
@@ -74,6 +103,44 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
   const openCreateMaterialForm = () => {
     resetForm();
     setIsMaterialFormOpen(true);
+  };
+
+  const handleGalleryFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (!selectedFile) return;
+
+    if (!selectedFile.type.startsWith('image/')) {
+      alert('Selecione um arquivo de imagem valido.');
+      if (galleryInputRef.current) galleryInputRef.current.value = '';
+      return;
+    }
+
+    if (selectedFile.size > MAX_MATERIAL_IMAGE_BYTES) {
+      alert('A imagem deve ter no maximo 6MB.');
+      if (galleryInputRef.current) galleryInputRef.current.value = '';
+      return;
+    }
+
+    setUploadErrorMessage('');
+    setIsUploadingImage(true);
+
+    try {
+      const uploadedImageUrl = isCloudinaryConfigured
+        ? await uploadImageToCloudinary(selectedFile)
+        : await convertImageFileToDataUrl(selectedFile);
+
+      setForm((prev) => ({ ...prev, imageUrl: uploadedImageUrl }));
+      setIsImageUrlVisible(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Falha ao processar imagem.';
+      setUploadErrorMessage(message);
+      alert(message);
+    } finally {
+      setIsUploadingImage(false);
+      if (galleryInputRef.current) {
+        galleryInputRef.current.value = '';
+      }
+    }
   };
 
   const handleSubmitMaterial = (e: React.FormEvent) => {
@@ -89,18 +156,30 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
       return;
     }
 
+    if (isUploadingImage) {
+      alert('Aguarde o envio da imagem para finalizar o cadastro.');
+      return;
+    }
+
     if (currentStock < 0 || minStock < 0 || cost < 0) {
       alert('Os valores numericos devem ser maiores ou iguais a zero.');
       return;
     }
 
+    if (normalizedImageUrl.length > MAX_MATERIAL_IMAGE_URL_LENGTH) {
+      alert('A imagem selecionada ficou muito grande. Use uma imagem menor.');
+      return;
+    }
+
+    const normalizedCurrentStock = Math.max(0, normalizeStockQuantityByUnit(form.unit, currentStock));
+    const normalizedMinStock = Math.max(0, normalizeStockQuantityByUnit(form.unit, minStock));
     const materialPayload = {
       name,
       unit: form.unit,
-      currentStock,
-      minStock,
+      currentStock: normalizedCurrentStock,
+      minStock: normalizedMinStock,
       cost,
-      imageUrl: form.imageUrl.trim() ? form.imageUrl.trim() : undefined,
+      imageUrl: normalizedImageUrl ? normalizedImageUrl : undefined,
     };
 
     if (editingMaterialId) {
@@ -126,11 +205,13 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
     setForm({
       name: material.name,
       unit: material.unit,
-      currentStock: String(material.currentStock),
-      minStock: String(material.minStock),
+      currentStock: String(normalizeStockQuantityByUnit(material.unit, material.currentStock)),
+      minStock: String(normalizeStockQuantityByUnit(material.unit, material.minStock)),
       cost: String(material.cost),
       imageUrl: material.imageUrl ?? '',
     });
+    setIsImageUrlVisible(false);
+    setUploadErrorMessage('');
     setActiveTab('estoque');
     setIsMaterialFormOpen(true);
   };
@@ -167,11 +248,13 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
   };
 
   const handleStockMove = (material: CleaningMaterial, direction: 'in' | 'out') => {
-    const amount = Number(stockValues[material.id]);
-    if (!Number.isFinite(amount) || amount <= 0) return;
-    if (direction === 'out' && material.currentStock + Number.EPSILON < amount) return;
+    const rawAmount = Number(stockValues[material.id]);
+    if (!Number.isFinite(rawAmount) || rawAmount <= 0) return;
+    const normalizedAmount = Math.abs(normalizeStockMovementByUnit(material.unit, rawAmount));
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) return;
+    if (direction === 'out' && material.currentStock + Number.EPSILON < normalizedAmount) return;
 
-    onUpdateStock(material.id, direction === 'out' ? -amount : amount);
+    onUpdateStock(material.id, direction === 'out' ? -normalizedAmount : normalizedAmount);
     setStockValues((prev) => ({ ...prev, [material.id]: '' }));
   };
 
@@ -322,8 +405,13 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
                 {materials.map((material) => {
                   const inputValue = stockValues[material.id] || '';
                   const parsed = Number(inputValue);
-                  const hasValidValue = Number.isFinite(parsed) && parsed > 0;
-                  const canConsume = hasValidValue && material.currentStock + Number.EPSILON >= parsed;
+                  const normalizedMove =
+                    Number.isFinite(parsed) && parsed > 0
+                      ? Math.abs(normalizeStockMovementByUnit(material.unit, parsed))
+                      : 0;
+                  const hasValidValue = Number.isFinite(normalizedMove) && normalizedMove > 0;
+                  const canConsume =
+                    hasValidValue && material.currentStock + Number.EPSILON >= normalizedMove;
 
                   return (
                     <div key={material.id} className="qb-cleaning-stock-card bg-slate-50 border border-slate-200 rounded-3xl p-4 space-y-3">
@@ -430,15 +518,15 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
       )}
 
       {isMaterialFormOpen && (
-        <div className="qb-cleaning-form-overlay fixed inset-0 z-[140] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="qb-cleaning-form-panel bg-white w-full max-w-xl rounded-[32px] shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="qb-cleaning-form-head px-6 py-5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+        <div className="qb-cleaning-form-overlay fixed inset-0 z-[140] bg-slate-900/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-2 sm:p-4">
+          <div className="qb-cleaning-form-panel bg-white w-full max-w-xl rounded-t-[30px] sm:rounded-[32px] shadow-2xl border border-slate-200 overflow-hidden max-h-[92vh]">
+            <div className="qb-cleaning-form-head px-4 py-4 sm:px-6 sm:py-5 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">
                   {editingMaterialId ? 'Editar Material' : 'Cadastrar Material'}
                 </h3>
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
-                  Inclui URL da foto do produto
+                  Foto via cloudinary (galeria) ou URL
                 </p>
               </div>
               <button
@@ -451,7 +539,15 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
               </button>
             </div>
 
-            <form onSubmit={handleSubmitMaterial} className="qb-cleaning-form-body p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+            <form onSubmit={handleSubmitMaterial} className="qb-cleaning-form-body p-4 sm:p-6 space-y-4 max-h-[82vh] sm:max-h-[75vh] overflow-y-auto">
+              <input
+                ref={galleryInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleGalleryFileChange}
+                className="hidden"
+              />
+
               <div>
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nome</label>
                 <input
@@ -468,7 +564,27 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Unidade</label>
                   <select
                     value={form.unit}
-                    onChange={(e) => handleFormChange('unit', e.target.value)}
+                    onChange={(e) => {
+                      const nextUnit = e.target.value;
+                      setForm((prev) => {
+                        const parsedCurrentStock = Number(prev.currentStock.trim().replace(',', '.'));
+                        const parsedMinStock = Number(prev.minStock.trim().replace(',', '.'));
+                        return {
+                          ...prev,
+                          unit: nextUnit,
+                          currentStock:
+                            Number.isFinite(parsedCurrentStock) && parsedCurrentStock >= 0
+                              ? String(
+                                  Math.max(0, normalizeStockQuantityByUnit(nextUnit, parsedCurrentStock))
+                                )
+                              : prev.currentStock,
+                          minStock:
+                            Number.isFinite(parsedMinStock) && parsedMinStock >= 0
+                              ? String(Math.max(0, normalizeStockQuantityByUnit(nextUnit, parsedMinStock)))
+                              : prev.minStock,
+                        };
+                      });
+                    }}
                     className="mt-1 w-full bg-slate-100 border-none rounded-2xl px-4 py-3 font-bold text-slate-800 focus:ring-2 focus:ring-red-500"
                   >
                     <option value="un">Unidade (un)</option>
@@ -520,28 +636,94 @@ const CleaningMaterialsManager: React.FC<CleaningMaterialsManagerProps> = ({
                 </div>
               </div>
 
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">URL da Foto</label>
-                <input
-                  type="text"
-                  value={form.imageUrl}
-                  onChange={(e) => handleFormChange('imageUrl', e.target.value)}
-                  placeholder="https://imagem-do-produto.jpg"
-                  className="mt-1 w-full bg-slate-100 border-none rounded-2xl px-4 py-3 font-bold text-slate-800 focus:ring-2 focus:ring-red-500"
-                />
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Foto do Material</label>
+                  <button
+                    type="button"
+                    onClick={() => setIsImageUrlVisible((current) => !current)}
+                    className="qb-btn-touch bg-slate-100 text-slate-700 px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-colors"
+                  >
+                    URL
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => galleryInputRef.current?.click()}
+                  disabled={isUploadingImage}
+                  className="qb-btn-touch w-full bg-slate-100 text-slate-700 px-4 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-colors text-left disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isUploadingImage
+                    ? 'Enviando para Cloudinary...'
+                    : hasImageSelected
+                      ? 'Trocar imagem da galeria'
+                      : 'Selecionar imagem da galeria'}
+                </button>
+
+                {isImageUrlVisible && (
+                  <input
+                    type="text"
+                    value={form.imageUrl}
+                    onChange={(e) => {
+                      handleFormChange('imageUrl', e.target.value);
+                      setUploadErrorMessage('');
+                    }}
+                    placeholder="https://res.cloudinary.com/.../image/upload/..."
+                    className="w-full bg-slate-100 border-none rounded-2xl px-4 py-3 font-bold text-slate-800 focus:ring-2 focus:ring-red-500"
+                  />
+                )}
+
+                <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2.5 flex items-center gap-3">
+                  {hasImageSelected ? (
+                    <img
+                      src={normalizedImageUrl}
+                      alt="Preview do material"
+                      className="w-12 h-12 rounded-xl object-cover border border-slate-200"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-xl border border-dashed border-slate-300 flex items-center justify-center text-[10px] font-black text-slate-300">
+                      IMG
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                      {isUploadingImage
+                        ? 'Upload em andamento...'
+                        : hasImageSelected
+                          ? isLocalImagePreview
+                            ? 'Imagem local carregada.'
+                            : 'Imagem pronta para salvar.'
+                          : 'Nenhuma imagem selecionada.'}
+                    </p>
+                    {!isCloudinaryConfigured && (
+                      <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+                        Cloudinary nao configurado: usando preview local.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {uploadErrorMessage && (
+                  <p className="text-[10px] font-black uppercase tracking-widest text-red-600">
+                    {uploadErrorMessage}
+                  </p>
+                )}
               </div>
 
-              <div className="qb-cleaning-form-actions flex gap-3 pt-2">
+              <div className="qb-cleaning-form-actions flex flex-col sm:flex-row gap-3 pt-2">
                 <button
                   type="submit"
-                  className="qb-btn-touch flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-2xl font-black uppercase tracking-tight"
+                  disabled={isUploadingImage}
+                  className="qb-btn-touch w-full sm:flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-2xl font-black uppercase tracking-tight disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   {editingMaterialId ? 'Salvar Material' : 'Adicionar Material'}
                 </button>
                 <button
                   type="button"
                   onClick={closeMaterialForm}
-                  className="qb-btn-touch bg-slate-200 hover:bg-slate-300 text-slate-700 px-5 py-3 rounded-2xl font-black uppercase text-[11px]"
+                  className="qb-btn-touch w-full sm:w-auto bg-slate-200 hover:bg-slate-300 text-slate-700 px-5 py-3 rounded-2xl font-black uppercase text-[11px]"
                 >
                   Cancelar
                 </button>

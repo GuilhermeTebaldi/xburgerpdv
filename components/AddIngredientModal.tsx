@@ -1,6 +1,7 @@
 
 import React, { useRef, useState } from 'react';
 import { Ingredient } from '../types';
+import { allowsFractionalStockUnit, normalizeStockQuantityByUnit } from '../utils/recipe';
 
 interface AddIngredientModalProps {
   isOpen: boolean;
@@ -78,7 +79,7 @@ const AddIngredientModal: React.FC<AddIngredientModalProps> = ({ isOpen, onClose
       name: normalizedName,
       unit,
       currentStock: 0,
-      minStock: parsedMinStock,
+      minStock: Math.max(0, normalizeStockQuantityByUnit(unit, parsedMinStock)),
       cost: parsedCost,
       addonPrice: parsedAddonPrice,
       imageUrl: imageUrl.trim() ? imageUrl.trim() : undefined,
@@ -133,7 +134,16 @@ const AddIngredientModal: React.FC<AddIngredientModalProps> = ({ isOpen, onClose
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Unidade de Medida</label>
             <select 
               value={unit}
-              onChange={e => setUnit(e.target.value)}
+              onChange={e => {
+                const nextUnit = e.target.value;
+                setUnit(nextUnit);
+                if (!allowsFractionalStockUnit(nextUnit)) {
+                  const parsedMinStock = Number(minStock.trim().replace(',', '.'));
+                  if (Number.isFinite(parsedMinStock) && parsedMinStock >= 0) {
+                    setMinStock(String(Math.floor(parsedMinStock + Number.EPSILON)));
+                  }
+                }
+              }}
               className="w-full bg-slate-100 border-none rounded-2xl px-4 py-3 font-bold text-slate-800 focus:ring-2 focus:ring-red-500 appearance-none cursor-pointer"
             >
               <option value="un">Unidade (un)</option>

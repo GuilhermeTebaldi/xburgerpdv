@@ -75,6 +75,34 @@ export const allowsFractionalStockInput = (ingredient: Pick<Ingredient, 'unit'>)
   return getRecipeUnitConversion(ingredient) !== null;
 };
 
+export const allowsFractionalStockUnit = (unitValue: string): boolean => {
+  const unit = normalizeUnit(unitValue || '');
+  if (!unit) return false;
+  return isKgUnit(unit) || isLiterUnit(unit) || isGramUnit(unit) || isMlUnit(unit);
+};
+
+export const normalizeStockQuantityByUnit = (unitValue: string, quantity: number): number => {
+  if (!Number.isFinite(quantity)) return 0;
+  if (allowsFractionalStockUnit(unitValue)) {
+    return Number(quantity.toFixed(6));
+  }
+
+  return quantity >= 0
+    ? Math.floor(quantity + Number.EPSILON)
+    : Math.ceil(quantity - Number.EPSILON);
+};
+
+export const normalizeStockMovementByUnit = (unitValue: string, amount: number): number => {
+  if (!Number.isFinite(amount) || amount === 0) return 0;
+  if (allowsFractionalStockUnit(unitValue)) {
+    return Number(amount.toFixed(6));
+  }
+
+  const absolute = Math.floor(Math.abs(amount) + Number.EPSILON);
+  if (absolute <= 0) return 0;
+  return amount < 0 ? -absolute : absolute;
+};
+
 export const getStockInputUnitLabel = (ingredient: Pick<Ingredient, 'unit'>): string => {
   const conversion = getRecipeUnitConversion(ingredient);
   if (conversion) return conversion.recipeUnitLabel;
@@ -172,6 +200,10 @@ const formatTrimmed = (value: number, precision = 3): string =>
 
 export const formatStockQuantityByUnit = (unitValue: string, quantity: number): string => {
   if (!Number.isFinite(quantity)) return '0';
+  if (!allowsFractionalStockUnit(unitValue)) {
+    return String(normalizeStockQuantityByUnit(unitValue, quantity));
+  }
+
   const unit = normalizeUnit(unitValue || '');
   if (isKgUnit(unit) || isLiterUnit(unit)) {
     return quantity.toFixed(3);

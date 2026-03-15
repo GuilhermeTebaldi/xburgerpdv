@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Ingredient } from '../types';
+import { allowsFractionalStockUnit, normalizeStockQuantityByUnit } from '../utils/recipe';
 
 interface EditIngredientModalProps {
   isOpen: boolean;
@@ -57,7 +58,7 @@ const EditIngredientModal: React.FC<EditIngredientModalProps> = ({
     if (!ingredient) return;
     setName(ingredient.name);
     setUnit(ingredient.unit);
-    setMinStock(String(ingredient.minStock));
+    setMinStock(String(normalizeStockQuantityByUnit(ingredient.unit, ingredient.minStock)));
     setCost(String(ingredient.cost));
     setAddonPrice(ingredient.addonPrice !== undefined ? String(ingredient.addonPrice) : '');
     setImageUrl(ingredient.imageUrl ?? '');
@@ -127,8 +128,11 @@ const EditIngredientModal: React.FC<EditIngredientModalProps> = ({
       ...ingredient,
       name: normalizedName,
       unit,
-      currentStock: ingredient.currentStock,
-      minStock: parsedMinStock,
+      currentStock: Math.max(
+        0,
+        normalizeStockQuantityByUnit(unit, Number(ingredient.currentStock) || 0)
+      ),
+      minStock: Math.max(0, normalizeStockQuantityByUnit(unit, parsedMinStock)),
       cost: parsedCost,
       addonPrice: parsedAddonPrice,
       imageUrl: imageUrl.trim() ? imageUrl.trim() : undefined,
@@ -173,6 +177,12 @@ const EditIngredientModal: React.FC<EditIngredientModalProps> = ({
               onChange={(e) => {
                 const nextUnit = e.target.value;
                 setUnit(nextUnit);
+                if (!allowsFractionalStockUnit(nextUnit)) {
+                  const parsedMinStock = parseDecimalInput(minStock);
+                  if (parsedMinStock !== null) {
+                    setMinStock(String(Math.max(0, Math.floor(parsedMinStock + Number.EPSILON))));
+                  }
+                }
                 if (!isKgUnit(nextUnit)) {
                   setIsCostHelpOpen(false);
                 }

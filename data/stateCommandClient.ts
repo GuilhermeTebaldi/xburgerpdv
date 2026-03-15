@@ -12,6 +12,7 @@ import type {
   SalePaymentMethod,
   StockEntry,
 } from '../types';
+import { normalizeStockQuantityByUnit } from '../utils/recipe';
 import { DEFAULT_APP_STATE, type AppState } from './appStorage';
 import { invalidateAdminSession, readAdminAuthToken } from './adminAuthToken';
 
@@ -361,6 +362,32 @@ const toNonNegativeNumber = (value: unknown, fallback = 0): number => {
   return parsed;
 };
 
+const normalizeIngredientStockByUnit = (ingredient: Ingredient): Ingredient => ({
+  ...ingredient,
+  currentStock: Math.max(
+    0,
+    normalizeStockQuantityByUnit(ingredient.unit, Number(ingredient.currentStock) || 0)
+  ),
+  minStock: Math.max(
+    0,
+    normalizeStockQuantityByUnit(ingredient.unit, Number(ingredient.minStock) || 0)
+  ),
+});
+
+const normalizeCleaningMaterialStockByUnit = (
+  material: CleaningMaterial
+): CleaningMaterial => ({
+  ...material,
+  currentStock: Math.max(
+    0,
+    normalizeStockQuantityByUnit(material.unit, Number(material.currentStock) || 0)
+  ),
+  minStock: Math.max(
+    0,
+    normalizeStockQuantityByUnit(material.unit, Number(material.minStock) || 0)
+  ),
+});
+
 const normalizeAppState = (payload: unknown): AppState => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Resposta inválida de estado da API.');
@@ -368,13 +395,17 @@ const normalizeAppState = (payload: unknown): AppState => {
 
   const source = payload as Record<string, unknown>;
   return {
-    ingredients: toArray(source.ingredients, DEFAULT_APP_STATE.ingredients),
+    ingredients: toArray(source.ingredients, DEFAULT_APP_STATE.ingredients).map(
+      normalizeIngredientStockByUnit
+    ),
     products: toArray(source.products, DEFAULT_APP_STATE.products),
     sales: reviveTimestampList(toArray(source.sales, DEFAULT_APP_STATE.sales)),
     stockEntries: normalizeStockEntryList(
       reviveTimestampList(toArray(source.stockEntries, DEFAULT_APP_STATE.stockEntries))
     ),
-    cleaningMaterials: toArray(source.cleaningMaterials, DEFAULT_APP_STATE.cleaningMaterials),
+    cleaningMaterials: toArray(source.cleaningMaterials, DEFAULT_APP_STATE.cleaningMaterials).map(
+      normalizeCleaningMaterialStockByUnit
+    ),
     cleaningStockEntries: reviveTimestampList(
       toArray(source.cleaningStockEntries, DEFAULT_APP_STATE.cleaningStockEntries)
     ),

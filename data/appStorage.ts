@@ -8,6 +8,7 @@ import {
   SaleDraft,
   StockEntry,
 } from '../types';
+import { normalizeStockQuantityByUnit } from '../utils/recipe';
 import { clearStore } from './localDb';
 import { invalidateAdminSession, readAdminAuthToken } from './adminAuthToken';
 
@@ -277,17 +278,48 @@ const toNonNegativeNumber = (value: unknown, fallback = 0): number => {
   return parsed;
 };
 
+const normalizeIngredientStockByUnit = (ingredient: Ingredient): Ingredient => ({
+  ...ingredient,
+  currentStock: Math.max(
+    0,
+    normalizeStockQuantityByUnit(ingredient.unit, Number(ingredient.currentStock) || 0)
+  ),
+  minStock: Math.max(
+    0,
+    normalizeStockQuantityByUnit(ingredient.unit, Number(ingredient.minStock) || 0)
+  ),
+});
+
+const normalizeCleaningMaterialStockByUnit = (
+  material: CleaningMaterial
+): CleaningMaterial => ({
+  ...material,
+  currentStock: Math.max(
+    0,
+    normalizeStockQuantityByUnit(material.unit, Number(material.currentStock) || 0)
+  ),
+  minStock: Math.max(
+    0,
+    normalizeStockQuantityByUnit(material.unit, Number(material.minStock) || 0)
+  ),
+});
+
 const normalizeStateRecord = (
   source: Record<string, unknown>,
   defaults: AppState
 ): AppState => ({
-  ingredients: toArray<Ingredient>(source.ingredients, defaults.ingredients),
+  ingredients: toArray<Ingredient>(source.ingredients, defaults.ingredients).map(
+    normalizeIngredientStockByUnit
+  ),
   products: toArray<Product>(source.products, defaults.products),
   sales: reviveListWithDates(toArray<Sale>(source.sales, defaults.sales)),
   stockEntries: normalizeStockEntryList(
     reviveListWithDates(toArray<StockEntry>(source.stockEntries, defaults.stockEntries))
   ),
-  cleaningMaterials: toArray<CleaningMaterial>(source.cleaningMaterials, defaults.cleaningMaterials),
+  cleaningMaterials: toArray<CleaningMaterial>(
+    source.cleaningMaterials,
+    defaults.cleaningMaterials
+  ).map(normalizeCleaningMaterialStockByUnit),
   cleaningStockEntries: reviveListWithDates(
     toArray<CleaningStockEntry>(source.cleaningStockEntries, defaults.cleaningStockEntries)
   ),

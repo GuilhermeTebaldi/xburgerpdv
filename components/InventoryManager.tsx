@@ -109,11 +109,7 @@ const InventoryManager: React.FC<InventoryManagerProps> = ({
   const formatCardStockValue = (ingredient: Ingredient): string => {
     const value = ingredient.currentStock;
     if (!Number.isFinite(value)) return '0';
-    const isInteger = Math.abs(value - Math.trunc(value)) < Number.EPSILON;
-    return new Intl.NumberFormat('pt-BR', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: isInteger ? 0 : 3,
-    }).format(value);
+    return formatStockQuantityByUnit(ingredient.unit, value);
   };
 
   return (

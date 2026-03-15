@@ -68,6 +68,10 @@ import {
 import { fetchPrintPreferences, updatePrintPreferences } from './data/printPreferencesClient';
 import { buildReceiptPrintRoutePath } from './utils/printRoutes';
 import {
+  normalizeStockMovementByUnit,
+  normalizeStockQuantityByUnit,
+} from './utils/recipe';
+import {
   cleanupExpiredReceiptPrintPayloads,
   createReceiptPrintPayloadId,
   saveReceiptPrintPayload,
@@ -571,6 +575,42 @@ const normalizeRecipeOverride = (value: unknown): RecipeItem[] | undefined => {
     .filter((item): item is RecipeItem => item !== null);
 
   return normalized.length > 0 ? normalized : undefined;
+};
+
+const validateDraftItemRecipe = (
+  product: Product | null,
+  recipeValue: unknown,
+  availableIngredientIds: Set<string>
+): { ok: true; recipe: RecipeItem[] } | { ok: false; message: string } => {
+  if (!product) {
+    return {
+      ok: false,
+      message: 'Produto não encontrado para o carrinho. Atualize a tela e tente novamente.',
+    };
+  }
+
+  const normalizedRecipe = normalizeRecipeOverride(recipeValue ?? product.recipe);
+  if (!normalizedRecipe || normalizedRecipe.length === 0) {
+    return {
+      ok: false,
+      message: `${product.name} está sem receita válida e não pode ser vendido.`,
+    };
+  }
+
+  const missingIngredientIds = normalizedRecipe
+    .map((entry) => entry.ingredientId)
+    .filter((ingredientId) => !availableIngredientIds.has(ingredientId));
+  if (missingIngredientIds.length > 0) {
+    return {
+      ok: false,
+      message: `${product.name} possui insumo ausente (${missingIngredientIds.join(', ')}).`,
+    };
+  }
+
+  return {
+    ok: true,
+    recipe: normalizedRecipe,
+  };
 };
 
 const normalizeQueuedSale = (value: unknown): OfflineQueuedSale | null => {
@@ -1181,12 +1221,49 @@ const App: React.FC = () => {
     []
   );
 
+  const normalizeIngredientByUnit = useCallback((ingredient: Ingredient): Ingredient => {
+    const normalizedCurrentStock = Math.max(
+      0,
+      normalizeStockQuantityByUnit(ingredient.unit, Number(ingredient.currentStock) || 0)
+    );
+    const normalizedMinStock = Math.max(
+      0,
+      normalizeStockQuantityByUnit(ingredient.unit, Number(ingredient.minStock) || 0)
+    );
+    return {
+      ...ingredient,
+      currentStock: normalizedCurrentStock,
+      minStock: normalizedMinStock,
+    };
+  }, []);
+
+  const normalizeCleaningMaterialByUnit = useCallback(
+    (material: CleaningMaterial): CleaningMaterial => {
+      const normalizedCurrentStock = Math.max(
+        0,
+        normalizeStockQuantityByUnit(material.unit, Number(material.currentStock) || 0)
+      );
+      const normalizedMinStock = Math.max(
+        0,
+        normalizeStockQuantityByUnit(material.unit, Number(material.minStock) || 0)
+      );
+      return {
+        ...material,
+        currentStock: normalizedCurrentStock,
+        minStock: normalizedMinStock,
+      };
+    },
+    []
+  );
+
   const applyStateSnapshot = useCallback((state: AppState) => {
-    setIngredients(state.ingredients);
+    const normalizedIngredients = state.ingredients.map(normalizeIngredientByUnit);
+    const normalizedCleaningMaterials = state.cleaningMaterials.map(normalizeCleaningMaterialByUnit);
+    setIngredients(normalizedIngredients);
     setProducts(state.products);
     setSales(state.sales);
     setStockEntries(state.stockEntries);
-    setCleaningMaterials(state.cleaningMaterials);
+    setCleaningMaterials(normalizedCleaningMaterials);
     setCleaningStockEntries(state.cleaningStockEntries);
     setGlobalSales(state.globalSales);
     setGlobalCancelledSales(state.globalCancelledSales);
@@ -1195,7 +1272,7 @@ const App: React.FC = () => {
     saleDraftsRef.current = state.saleDrafts;
     setSaleDrafts(state.saleDrafts);
     applyCashHistorySnapshot(state);
-  }, [applyCashHistorySnapshot]);
+  }, [applyCashHistorySnapshot, normalizeCleaningMaterialByUnit, normalizeIngredientByUnit]);
 
   useEffect(() => {
     if (!isAccessVerified) return;
@@ -1305,14 +1382,25 @@ const App: React.FC = () => {
       priceOverride?: number;
       quantity?: number;
       customerType?: SaleCustomerType;
-    }) => {
+    }): boolean => {
       const normalizedDraftId = params.draftId.trim();
-      if (!normalizedDraftId) return;
+      if (!normalizedDraftId) return false;
 
       hydratePendingDraftAdds();
+      const availableIngredientIds = new Set(ingredients.map((ingredient) => ingredient.id));
+      const recipeValidation = validateDraftItemRecipe(
+        params.product,
+        params.recipeOverride ?? params.product.recipe,
+        availableIngredientIds
+      );
+      if (!recipeValidation.ok) {
+        showNotification(recipeValidation.message);
+        return false;
+      }
+
       const nowIso = new Date().toISOString();
       const quantity = Number.isFinite(Number(params.quantity)) ? Math.max(1, Math.floor(Number(params.quantity))) : 1;
-      const recipe = normalizeRecipeOverride(params.recipeOverride || params.product.recipe) || params.product.recipe;
+      const recipe = recipeValidation.recipe;
       const recipeSignature = buildRecipeSignature(recipe);
       const unitPriceSnapshot = roundMoney(
         Number.isFinite(Number(params.priceOverride)) && Number(params.priceOverride) >= 0
@@ -1356,8 +1444,9 @@ const App: React.FC = () => {
       next[normalizedDraftId] = entries;
       replacePendingDraftAdds(next);
       setLocallyCancelledDraftIds((current) => current.filter((id) => id !== normalizedDraftId));
+      return true;
     },
-    [hydratePendingDraftAdds, replacePendingDraftAdds]
+    [hydratePendingDraftAdds, ingredients, replacePendingDraftAdds, showNotification]
   );
 
   const updatePendingDraftItemQuantity = useCallback(
@@ -1705,6 +1794,8 @@ const App: React.FC = () => {
   const totalPendingOps = pendingStateOps + pendingOfflineSales;
   const isSyncIndicatorVisible = isStateHydrating;
   const syncIndicatorMessage = 'Carregando dados do servidor...';
+  const isDailyTotalSyncing =
+    isStateHydrating || pendingStateOps > 0 || cornerSyncState?.status === 'syncing';
 
   const handleAdminLogin = useCallback(
     (result: { success: boolean; token?: string; role?: AuthRole }) => {
@@ -1988,7 +2079,7 @@ const App: React.FC = () => {
     }
 
     const existingDraft = saleDraftsWithPendingRef.current.find((draft) => draft.id === draftId);
-    queuePendingDraftAdd({
+    const queued = queuePendingDraftAdd({
       draftId,
       product,
       recipeOverride,
@@ -1996,6 +2087,7 @@ const App: React.FC = () => {
       quantity: 1,
       customerType: existingDraft?.customerType || 'BALCAO',
     });
+    if (!queued) return;
 
     if (shouldSetActiveDraft) {
       activeDraftIdRef.current = draftId;
@@ -2283,6 +2375,7 @@ const App: React.FC = () => {
       if (pendingAdds.length === 0) {
         return true;
       }
+      const availableIngredientIds = new Set(ingredients.map((ingredient) => ingredient.id));
 
       const persistedDraft = saleDraftsRef.current.find((draft) => draft.id === normalizedDraftId);
       if (!persistedDraft) {
@@ -2302,13 +2395,24 @@ const App: React.FC = () => {
       }
 
       for (const pendingAdd of pendingAdds) {
+        const product = products.find((entry) => entry.id === pendingAdd.productId) || null;
+        const recipeValidation = validateDraftItemRecipe(
+          product,
+          pendingAdd.recipeOverride ?? product?.recipe,
+          availableIngredientIds
+        );
+        if (!recipeValidation.ok) {
+          showNotification(recipeValidation.message);
+          return false;
+        }
+
         const ok = await runCommandWithSync(
           {
             type: 'SALE_DRAFT_ADD_ITEM',
             draftId: normalizedDraftId,
             productId: pendingAdd.productId,
             quantity: pendingAdd.quantity,
-            recipeOverride: pendingAdd.recipeOverride,
+            recipeOverride: recipeValidation.recipe,
             priceOverride: pendingAdd.priceOverride,
             note: pendingAdd.note,
           },
@@ -2330,7 +2434,7 @@ const App: React.FC = () => {
 
       return true;
     },
-    [hydratePendingDraftAdds, replacePendingDraftAdds, runCommandWithSync, showNotification]
+    [hydratePendingDraftAdds, ingredients, products, replacePendingDraftAdds, runCommandWithSync, showNotification]
   );
 
   const buildPaymentCommitSnapshot = (): PaymentCommitSnapshot | null => {
@@ -2779,24 +2883,58 @@ const App: React.FC = () => {
     }
   };
 
+  const normalizeIngredientPayloadByUnit = useCallback(
+    (ingredient: Ingredient): Ingredient => ({
+      ...ingredient,
+      currentStock: Math.max(
+        0,
+        normalizeStockQuantityByUnit(ingredient.unit, Number(ingredient.currentStock) || 0)
+      ),
+      minStock: Math.max(
+        0,
+        normalizeStockQuantityByUnit(ingredient.unit, Number(ingredient.minStock) || 0)
+      ),
+    }),
+    []
+  );
+
+  const normalizeCleaningMaterialPayloadByUnit = useCallback(
+    (material: CleaningMaterial): CleaningMaterial => ({
+      ...material,
+      currentStock: Math.max(
+        0,
+        normalizeStockQuantityByUnit(material.unit, Number(material.currentStock) || 0)
+      ),
+      minStock: Math.max(
+        0,
+        normalizeStockQuantityByUnit(material.unit, Number(material.minStock) || 0)
+      ),
+    }),
+    []
+  );
+
   const handleUpdateStock = useCallback((id: string, amount: number, options: StockUpdateOptions = {}) => {
-    const useCashRegister = amount > 0 && options.useCashRegister === true;
+    const ingredient = ingredients.find((item) => item.id === id);
+    if (!ingredient) return;
+    const normalizedAmount = normalizeStockMovementByUnit(ingredient.unit, amount);
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount === 0) return;
+    const useCashRegister = normalizedAmount > 0 && options.useCashRegister === true;
     const purchaseDescription = useCashRegister ? options.purchaseDescription?.trim() : undefined;
     void runCommandWithSync(
       {
         type: 'INGREDIENT_STOCK_MOVE',
         ingredientId: id,
-        amount,
+        amount: normalizedAmount,
         useCashRegister,
         purchaseDescription,
       },
-      amount > 0
+      normalizedAmount > 0
         ? useCashRegister
           ? 'Estoque atualizado e compra abatida do caixa!'
           : 'Estoque Atualizado!'
         : 'Gasto de Insumo Registrado!'
     );
-  }, [runCommandWithSync]);
+  }, [ingredients, runCommandWithSync]);
 
   const handleRegisterCashPurchase = useCallback(
     async (
@@ -2821,7 +2959,8 @@ const App: React.FC = () => {
         return false;
       }
 
-      const stockAmount = Number((normalizedPurchaseAmount / ingredient.cost).toFixed(6));
+      const stockAmountRaw = Number((normalizedPurchaseAmount / ingredient.cost).toFixed(6));
+      const stockAmount = normalizeStockMovementByUnit(ingredient.unit, stockAmountRaw);
       if (!Number.isFinite(stockAmount) || stockAmount <= 0) {
         showNotification('Não foi possível calcular a quantidade de estoque para essa compra.');
         return false;
@@ -2924,7 +3063,11 @@ const App: React.FC = () => {
   };
 
   const handleAddIngredient = (ingredient: Ingredient) => {
-    void runCommandWithSync({ type: 'INGREDIENT_CREATE', ingredient }, 'Ingrediente Adicionado!');
+    const normalizedIngredient = normalizeIngredientPayloadByUnit(ingredient);
+    void runCommandWithSync(
+      { type: 'INGREDIENT_CREATE', ingredient: normalizedIngredient },
+      'Ingrediente Adicionado!'
+    );
   };
 
   const handleEditIngredient = (ingredient: Ingredient) => {
@@ -2932,19 +3075,25 @@ const App: React.FC = () => {
   };
 
   const handleSaveIngredient = (updated: Ingredient) => {
-    void runCommandWithSync({ type: 'INGREDIENT_UPDATE', ingredient: updated }, 'Ingrediente Atualizado!');
+    const normalizedIngredient = normalizeIngredientPayloadByUnit(updated);
+    void runCommandWithSync(
+      { type: 'INGREDIENT_UPDATE', ingredient: normalizedIngredient },
+      'Ingrediente Atualizado!'
+    );
   };
 
   const handleAddCleaningMaterial = (material: CleaningMaterial) => {
+    const normalizedMaterial = normalizeCleaningMaterialPayloadByUnit(material);
     void runCommandWithSync(
-      { type: 'CLEANING_MATERIAL_CREATE', material },
+      { type: 'CLEANING_MATERIAL_CREATE', material: normalizedMaterial },
       'Material de limpeza adicionado!'
     );
   };
 
   const handleUpdateCleaningMaterial = (updated: CleaningMaterial) => {
+    const normalizedMaterial = normalizeCleaningMaterialPayloadByUnit(updated);
     void runCommandWithSync(
-      { type: 'CLEANING_MATERIAL_UPDATE', material: updated },
+      { type: 'CLEANING_MATERIAL_UPDATE', material: normalizedMaterial },
       'Material de limpeza atualizado!'
     );
   };
@@ -2957,15 +3106,19 @@ const App: React.FC = () => {
   };
 
   const handleUpdateCleaningStock = useCallback((id: string, amount: number) => {
+    const material = cleaningMaterials.find((item) => item.id === id);
+    if (!material) return;
+    const normalizedAmount = normalizeStockMovementByUnit(material.unit, amount);
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount === 0) return;
     void runCommandWithSync(
       {
         type: 'CLEANING_STOCK_MOVE',
         materialId: id,
-        amount,
+        amount: normalizedAmount,
       },
-      amount > 0 ? 'Estoque de material atualizado!' : 'Baixa de material registrada!'
+      normalizedAmount > 0 ? 'Estoque de material atualizado!' : 'Baixa de material registrada!'
     );
-  }, [runCommandWithSync]);
+  }, [cleaningMaterials, runCommandWithSync]);
 
   const buildCurrentCloseDayReport = useCallback((): DailySalesHistoryEntry => {
     const totalRevenue = roundMoney(
@@ -3608,7 +3761,13 @@ const App: React.FC = () => {
 
   return (
     <div className="qb-app min-h-screen bg-slate-50 flex flex-col">
-      <Header currentView={view} setView={setView} dailyTotal={dailyTotal} canAccessAdmin={canAccessAdmin} />
+      <Header
+        currentView={view}
+        setView={setView}
+        dailyTotal={dailyTotal}
+        canAccessAdmin={canAccessAdmin}
+        isDailyTotalSyncing={isDailyTotalSyncing}
+      />
       <SyncStatusOverlay
         visible={isSyncIndicatorVisible}
         message={syncIndicatorMessage}

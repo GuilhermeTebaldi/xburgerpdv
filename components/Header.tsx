@@ -7,9 +7,16 @@ interface HeaderProps {
   setView: (view: ViewMode) => void;
   dailyTotal: number;
   canAccessAdmin: boolean;
+  isDailyTotalSyncing: boolean;
 }
 
-const Header: React.FC<HeaderProps> = ({ currentView, setView, dailyTotal, canAccessAdmin }) => {
+const Header: React.FC<HeaderProps> = ({
+  currentView,
+  setView,
+  dailyTotal,
+  canAccessAdmin,
+  isDailyTotalSyncing,
+}) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -110,7 +117,34 @@ const Header: React.FC<HeaderProps> = ({ currentView, setView, dailyTotal, canAc
           </button>
           <div className="qb-header-total text-right">
             <p className="text-[10px] font-bold opacity-80 uppercase leading-none">Total Hoje</p>
-            <p className="text-lg font-black leading-tight">R$ {dailyTotal.toFixed(2)}</p>
+            <p className="min-h-[1.75rem] text-lg font-black leading-tight flex items-center justify-end">
+              {isDailyTotalSyncing ? (
+                <span
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-red-100/55 bg-red-700/55"
+                  role="status"
+                  aria-label="Sincronizando total de hoje"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="animate-spin text-red-50"
+                    aria-hidden="true"
+                  >
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                    <polyline points="21 3 21 9 15 9" />
+                  </svg>
+                </span>
+              ) : (
+                <>R$ {dailyTotal.toFixed(2)}</>
+              )}
+            </p>
           </div>
         </div>
       </div>
