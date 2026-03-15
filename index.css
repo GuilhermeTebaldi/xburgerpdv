@@ -151,6 +151,20 @@
   }
 }
 
+@keyframes qb-payment-confirm-ready-blink {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.2);
+    filter: brightness(1);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(22, 163, 74, 0.12);
+    filter: brightness(1.08);
+    transform: scale(1.02);
+  }
+}
+
 .qb-cart-button-bump-a {
   animation: qb-cart-jump-a 520ms cubic-bezier(0.22, 0.95, 0.3, 1);
 }
@@ -186,6 +200,10 @@
 
 .qb-payment-origin-icon-pop-b {
   animation: qb-payment-origin-icon-pop-b 460ms cubic-bezier(0.2, 0.95, 0.3, 1);
+}
+
+.qb-payment-confirm-ready-blink {
+  animation: qb-payment-confirm-ready-blink 1s ease-in-out infinite;
 }
 
 .qb-sync-spinner {

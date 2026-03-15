@@ -44,6 +44,7 @@ let remoteStateToken: string | null = null;
 let remoteSaveQueue: Promise<void> = Promise.resolve();
 let isDefaultFallbackBootstrap = false;
 let activeAuthSubject: string | null = null;
+let authScopeHint: string | null = null;
 
 const STORAGE_KEYS = {
   ingredients: 'xburger_ingredients',
@@ -158,7 +159,11 @@ const readTokenSubject = (token: string | null): string | null => {
 
 const ensureAuthScope = (): string | null => {
   const currentToken = readAdminAuthToken();
-  const currentSubject = readTokenSubject(currentToken);
+  const tokenSubject = readTokenSubject(currentToken);
+  const currentSubject = tokenSubject || authScopeHint;
+  if (tokenSubject && authScopeHint) {
+    authScopeHint = null;
+  }
   if (activeAuthSubject !== currentSubject) {
     activeAuthSubject = currentSubject;
     hasRemoteHydratedState = false;
@@ -168,6 +173,11 @@ const ensureAuthScope = (): string | null => {
     isDefaultFallbackBootstrap = false;
   }
   return activeAuthSubject;
+};
+
+export const setAuthScopeHint = (subject: string | null): void => {
+  const normalized = typeof subject === 'string' ? subject.trim() : '';
+  authScopeHint = normalized || null;
 };
 
 const getScopedStorageKey = (baseKey: string): string => {

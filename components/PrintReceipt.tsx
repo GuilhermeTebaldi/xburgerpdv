@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-import { DEFAULT_APP_STATE, loadAppState, type AppState } from '../data/appStorage';
-import { readActiveAuthSubject } from '../data/authScope';
+import { DEFAULT_APP_STATE, loadAppState, setAuthScopeHint, type AppState } from '../data/appStorage';
 import { getReceiptPaperWidthMm } from '../utils/receiptPaper';
 import type {
   Sale,
@@ -99,6 +98,19 @@ const toDate = (value: unknown): Date | null => {
   return Number.isFinite(parsed.getTime()) ? parsed : null;
 };
 
+const readPrintScopeHint = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const scope = params.get('scope');
+    if (!scope) return null;
+    const normalized = scope.trim();
+    return normalized || null;
+  } catch {
+    return null;
+  }
+};
+
 const isSameCalendarDay = (a: Date, b: Date): boolean =>
   a.getFullYear() === b.getFullYear() &&
   a.getMonth() === b.getMonth() &&
@@ -111,6 +123,19 @@ const formatPaymentMethod = (method: SalePaymentMethod | null | undefined): stri
   if (method === 'DINHEIRO') return 'DINHEIRO';
   if (method === 'DIVIDIDO') return 'DIVIDIDO';
   return method;
+};
+
+const summarizeSplitPaymentMethods = (
+  splits: ReceiptViewModel['paymentSplits']
+): string => {
+  const methods: SaleBasePaymentMethod[] = [];
+  splits.forEach((entry) => {
+    if (!methods.includes(entry.method)) {
+      methods.push(entry.method);
+    }
+  });
+  if (methods.length === 0) return 'DIVIDIDO';
+  return methods.map((method) => formatPaymentMethod(method)).join(' + ');
 };
 
 const isBasePaymentMethod = (value: unknown): value is SaleBasePaymentMethod =>
@@ -348,6 +373,10 @@ const buildReceiptViewModel = (state: AppState, receiptId: string): ReceiptViewM
   const paymentCashReceived = normalizeMoneyValue(payment?.cashReceived);
   const paymentChange = normalizeMoneyValue(payment?.change);
   const paymentSplits = paymentMethod === 'DIVIDIDO' ? normalizePaymentSplits(payment?.splitPayments) : [];
+  const paymentMethodLabel =
+    paymentMethod === 'DIVIDIDO'
+      ? summarizeSplitPaymentMethods(paymentSplits)
+      : formatPaymentMethod(paymentMethod);
 
   return {
     restaurantName: getRestaurantName(),
@@ -357,7 +386,7 @@ const buildReceiptViewModel = (state: AppState, receiptId: string): ReceiptViewM
     lines,
     itemsTotal: linesTotal,
     total,
-    paymentMethodLabel: formatPaymentMethod(paymentMethod),
+    paymentMethodLabel,
     paymentCashReceived,
     paymentChange,
     paymentSplits,
@@ -382,15 +411,7 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
     setErrorMessage(null);
     setReceipt(null);
     hasTriggeredPrintRef.current = false;
-
-    const authSubject = readActiveAuthSubject();
-    if (!authSubject) {
-      setErrorMessage('Sessão inválida. Faça login novamente para imprimir o cupom.');
-      setIsLoading(false);
-      return () => {
-        cancelled = true;
-      };
-    }
+    setAuthScopeHint(readPrintScopeHint());
 
     loadAppState(DEFAULT_APP_STATE, { preferLocalMirrorWhenNewer: false })
       .then((state) => {
@@ -413,6 +434,7 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
 
     return () => {
       cancelled = true;
+      setAuthScopeHint(null);
     };
   }, [receiptId]);
 
@@ -608,7 +630,7 @@ const PrintReceipt: React.FC<PrintReceiptProps> = ({ receiptId }) => {
               <span className="receipt-label">Pagamento</span>
               <span className="receipt-value">{receipt.paymentMethodLabel}</span>
             </div>
-            {receipt.paymentMethodLabel === 'DIVIDIDO' &&
+            {receipt.paymentSplits.length > 0 &&
               receipt.paymentSplits.map((entry) => (
                 <React.Fragment key={`split-${entry.sequence}`}>
                   <div className="receipt-row">
