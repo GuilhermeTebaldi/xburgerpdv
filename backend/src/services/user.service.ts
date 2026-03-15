@@ -44,6 +44,7 @@ interface SetCompanyStatusInput {
 interface SetCompanyLayoutThemeInput {
   stateOwnerUserId: string;
   layoutThemeId: BrandThemeId;
+  layoutCompanyName: string | null;
 }
 
 interface LinkExistingCompanyUsersInput {
@@ -75,6 +76,7 @@ const EMPTY_APP_STATE = {
   cashRegisterAmount: 0,
   dailySalesHistory: [],
   layoutThemeId: null,
+  layoutCompanyName: null,
 } satisfies Record<string, unknown>;
 
 const ADMIN_GERAL_EMAIL = 'xburger.admin@geral.com';
@@ -92,24 +94,49 @@ const normalizeLayoutThemeId = (value: unknown): BrandThemeId | null => {
   return normalized as BrandThemeId;
 };
 
-const extractLayoutThemeIdFromStateJson = (stateJson: Prisma.JsonValue): BrandThemeId | null => {
-  if (!stateJson || typeof stateJson !== 'object' || Array.isArray(stateJson)) return null;
+const normalizeLayoutCompanyName = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  if (!normalized) return null;
+  return normalized.slice(0, 120);
+};
+
+interface CompanyLayoutState {
+  layoutThemeId: BrandThemeId | null;
+  layoutCompanyName: string | null;
+}
+
+const extractCompanyLayoutFromStateJson = (stateJson: Prisma.JsonValue): CompanyLayoutState => {
+  if (!stateJson || typeof stateJson !== 'object' || Array.isArray(stateJson)) {
+    return { layoutThemeId: null, layoutCompanyName: null };
+  }
+
   const record = stateJson as Record<string, unknown>;
-  return normalizeLayoutThemeId(record.layoutThemeId);
+  return {
+    layoutThemeId: normalizeLayoutThemeId(record.layoutThemeId),
+    layoutCompanyName: normalizeLayoutCompanyName(record.layoutCompanyName),
+  };
 };
 
 const mergeLayoutThemeIntoStateJson = (
   stateJson: Prisma.JsonValue | null | undefined,
-  layoutThemeId: BrandThemeId
+  layoutThemeId: BrandThemeId,
+  layoutCompanyName: string | null
 ): Record<string, unknown> => {
+  const normalizedLayoutCompanyName = normalizeLayoutCompanyName(layoutCompanyName);
   if (!stateJson || typeof stateJson !== 'object' || Array.isArray(stateJson)) {
-    return { ...EMPTY_APP_STATE, layoutThemeId };
+    return {
+      ...EMPTY_APP_STATE,
+      layoutThemeId,
+      layoutCompanyName: normalizedLayoutCompanyName,
+    };
   }
 
   const record = stateJson as Record<string, unknown>;
   return {
     ...record,
     layoutThemeId,
+    layoutCompanyName: normalizedLayoutCompanyName,
   };
 };
 
@@ -181,21 +208,23 @@ export class UserService {
       }
     }
 
-    const themeByOwnerId = new Map(
+    const layoutByOwnerId = new Map(
       appStates
         .filter((entry): entry is { ownerUserId: string; stateJson: Prisma.JsonValue } => Boolean(entry.ownerUserId))
-        .map((entry) => [entry.ownerUserId, extractLayoutThemeIdFromStateJson(entry.stateJson)])
+        .map((entry) => [entry.ownerUserId, extractCompanyLayoutFromStateJson(entry.stateJson)])
     );
 
     return users.map((user) => {
       const billing = resolveBillingBlockSnapshot(user);
       const ownerUserId = user.stateOwnerUserId?.trim() || user.id;
+      const companyLayout = layoutByOwnerId.get(ownerUserId);
       return {
         ...user,
         billingBlocked: billing.isBlocked,
         billingBlockedMessage: billing.message,
         billingBlockedUntil: billing.blockedUntil,
-        layoutThemeId: themeByOwnerId.get(ownerUserId) ?? null,
+        layoutThemeId: companyLayout?.layoutThemeId ?? null,
+        layoutCompanyName: companyLayout?.layoutCompanyName ?? null,
       };
     });
   }
@@ -609,7 +638,11 @@ export class UserService {
           },
         });
 
-        const nextStateJson = mergeLayoutThemeIntoStateJson(current?.stateJson, input.layoutThemeId);
+        const nextStateJson = mergeLayoutThemeIntoStateJson(
+          current?.stateJson,
+          input.layoutThemeId,
+          input.layoutCompanyName
+        );
 
         await tx.appState.upsert({
           where: { ownerUserId },
@@ -626,6 +659,7 @@ export class UserService {
 
     return {
       layoutThemeId: input.layoutThemeId,
+      layoutCompanyName: normalizeLayoutCompanyName(input.layoutCompanyName),
       updatedOwnersCount: ownerUserIds.length,
       updatedOwnerUserIds: ownerUserIds,
     };

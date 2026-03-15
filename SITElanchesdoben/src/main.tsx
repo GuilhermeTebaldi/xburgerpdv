@@ -2,6 +2,7 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import AdminGeralPage from './admingeral/AdminGeralPage.tsx';
+import {initializeBrandTheme} from './lib/brandTheme.ts';
 import './index.css';
 
 const ROOT_DOMAIN = 'xburgerpdv.com.br';
@@ -34,6 +35,7 @@ const redirectTenantRootToSystem = (): void => {
 };
 
 redirectTenantRootToSystem();
+initializeBrandTheme();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

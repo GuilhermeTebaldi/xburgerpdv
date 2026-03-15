@@ -161,4 +161,5 @@ export interface FrontAppState {
   cashRegisterAmount?: number;
   dailySalesHistory?: FrontDailySalesHistoryEntry[];
   layoutThemeId?: FrontLayoutThemeId | null;
+  layoutCompanyName?: string | null;
 }

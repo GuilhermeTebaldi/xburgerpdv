@@ -123,6 +123,7 @@ export const userController = {
     const result = await userService.setCompanyLayoutTheme(actorUserId, {
       stateOwnerUserId: req.params.stateOwnerUserId,
       layoutThemeId: payload.layoutThemeId,
+      layoutCompanyName: payload.layoutCompanyName ?? null,
     });
 
     res.status(200).json(result);

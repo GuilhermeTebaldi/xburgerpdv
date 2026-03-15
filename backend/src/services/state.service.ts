@@ -26,6 +26,7 @@ const EMPTY_APP_STATE: FrontAppState = {
   cashRegisterAmount: 0,
   dailySalesHistory: [],
   layoutThemeId: null,
+  layoutCompanyName: null,
 };
 
 const arrayOrEmpty = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
@@ -50,6 +51,13 @@ const toLayoutThemeId = (value: unknown): FrontAppState['layoutThemeId'] => {
   return normalized as NonNullable<FrontAppState['layoutThemeId']>;
 };
 
+const toLayoutCompanyName = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  if (!normalized) return null;
+  return normalized.slice(0, 120);
+};
+
 const normalizeStatePayload = (value: unknown): FrontAppState => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new HttpError(400, 'Payload de estado inválido. Deve ser um objeto AppState.');
@@ -71,6 +79,7 @@ const normalizeStatePayload = (value: unknown): FrontAppState => {
     cashRegisterAmount: toNonNegativeNumber(payload.cashRegisterAmount),
     dailySalesHistory: arrayOrEmpty(payload.dailySalesHistory),
     layoutThemeId: toLayoutThemeId(payload.layoutThemeId),
+    layoutCompanyName: toLayoutCompanyName(payload.layoutCompanyName),
   };
 };
 
@@ -91,6 +100,7 @@ const normalizeStatePayloadSafe = (value: unknown): FrontAppState => {
       cashRegisterAmount: 0,
       dailySalesHistory: [],
       layoutThemeId: null,
+      layoutCompanyName: null,
     };
   }
   return normalizeStatePayload(value);

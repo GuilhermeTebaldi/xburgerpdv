@@ -4,6 +4,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import PrintReceipt from './components/PrintReceipt';
 import PrintSalesReport from './components/PrintSalesReport';
+import { initializeBrandTheme } from './utils/brandTheme';
 import { resolvePrintRouteFromPathname } from './utils/printRoutes';
 
 const rootElement = document.getElementById('root');
@@ -13,6 +14,8 @@ if (!rootElement) {
 
 const root = ReactDOM.createRoot(rootElement);
 const printRoute = resolvePrintRouteFromPathname();
+
+initializeBrandTheme();
 
 root.render(
   <React.StrictMode>

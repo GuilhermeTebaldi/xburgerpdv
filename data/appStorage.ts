@@ -9,6 +9,7 @@ import {
   StockEntry,
 } from '../types';
 import { normalizeStockQuantityByUnit } from '../utils/recipe';
+import { BRAND_THEMES, type BrandThemeId } from '../utils/brandTheme';
 import { clearStore } from './localDb';
 import { invalidateAdminSession, readAdminAuthToken } from './adminAuthToken';
 
@@ -26,6 +27,8 @@ export interface AppState {
   saleDrafts: SaleDraft[];
   cashRegisterAmount: number;
   dailySalesHistory: DailySalesHistoryEntry[];
+  layoutThemeId: BrandThemeId | null;
+  layoutCompanyName: string | null;
 }
 
 interface LocalMirrorSnapshot {
@@ -94,6 +97,8 @@ export const DEFAULT_APP_STATE: AppState = {
   saleDrafts: [],
   cashRegisterAmount: 0,
   dailySalesHistory: [],
+  layoutThemeId: null,
+  layoutCompanyName: null,
 };
 
 const DATA_KEYS = [
@@ -278,6 +283,23 @@ const toNonNegativeNumber = (value: unknown, fallback = 0): number => {
   return parsed;
 };
 
+const normalizeLayoutThemeId = (value: unknown, fallback: BrandThemeId | null): BrandThemeId | null => {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (!Object.prototype.hasOwnProperty.call(BRAND_THEMES, normalized)) {
+    return fallback;
+  }
+  return normalized as BrandThemeId;
+};
+
+const normalizeLayoutCompanyName = (value: unknown, fallback: string | null): string | null => {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim();
+  if (!normalized) return null;
+  return normalized.slice(0, 120);
+};
+
 const normalizeIngredientStockByUnit = (ingredient: Ingredient): Ingredient => ({
   ...ingredient,
   currentStock: Math.max(
@@ -341,6 +363,8 @@ const normalizeStateRecord = (
   dailySalesHistory: reviveDailySalesHistory(
     toArray<DailySalesHistoryEntry>(source.dailySalesHistory, defaults.dailySalesHistory)
   ),
+  layoutThemeId: normalizeLayoutThemeId(source.layoutThemeId, defaults.layoutThemeId),
+  layoutCompanyName: normalizeLayoutCompanyName(source.layoutCompanyName, defaults.layoutCompanyName),
 });
 
 const normalizeVersionHeader = (value: string | null): string | null => {

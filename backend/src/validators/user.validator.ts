@@ -61,6 +61,7 @@ export const companyStatusSchema = z.object({
 
 export const companyLayoutThemeSchema = z.object({
   layoutThemeId: z.enum(['red', 'orange', 'amber', 'blue', 'emerald', 'violet']),
+  layoutCompanyName: z.string().trim().max(120).nullable().optional(),
 });
 
 export const COMPANY_PURGE_CONFIRMATION_PHRASE = 'EXCLUIRUSER';

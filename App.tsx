@@ -67,6 +67,7 @@ import {
 } from './data/printPreferences';
 import { fetchPrintPreferences, updatePrintPreferences } from './data/printPreferencesClient';
 import { buildReceiptPrintRoutePath } from './utils/printRoutes';
+import { applyBrandTheme, initializeBrandTheme } from './utils/brandTheme';
 import {
   normalizeStockMovementByUnit,
   normalizeStockQuantityByUnit,
@@ -188,6 +189,7 @@ interface BillingBlockState {
 }
 
 const DEFAULT_API_BASE_URL = 'https://xburger-saas-backend.onrender.com';
+const DEFAULT_COMPANY_DISPLAY_NAME = 'XBURGER PDV';
 const resolveApiBaseUrl = (): string => {
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
   const normalized = raw ? raw.replace(/\/+$/, '') : '';
@@ -195,6 +197,39 @@ const resolveApiBaseUrl = (): string => {
 };
 
 const roundMoney = (value: number): number => Number(value.toFixed(2));
+
+const normalizeLayoutCompanyName = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  if (!normalized) return null;
+  return normalized.slice(0, 120);
+};
+
+const resolveCompanyDisplayName = (value: unknown): string =>
+  normalizeLayoutCompanyName(value) || DEFAULT_COMPANY_DISPLAY_NAME;
+
+const readStoredCompanyDisplayName = (): string => {
+  if (typeof window === 'undefined') return DEFAULT_COMPANY_DISPLAY_NAME;
+  try {
+    return resolveCompanyDisplayName(window.localStorage.getItem('xburger_restaurant_name'));
+  } catch {
+    return DEFAULT_COMPANY_DISPLAY_NAME;
+  }
+};
+
+const persistCompanyDisplayName = (layoutCompanyName: string | null): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    const normalized = normalizeLayoutCompanyName(layoutCompanyName);
+    if (normalized) {
+      window.localStorage.setItem('xburger_restaurant_name', normalized);
+      return;
+    }
+    window.localStorage.removeItem('xburger_restaurant_name');
+  } catch {
+    // ignore storage write failures
+  }
+};
 
 const calculateCashRegisterExpensesFromStockEntries = (entries: StockEntry[]): number =>
   roundMoney(
@@ -848,6 +883,7 @@ const App: React.FC = () => {
   const [printPreferences, setPrintPreferences] = useState<ResolvedPrintPreferences>(
     DEFAULT_PRINT_PREFERENCES
   );
+  const [companyDisplayName, setCompanyDisplayName] = useState<string>(() => readStoredCompanyDisplayName());
   const [savingPrintPreferenceField, setSavingPrintPreferenceField] = useState<PrintPreferenceField | null>(
     null
   );
@@ -1259,6 +1295,7 @@ const App: React.FC = () => {
   const applyStateSnapshot = useCallback((state: AppState) => {
     const normalizedIngredients = state.ingredients.map(normalizeIngredientByUnit);
     const normalizedCleaningMaterials = state.cleaningMaterials.map(normalizeCleaningMaterialByUnit);
+    const normalizedLayoutCompanyName = normalizeLayoutCompanyName(state.layoutCompanyName);
     setIngredients(normalizedIngredients);
     setProducts(state.products);
     setSales(state.sales);
@@ -1272,6 +1309,14 @@ const App: React.FC = () => {
     saleDraftsRef.current = state.saleDrafts;
     setSaleDrafts(state.saleDrafts);
     applyCashHistorySnapshot(state);
+    setCompanyDisplayName(resolveCompanyDisplayName(normalizedLayoutCompanyName));
+    persistCompanyDisplayName(normalizedLayoutCompanyName);
+
+    if (state.layoutThemeId) {
+      applyBrandTheme(state.layoutThemeId, { persist: false });
+    } else {
+      initializeBrandTheme();
+    }
   }, [applyCashHistorySnapshot, normalizeCleaningMaterialByUnit, normalizeIngredientByUnit]);
 
   useEffect(() => {
@@ -2467,16 +2512,7 @@ const App: React.FC = () => {
   const buildReceiptPrintPayloadFromSnapshot = useCallback(
     (snapshot: PaymentCommitSnapshot, receiptPrintId: string): ReceiptPrintPayload => {
       const nowIso = new Date().toISOString();
-      const restaurantName = (() => {
-        if (typeof window === 'undefined') return 'XBURGER PDV';
-        try {
-          const local = window.localStorage.getItem('xburger_restaurant_name');
-          const normalized = typeof local === 'string' ? local.trim() : '';
-          return normalized || 'XBURGER PDV';
-        } catch {
-          return 'XBURGER PDV';
-        }
-      })();
+      const restaurantName = companyDisplayName;
       const lines = snapshot.draftItems.map((item) => {
         const unitPrice = roundMoney(Number(item.unitPriceSnapshot) || 0);
         const qty = Math.max(1, Math.floor(Number(item.qty) || 1));
@@ -2556,7 +2592,7 @@ const App: React.FC = () => {
           .map((line) => `${line.name}: ${line.note}`),
       };
     },
-    []
+    [companyDisplayName]
   );
 
   const handleSavePaymentMethod = async (snapshot: PaymentCommitSnapshot): Promise<boolean> => {
@@ -3767,6 +3803,7 @@ const App: React.FC = () => {
         dailyTotal={dailyTotal}
         canAccessAdmin={canAccessAdmin}
         isDailyTotalSyncing={isDailyTotalSyncing}
+        companyDisplayName={companyDisplayName}
       />
       <SyncStatusOverlay
         visible={isSyncIndicatorVisible}
