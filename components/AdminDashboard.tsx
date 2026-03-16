@@ -143,6 +143,8 @@ interface StockCostDriver {
   unit: string;
   quantity: number;
   cost: number;
+  salesCount: number;
+  averageCostPerSale: number;
 }
 
 interface CostDriversPanelProps {
@@ -297,10 +299,10 @@ const CostDriversPanel: React.FC<CostDriversPanelProps> = ({
 }) => (
   <div className={`rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur-sm ${className}`}>
     <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-      Estoque que mais gasta
+      Custo real por ingrediente
     </p>
     <p className="mt-1 text-xs font-black text-slate-800">
-      Top insumos no custo das vendas
+      Ingredientes que mais consomem nas vendas
     </p>
     <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
       {formatCurrency(totalCost)}
@@ -316,13 +318,16 @@ const CostDriversPanel: React.FC<CostDriversPanelProps> = ({
           const barWidth = Math.max(8, Math.min(100, share));
           return (
             <div key={driver.ingredientId} className="space-y-1">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-start justify-between gap-2">
                 <p className="truncate text-[10px] font-black uppercase tracking-widest text-slate-700">
                   {driver.ingredientName}
                 </p>
-                <p className="text-[10px] font-black text-red-600">
-                  {formatCurrency(driver.cost)}
-                </p>
+                <div className="text-right">
+                  <p className="text-[10px] font-black text-red-600">{formatCurrency(driver.cost)}</p>
+                  <p className="text-[10px] font-black text-slate-600">
+                    {formatCurrency(driver.averageCostPerSale)}/venda
+                  </p>
+                </div>
               </div>
               <div className="h-1.5 rounded-full bg-slate-200">
                 <div
@@ -332,6 +337,10 @@ const CostDriversPanel: React.FC<CostDriversPanelProps> = ({
               </div>
               <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
                 Consumo: {formatStockQuantityByUnit(driver.unit, driver.quantity)}
+              </p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                Total: {formatCurrency(driver.cost)} | Medio: {formatCurrency(driver.averageCostPerSale)} ({driver.salesCount}{' '}
+                {driver.salesCount === 1 ? 'venda' : 'vendas'})
               </p>
             </div>
           );
@@ -474,6 +483,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         .map((sale) => (typeof sale.id === 'string' ? sale.id.trim() : ''))
         .filter((saleId): saleId is string => Boolean(saleId))
     );
+    const salesByIngredient = new Map<string, Set<string>>();
     const byIngredient = new Map<string, StockCostDriver>();
 
     stockEntries.forEach((entry) => {
@@ -500,19 +510,29 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         unit: ingredient?.unit || 'un',
         quantity: 0,
         cost: 0,
+        salesCount: 0,
+        averageCostPerSale: 0,
       };
 
       current.quantity += Math.abs(quantity);
       current.cost += impact;
       byIngredient.set(key, current);
+      const ingredientSales = salesByIngredient.get(key) || new Set<string>();
+      ingredientSales.add(saleId);
+      salesByIngredient.set(key, ingredientSales);
     });
 
     const sorted = Array.from(byIngredient.values())
-      .map((driver) => ({
-        ...driver,
-        quantity: Number(driver.quantity.toFixed(6)),
-        cost: roundMoney(driver.cost),
-      }))
+      .map((driver) => {
+        const salesCount = salesByIngredient.get(driver.ingredientId)?.size || 0;
+        return {
+          ...driver,
+          quantity: Number(driver.quantity.toFixed(6)),
+          cost: roundMoney(driver.cost),
+          salesCount,
+          averageCostPerSale: roundMoney(salesCount > 0 ? driver.cost / salesCount : 0),
+        };
+      })
       .sort((a, b) => b.cost - a.cost);
 
     const total = roundMoney(sorted.reduce((sum, driver) => sum + driver.cost, 0));
