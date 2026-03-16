@@ -28,6 +28,7 @@ import {
 } from '../types';
 import { APP_ORIGINS, buildAppChannelSummary } from '../utils/appChannelSummary';
 import { DASHBOARD_CHART_COLORS, DASHBOARD_TOOLTIP_STYLE } from '../utils/chartTheme';
+import { buildSalesByDayMap, normalizeDailyHistoryList } from '../utils/dailyHistory';
 import { formatIngredientStockQuantity, formatStockQuantityByUnit } from '../utils/recipe';
 import AdminSalesAnalyticsTab from './AdminSalesAnalyticsTab';
 
@@ -391,8 +392,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   }, [cleaningStockEntries, cleaningMaterials]);
   const cleaningStockOutCost = cleaningStockCostBreakdown.total;
   const appChannelSummary = useMemo(() => buildAppChannelSummary(sales), [sales]);
-  const totalCost = salesCost + stockOutCost + cleaningStockOutCost;
+  const operationalOutflow = stockOutCost + cleaningStockOutCost;
+  const totalCost = salesCost;
   const totalProfit = totalRevenue - totalCost;
+  const totalOutflow = totalCost + operationalOutflow;
   const generalFinanceSeries = useMemo(() => {
     const dayMap = new Map<
       string,
@@ -444,7 +447,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     return [...dayMap.values()]
       .sort((a, b) => a.dayKey.localeCompare(b.dayKey))
       .map((day) => {
-        const totalDayCost = day.salesCost + day.stockCost + day.cleaningCost;
+        const totalDayCost = day.salesCost;
         return {
           ...day,
           revenue: roundMoney(day.revenue),
@@ -483,8 +486,16 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
     [revenueDistributionData]
   );
 
+  const normalizedDailySalesHistory = useMemo(
+    () =>
+      normalizeDailyHistoryList(dailySalesHistory, {
+        salesByDay: buildSalesByDayMap(sales),
+      }),
+    [dailySalesHistory, sales]
+  );
+
   const cashEvolutionSeries = useMemo(() => {
-    return [...dailySalesHistory]
+    return [...normalizedDailySalesHistory]
       .sort((a, b) => toDate(b.closedAt).getTime() - toDate(a.closedAt).getTime())
       .slice()
       .reverse()
@@ -500,7 +511,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
           difference: roundMoney(informed - estimated),
         };
       });
-  }, [dailySalesHistory]);
+  }, [normalizedDailySalesHistory]);
 
   const cashDifferenceStatus = useMemo(() => {
     if (cashEvolutionSeries.length === 0) return 0;
@@ -533,10 +544,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   }, [sales]);
   const orderedDailySalesHistory = useMemo(
     () =>
-      [...dailySalesHistory].sort(
+      [...normalizedDailySalesHistory].sort(
         (a, b) => toDate(b.closedAt).getTime() - toDate(a.closedAt).getTime()
       ),
-    [dailySalesHistory]
+    [normalizedDailySalesHistory]
   );
   const latestDailyClose = orderedDailySalesHistory[0];
   const currentSessionCashExpenses = useMemo(
@@ -1055,7 +1066,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
                 <div className="flex items-center justify-between pt-3 mt-3 border-t border-red-100">
                   <span className="text-[10px] font-black text-red-500 uppercase tracking-widest">Total saiu</span>
-                  <span className="text-sm font-black text-red-700">R$ {totalCost.toFixed(2)}</span>
+                  <span className="text-sm font-black text-red-700">R$ {totalOutflow.toFixed(2)}</span>
                 </div>
               </div>
 
@@ -1072,7 +1083,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <span className="text-xs font-black text-orange-600">R$ {cancelledRevenue.toFixed(2)}</span>
                 </div>
                 <p className="mt-2 text-[10px] font-bold text-slate-500 uppercase">
-                  Estornos ja removidos das vendas liquidas.
+                  Lucro liquido considera apenas custo das vendas. Saidas operacionais ficam separadas.
                 </p>
               </div>
             </div>

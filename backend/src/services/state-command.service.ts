@@ -20,6 +20,10 @@ import type {
 } from '../types/frontend.js';
 import type { StateCommandInput } from '../validators/state-command.validator.js';
 import { HttpError } from '../utils/http-error.js';
+import {
+  buildSalesByDayMap,
+  normalizeDailySalesHistoryList,
+} from './daily-history-normalizer.service.js';
 
 const createId = (prefix: string): string =>
   `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -339,22 +343,6 @@ const cloneSale = (sale: FrontSale): FrontSale => ({
   appOrderTotal: normalizeAppOrderTotal(sale?.appOrderTotal),
 });
 
-const cloneDailySalesHistoryEntry = (
-  entry: FrontDailySalesHistoryEntry
-): FrontDailySalesHistoryEntry => ({
-  ...entry,
-  closedAt:
-    entry.closedAt instanceof Date || typeof entry.closedAt === 'string'
-      ? entry.closedAt
-      : toTimestampIso(),
-  openingCash: toNonNegativeMoney(entry.openingCash),
-  totalRevenue: toNonNegativeMoney(entry.totalRevenue),
-  totalPurchases: toNonNegativeMoney(entry.totalPurchases),
-  totalProfit: roundMoney(Number(entry.totalProfit) || 0),
-  saleCount: Number.isFinite(Number(entry.saleCount)) ? Math.max(0, Math.floor(Number(entry.saleCount))) : 0,
-  cashExpenses: toNonNegativeMoney(entry.cashExpenses),
-});
-
 const ensureDailySalesHistory = (state: FrontAppState): FrontDailySalesHistoryEntry[] => {
   if (!state.dailySalesHistory) {
     state.dailySalesHistory = [];
@@ -362,37 +350,43 @@ const ensureDailySalesHistory = (state: FrontAppState): FrontDailySalesHistoryEn
   return state.dailySalesHistory;
 };
 
-const cloneState = (state: FrontAppState): FrontAppState => ({
-  ingredients: state.ingredients.map((ingredient) => ({ ...ingredient })),
-  products: state.products.map((product) => ({
-    ...product,
-    recipe: cloneRecipe(product.recipe) || [],
-    comboItems: product.comboItems?.map((item) => ({ ...item })),
-  })),
-  sales: state.sales.map(cloneSale),
-  stockEntries: state.stockEntries.map((entry) => ({ ...entry })),
-  cleaningMaterials: state.cleaningMaterials.map((material) => ({ ...material })),
-  cleaningStockEntries: state.cleaningStockEntries.map((entry) => ({ ...entry })),
-  globalSales: state.globalSales.map(cloneSale),
-  globalCancelledSales: state.globalCancelledSales.map(cloneSale),
-  globalStockEntries: state.globalStockEntries.map((entry) => ({ ...entry })),
-  globalCleaningStockEntries: state.globalCleaningStockEntries.map((entry) => ({ ...entry })),
-  saleDrafts: (state.saleDrafts || [])
-    .filter((draft): draft is FrontSaleDraft => Boolean(draft && typeof draft === 'object'))
-    .map(cloneSaleDraft),
-  cashRegisterAmount: toNonNegativeMoney(state.cashRegisterAmount),
-  dailySalesHistory: (state.dailySalesHistory || [])
-    .filter(
-      (entry): entry is FrontDailySalesHistoryEntry =>
-        Boolean(entry && typeof entry === 'object' && !Array.isArray(entry))
-    )
-    .map(cloneDailySalesHistoryEntry),
-  layoutThemeId: state.layoutThemeId ?? null,
-  layoutCompanyName:
-    typeof state.layoutCompanyName === 'string' && state.layoutCompanyName.trim()
-      ? state.layoutCompanyName.trim().slice(0, 120)
-      : null,
-});
+const cloneState = (state: FrontAppState): FrontAppState => {
+  const globalSales = state.globalSales.map(cloneSale);
+  const salesByDay = buildSalesByDayMap(globalSales);
+
+  return {
+    ingredients: state.ingredients.map((ingredient) => ({ ...ingredient })),
+    products: state.products.map((product) => ({
+      ...product,
+      recipe: cloneRecipe(product.recipe) || [],
+      comboItems: product.comboItems?.map((item) => ({ ...item })),
+    })),
+    sales: state.sales.map(cloneSale),
+    stockEntries: state.stockEntries.map((entry) => ({ ...entry })),
+    cleaningMaterials: state.cleaningMaterials.map((material) => ({ ...material })),
+    cleaningStockEntries: state.cleaningStockEntries.map((entry) => ({ ...entry })),
+    globalSales,
+    globalCancelledSales: state.globalCancelledSales.map(cloneSale),
+    globalStockEntries: state.globalStockEntries.map((entry) => ({ ...entry })),
+    globalCleaningStockEntries: state.globalCleaningStockEntries.map((entry) => ({ ...entry })),
+    saleDrafts: (state.saleDrafts || [])
+      .filter((draft): draft is FrontSaleDraft => Boolean(draft && typeof draft === 'object'))
+      .map(cloneSaleDraft),
+    cashRegisterAmount: toNonNegativeMoney(state.cashRegisterAmount),
+    dailySalesHistory: normalizeDailySalesHistoryList(
+      (state.dailySalesHistory || []).filter(
+        (entry): entry is FrontDailySalesHistoryEntry =>
+          Boolean(entry && typeof entry === 'object' && !Array.isArray(entry))
+      ),
+      { salesByDay }
+    ),
+    layoutThemeId: state.layoutThemeId ?? null,
+    layoutCompanyName:
+      typeof state.layoutCompanyName === 'string' && state.layoutCompanyName.trim()
+        ? state.layoutCompanyName.trim().slice(0, 120)
+        : null,
+  };
+};
 
 const emptyAppState = (): FrontAppState => ({
   ingredients: [],

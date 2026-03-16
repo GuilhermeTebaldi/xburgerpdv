@@ -8,6 +8,10 @@ import { HttpError } from '../utils/http-error.js';
 import type { StateCommandInput } from '../validators/state-command.validator.js';
 import { AuditService } from './audit.service.js';
 import { resolveBillingBlockSnapshot, toBillingBlockErrorDetails } from './billing-block.service.js';
+import {
+  buildSalesByDayMap,
+  normalizeDailySalesHistoryList,
+} from './daily-history-normalizer.service.js';
 import { addDays, toBackupDay, toDateOnlyKey } from './state-backup.utils.js';
 import { applyStateCommand, commandTouchesArchiveState } from './state-command.service.js';
 
@@ -64,6 +68,12 @@ const normalizeStatePayload = (value: unknown): FrontAppState => {
   }
 
   const payload = value as Record<string, unknown>;
+  const globalSales: FrontAppState['globalSales'] = arrayOrEmpty(payload.globalSales);
+  const dailySalesHistorySource: FrontAppState['dailySalesHistory'] = arrayOrEmpty(payload.dailySalesHistory);
+  const dailySalesHistory = normalizeDailySalesHistoryList(dailySalesHistorySource, {
+    salesByDay: buildSalesByDayMap(globalSales),
+  });
+
   return {
     ingredients: arrayOrEmpty(payload.ingredients),
     products: arrayOrEmpty(payload.products),
@@ -71,13 +81,13 @@ const normalizeStatePayload = (value: unknown): FrontAppState => {
     stockEntries: arrayOrEmpty(payload.stockEntries),
     cleaningMaterials: arrayOrEmpty(payload.cleaningMaterials),
     cleaningStockEntries: arrayOrEmpty(payload.cleaningStockEntries),
-    globalSales: arrayOrEmpty(payload.globalSales),
+    globalSales,
     globalCancelledSales: arrayOrEmpty(payload.globalCancelledSales),
     globalStockEntries: arrayOrEmpty(payload.globalStockEntries),
     globalCleaningStockEntries: arrayOrEmpty(payload.globalCleaningStockEntries),
     saleDrafts: arrayOrEmpty(payload.saleDrafts),
     cashRegisterAmount: toNonNegativeNumber(payload.cashRegisterAmount),
-    dailySalesHistory: arrayOrEmpty(payload.dailySalesHistory),
+    dailySalesHistory,
     layoutThemeId: toLayoutThemeId(payload.layoutThemeId),
     layoutCompanyName: toLayoutCompanyName(payload.layoutCompanyName),
   };

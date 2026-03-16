@@ -13,6 +13,8 @@ import type {
   StockEntry,
 } from '../types';
 import { normalizeStockQuantityByUnit } from '../utils/recipe';
+import { BRAND_THEMES, type BrandThemeId } from '../utils/brandTheme';
+import { buildSalesByDayMap, normalizeDailyHistoryList } from '../utils/dailyHistory';
 import { DEFAULT_APP_STATE, type AppState } from './appStorage';
 import { invalidateAdminSession, readAdminAuthToken } from './adminAuthToken';
 
@@ -345,21 +347,30 @@ const normalizeStockEntryMetadata = (entry: StockEntry): StockEntry => {
 const normalizeStockEntryList = (items: StockEntry[]): StockEntry[] =>
   items.map(normalizeStockEntryMetadata);
 
-const reviveDailySalesHistory = (items: DailySalesHistoryEntry[]): DailySalesHistoryEntry[] =>
-  items.map((item) => {
-    if (item.closedAt && !(item.closedAt instanceof Date)) {
-      return {
-        ...item,
-        closedAt: new Date(item.closedAt as string),
-      };
-    }
-    return item;
-  });
-
 const toNonNegativeNumber = (value: unknown, fallback = 0): number => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return parsed;
+};
+
+const normalizeLayoutThemeId = (
+  value: unknown,
+  fallback: BrandThemeId | null
+): BrandThemeId | null => {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (!Object.prototype.hasOwnProperty.call(BRAND_THEMES, normalized)) {
+    return fallback;
+  }
+  return normalized as BrandThemeId;
+};
+
+const normalizeLayoutCompanyName = (value: unknown, fallback: string | null): string | null => {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim();
+  if (!normalized) return null;
+  return normalized.slice(0, 120);
 };
 
 const normalizeIngredientStockByUnit = (ingredient: Ingredient): Ingredient => ({
@@ -394,6 +405,12 @@ const normalizeAppState = (payload: unknown): AppState => {
   }
 
   const source = payload as Record<string, unknown>;
+  const globalSales = reviveTimestampList(toArray(source.globalSales, DEFAULT_APP_STATE.globalSales));
+  const dailySalesHistory = normalizeDailyHistoryList(
+    toArray<DailySalesHistoryEntry>(source.dailySalesHistory, DEFAULT_APP_STATE.dailySalesHistory),
+    { salesByDay: buildSalesByDayMap(globalSales) }
+  );
+
   return {
     ingredients: toArray(source.ingredients, DEFAULT_APP_STATE.ingredients).map(
       normalizeIngredientStockByUnit
@@ -409,7 +426,7 @@ const normalizeAppState = (payload: unknown): AppState => {
     cleaningStockEntries: reviveTimestampList(
       toArray(source.cleaningStockEntries, DEFAULT_APP_STATE.cleaningStockEntries)
     ),
-    globalSales: reviveTimestampList(toArray(source.globalSales, DEFAULT_APP_STATE.globalSales)),
+    globalSales,
     globalCancelledSales: reviveTimestampList(
       toArray(source.globalCancelledSales, DEFAULT_APP_STATE.globalCancelledSales)
     ),
@@ -424,8 +441,11 @@ const normalizeAppState = (payload: unknown): AppState => {
       source.cashRegisterAmount,
       DEFAULT_APP_STATE.cashRegisterAmount
     ),
-    dailySalesHistory: reviveDailySalesHistory(
-      toArray<DailySalesHistoryEntry>(source.dailySalesHistory, DEFAULT_APP_STATE.dailySalesHistory)
+    dailySalesHistory,
+    layoutThemeId: normalizeLayoutThemeId(source.layoutThemeId, DEFAULT_APP_STATE.layoutThemeId),
+    layoutCompanyName: normalizeLayoutCompanyName(
+      source.layoutCompanyName,
+      DEFAULT_APP_STATE.layoutCompanyName
     ),
   };
 };

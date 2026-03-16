@@ -12,6 +12,13 @@ import { APP_ORIGINS, AppOrigin, buildAppChannelSummary } from '../utils/appChan
 import { buildSalesReportPrintRoutePath } from '../utils/printRoutes';
 import { formatStockQuantityByUnit, getRecipeQuantityUnitLabel } from '../utils/recipe';
 import {
+  buildDailyHistoryTotalsFromSales,
+  buildSalesByDayMap,
+  countSaleOrders,
+  normalizeDailyHistoryEntry as normalizeDailyHistoryEntryShared,
+  normalizeDailyHistoryList as normalizeDailyHistoryListShared,
+} from '../utils/dailyHistory';
+import {
   buildSalesReportPrintHash,
   buildSalesReportPrintWindowName,
   createSalesReportPrintPayloadId,
@@ -115,32 +122,8 @@ const getDayKey = (value: Date | string): string => toDate(value).toLocaleDateSt
 const roundMoney = (value: number): number => Number(value.toFixed(2));
 const LOCAL_DAILY_HISTORY_KEY = 'xburger_daily_sales_history_local_v1';
 
-const normalizeDailyHistoryEntry = (value: unknown): DailySalesHistoryEntry | null => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const source = value as Record<string, unknown>;
-  const closedAtRaw = source.closedAt;
-  const closedAt =
-    closedAtRaw instanceof Date || typeof closedAtRaw === 'string'
-      ? closedAtRaw
-      : new Date().toISOString();
-
-  const saleCountRaw = Number(source.saleCount);
-  const saleCount = Number.isFinite(saleCountRaw) && saleCountRaw >= 0 ? Math.floor(saleCountRaw) : 0;
-
-  return {
-    id:
-      typeof source.id === 'string' && source.id.trim()
-        ? source.id
-        : `day-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-    closedAt,
-    openingCash: roundMoney(Math.max(0, Number(source.openingCash) || 0)),
-    totalRevenue: roundMoney(Math.max(0, Number(source.totalRevenue) || 0)),
-    totalPurchases: roundMoney(Math.max(0, Number(source.totalPurchases) || 0)),
-    totalProfit: roundMoney(Number(source.totalProfit) || 0),
-    saleCount,
-    cashExpenses: roundMoney(Math.max(0, Number(source.cashExpenses) || 0)),
-  };
-};
+const normalizeDailyHistoryEntry = (value: unknown): DailySalesHistoryEntry | null =>
+  normalizeDailyHistoryEntryShared(value);
 
 const readLocalDailySalesHistory = (): DailySalesHistoryEntry[] => {
   if (typeof window === 'undefined') return [];
@@ -214,16 +197,6 @@ const sumSalesRevenue = (reportSales: Sale[]): number =>
       return sum + total;
     }, 0)
   );
-
-const countOrders = (entries: Sale[]): number => {
-  if (!Array.isArray(entries) || entries.length === 0) return 0;
-  const groups = new Set<string>();
-  entries.forEach((sale) => {
-    const key = sale.saleDraftId ? `draft:${sale.saleDraftId}` : `sale:${sale.id}`;
-    groups.add(key);
-  });
-  return groups.size;
-};
 
 const SalesSummary: React.FC<SalesSummaryProps> = ({
   sales,
@@ -359,32 +332,22 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
       totalRevenue,
       totalPurchases: totalCost,
       totalProfit,
-      saleCount: countOrders(sales),
+      saleCount: countSaleOrders(sales),
       cashExpenses: cashRegisterExpenses,
     }),
     [cashRegisterAmount, cashRegisterExpenses, sales, totalCost, totalProfit, totalRevenue]
   );
 
-  const archiveSalesByDay = useMemo(() => {
-    const map = new Map<string, Sale[]>();
-    archivedSales.forEach((sale) => {
-      const dayKey = getDayKey(sale.timestamp);
-      const current = map.get(dayKey);
-      if (current) {
-        current.push(sale);
-        return;
-      }
-      map.set(dayKey, [sale]);
-    });
-    return map;
-  }, [archivedSales]);
+  const archiveSalesByDay = useMemo(() => buildSalesByDayMap(archivedSales), [archivedSales]);
 
   const mergedDailySalesHistory = useMemo<DailySalesHistoryEntry[]>(() => {
-    const normalizedPropEntries = dailySalesHistory
-      .map((entry) => normalizeDailyHistoryEntry(entry))
-      .filter((entry): entry is DailySalesHistoryEntry => entry !== null);
+    const normalizedPropEntries = normalizeDailyHistoryListShared(dailySalesHistory, {
+      salesByDay: archiveSalesByDay,
+    });
 
-    const localEntries = readLocalDailySalesHistory();
+    const localEntries = normalizeDailyHistoryListShared(readLocalDailySalesHistory(), {
+      salesByDay: archiveSalesByDay,
+    });
     if (localEntries.length === 0) {
       return normalizedPropEntries.sort(
         (a, b) => toDate(b.closedAt).getTime() - toDate(a.closedAt).getTime()
@@ -428,15 +391,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
 
     archiveSalesByDay.forEach((daySales, dayKey) => {
       if (explicitDayKeys.has(dayKey) || dayKey === todayKey) return;
-
-      const totals = daySales.reduce(
-        (acc, sale) => ({
-          totalRevenue: acc.totalRevenue + (Number.isFinite(sale.total) ? sale.total : 0),
-          totalPurchases:
-            acc.totalPurchases + (Number.isFinite(sale.totalCost) ? sale.totalCost : 0),
-        }),
-        { totalRevenue: 0, totalPurchases: 0 }
-      );
+      const totals = buildDailyHistoryTotalsFromSales(daySales);
       const latestTimestamp = daySales.reduce(
         (latest: Date, sale) => {
           const saleDate = toDate(sale.timestamp);
@@ -458,7 +413,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
           totalRevenue,
           totalPurchases,
           totalProfit: roundMoney(totalRevenue - totalPurchases),
-          saleCount: countOrders(daySales),
+          saleCount: totals.saleCount,
           cashExpenses: 0,
         },
       });
@@ -1138,7 +1093,7 @@ const SalesSummary: React.FC<SalesSummaryProps> = ({
             </div>
             <div className="qb-sales-stat-card bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">
               <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Pedidos</p>
-              <h4 className="text-3xl font-black text-slate-800">{countOrders(sales)}</h4>
+              <h4 className="text-3xl font-black text-slate-800">{countSaleOrders(sales)}</h4>
             </div>
           </div>
           {appOriginRows.length > 0 && (

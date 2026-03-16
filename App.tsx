@@ -69,6 +69,11 @@ import { fetchPrintPreferences, updatePrintPreferences } from './data/printPrefe
 import { buildReceiptPrintRoutePath } from './utils/printRoutes';
 import { applyBrandTheme, initializeBrandTheme } from './utils/brandTheme';
 import {
+  countSaleOrders,
+  normalizeDailyHistoryEntry as normalizeDailyHistoryEntryShared,
+  normalizeDailyHistoryList as normalizeDailyHistoryListShared,
+} from './utils/dailyHistory';
+import {
   normalizeStockMovementByUnit,
   normalizeStockQuantityByUnit,
 } from './utils/recipe';
@@ -287,32 +292,8 @@ const writeLocalCashRegisterAmount = (amount: number): void => {
   }
 };
 
-const normalizeDailyHistoryEntry = (value: unknown): DailySalesHistoryEntry | null => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const source = value as Record<string, unknown>;
-  const closedAtRaw = source.closedAt;
-  const closedAt =
-    closedAtRaw instanceof Date || typeof closedAtRaw === 'string'
-      ? closedAtRaw
-      : new Date().toISOString();
-
-  const saleCountRaw = Number(source.saleCount);
-  const saleCount = Number.isFinite(saleCountRaw) && saleCountRaw >= 0 ? Math.floor(saleCountRaw) : 0;
-
-  return {
-    id:
-      typeof source.id === 'string' && source.id.trim()
-        ? source.id
-        : `day-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-    closedAt,
-    openingCash: roundMoney(Math.max(0, Number(source.openingCash) || 0)),
-    totalRevenue: roundMoney(Math.max(0, Number(source.totalRevenue) || 0)),
-    totalPurchases: roundMoney(Math.max(0, Number(source.totalPurchases) || 0)),
-    totalProfit: roundMoney(Number(source.totalProfit) || 0),
-    saleCount,
-    cashExpenses: roundMoney(Math.max(0, Number(source.cashExpenses) || 0)),
-  };
-};
+const normalizeDailyHistoryEntry = (value: unknown): DailySalesHistoryEntry | null =>
+  normalizeDailyHistoryEntryShared(value);
 
 const readLocalDailySalesHistory = (): DailySalesHistoryEntry[] => {
   if (typeof window === 'undefined') return [];
@@ -332,9 +313,7 @@ const readLocalDailySalesHistory = (): DailySalesHistoryEntry[] => {
 const normalizeDailyHistoryList = (
   history: DailySalesHistoryEntry[]
 ): DailySalesHistoryEntry[] =>
-  history
-    .map((entry) => normalizeDailyHistoryEntry(entry))
-    .filter((entry): entry is DailySalesHistoryEntry => entry !== null);
+  normalizeDailyHistoryListShared(history);
 
 const writeLocalDailySalesHistory = (history: DailySalesHistoryEntry[]): void => {
   if (typeof window === 'undefined') return;
@@ -471,14 +450,6 @@ const getSaleDayKey = (timestamp: Date | string): string | null => {
   const saleDate = toSaleDate(timestamp);
   if (!saleDate) return null;
   return saleDate.toLocaleDateString('pt-BR');
-};
-
-const getSaleOrderGroupKey = (sale: Sale): string =>
-  sale.saleDraftId ? `draft:${sale.saleDraftId}` : `sale:${sale.id}`;
-
-const countSaleOrders = (entries: Sale[]): number => {
-  if (!Array.isArray(entries) || entries.length === 0) return 0;
-  return new Set(entries.map((sale) => getSaleOrderGroupKey(sale))).size;
 };
 
 const formatMoney = (value: number): string => value.toFixed(2);

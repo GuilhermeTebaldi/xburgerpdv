@@ -1588,6 +1588,46 @@ test('close day snapshots report in history and resets session sales state', () 
   assert.equal(closed.dailySalesHistory?.[0]?.cashExpenses, 0.2);
 });
 
+test('history normalization recalculates legacy daily totals from archived sales', () => {
+  const dayTimestamp = '2026-03-10T12:00:00.000Z';
+  const state: FrontAppState = {
+    ...createBaseState(),
+    globalSales: [
+      {
+        id: 'sale-legacy-001',
+        productId: 'p-burger',
+        productName: 'Burger',
+        timestamp: dayTimestamp,
+        total: 20,
+        totalCost: 6.1,
+      },
+    ],
+    dailySalesHistory: [
+      {
+        id: 'day-legacy-001',
+        closedAt: dayTimestamp,
+        openingCash: 100,
+        totalRevenue: 20,
+        totalPurchases: 99, // legacy wrong value
+        totalProfit: -79,
+        saleCount: 1,
+        cashExpenses: 0,
+      },
+    ],
+  };
+
+  const next = applyStateCommand(state, {
+    type: 'SET_CASH_REGISTER',
+    amount: 100,
+  });
+
+  assert.equal(next.dailySalesHistory?.length, 1);
+  assert.equal(next.dailySalesHistory?.[0]?.totalRevenue, 20);
+  assert.equal(next.dailySalesHistory?.[0]?.totalPurchases, 6.1);
+  assert.equal(next.dailySalesHistory?.[0]?.totalProfit, 13.9);
+  assert.equal(next.dailySalesHistory?.[0]?.saleCount, 1);
+});
+
 test('stress: repeated mixed operations never produce negative stocks', () => {
   let state = createBaseState();
 

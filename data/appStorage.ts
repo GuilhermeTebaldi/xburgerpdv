@@ -10,6 +10,7 @@ import {
 } from '../types';
 import { normalizeStockQuantityByUnit } from '../utils/recipe';
 import { BRAND_THEMES, type BrandThemeId } from '../utils/brandTheme';
+import { buildSalesByDayMap, normalizeDailyHistoryList } from '../utils/dailyHistory';
 import { clearStore } from './localDb';
 import { invalidateAdminSession, readAdminAuthToken } from './adminAuthToken';
 
@@ -266,17 +267,6 @@ const normalizeStockEntryMetadata = (entry: StockEntry): StockEntry => {
 const normalizeStockEntryList = (items: StockEntry[]): StockEntry[] =>
   items.map(normalizeStockEntryMetadata);
 
-const reviveDailySalesHistory = (items: DailySalesHistoryEntry[]): DailySalesHistoryEntry[] =>
-  items.map((item) => {
-    if (item.closedAt && !(item.closedAt instanceof Date)) {
-      return {
-        ...item,
-        closedAt: new Date(item.closedAt as string),
-      };
-    }
-    return item;
-  });
-
 const toNonNegativeNumber = (value: unknown, fallback = 0): number => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
@@ -329,43 +319,50 @@ const normalizeCleaningMaterialStockByUnit = (
 const normalizeStateRecord = (
   source: Record<string, unknown>,
   defaults: AppState
-): AppState => ({
-  ingredients: toArray<Ingredient>(source.ingredients, defaults.ingredients).map(
-    normalizeIngredientStockByUnit
-  ),
-  products: toArray<Product>(source.products, defaults.products),
-  sales: reviveListWithDates(toArray<Sale>(source.sales, defaults.sales)),
-  stockEntries: normalizeStockEntryList(
-    reviveListWithDates(toArray<StockEntry>(source.stockEntries, defaults.stockEntries))
-  ),
-  cleaningMaterials: toArray<CleaningMaterial>(
-    source.cleaningMaterials,
-    defaults.cleaningMaterials
-  ).map(normalizeCleaningMaterialStockByUnit),
-  cleaningStockEntries: reviveListWithDates(
-    toArray<CleaningStockEntry>(source.cleaningStockEntries, defaults.cleaningStockEntries)
-  ),
-  globalSales: reviveListWithDates(toArray<Sale>(source.globalSales, defaults.globalSales)),
-  globalCancelledSales: reviveListWithDates(
-    toArray<Sale>(source.globalCancelledSales, defaults.globalCancelledSales)
-  ),
-  globalStockEntries: normalizeStockEntryList(
-    reviveListWithDates(toArray<StockEntry>(source.globalStockEntries, defaults.globalStockEntries))
-  ),
-  globalCleaningStockEntries: reviveListWithDates(
-    toArray<CleaningStockEntry>(
-      source.globalCleaningStockEntries,
-      defaults.globalCleaningStockEntries
-    )
-  ),
-  saleDrafts: toArray<SaleDraft>(source.saleDrafts, defaults.saleDrafts),
-  cashRegisterAmount: toNonNegativeNumber(source.cashRegisterAmount, defaults.cashRegisterAmount),
-  dailySalesHistory: reviveDailySalesHistory(
-    toArray<DailySalesHistoryEntry>(source.dailySalesHistory, defaults.dailySalesHistory)
-  ),
-  layoutThemeId: normalizeLayoutThemeId(source.layoutThemeId, defaults.layoutThemeId),
-  layoutCompanyName: normalizeLayoutCompanyName(source.layoutCompanyName, defaults.layoutCompanyName),
-});
+): AppState => {
+  const sales = reviveListWithDates(toArray<Sale>(source.sales, defaults.sales));
+  const globalSales = reviveListWithDates(toArray<Sale>(source.globalSales, defaults.globalSales));
+  const dailySalesHistory = normalizeDailyHistoryList(
+    toArray<DailySalesHistoryEntry>(source.dailySalesHistory, defaults.dailySalesHistory),
+    { salesByDay: buildSalesByDayMap(globalSales) }
+  );
+
+  return {
+    ingredients: toArray<Ingredient>(source.ingredients, defaults.ingredients).map(
+      normalizeIngredientStockByUnit
+    ),
+    products: toArray<Product>(source.products, defaults.products),
+    sales,
+    stockEntries: normalizeStockEntryList(
+      reviveListWithDates(toArray<StockEntry>(source.stockEntries, defaults.stockEntries))
+    ),
+    cleaningMaterials: toArray<CleaningMaterial>(
+      source.cleaningMaterials,
+      defaults.cleaningMaterials
+    ).map(normalizeCleaningMaterialStockByUnit),
+    cleaningStockEntries: reviveListWithDates(
+      toArray<CleaningStockEntry>(source.cleaningStockEntries, defaults.cleaningStockEntries)
+    ),
+    globalSales,
+    globalCancelledSales: reviveListWithDates(
+      toArray<Sale>(source.globalCancelledSales, defaults.globalCancelledSales)
+    ),
+    globalStockEntries: normalizeStockEntryList(
+      reviveListWithDates(toArray<StockEntry>(source.globalStockEntries, defaults.globalStockEntries))
+    ),
+    globalCleaningStockEntries: reviveListWithDates(
+      toArray<CleaningStockEntry>(
+        source.globalCleaningStockEntries,
+        defaults.globalCleaningStockEntries
+      )
+    ),
+    saleDrafts: toArray<SaleDraft>(source.saleDrafts, defaults.saleDrafts),
+    cashRegisterAmount: toNonNegativeNumber(source.cashRegisterAmount, defaults.cashRegisterAmount),
+    dailySalesHistory,
+    layoutThemeId: normalizeLayoutThemeId(source.layoutThemeId, defaults.layoutThemeId),
+    layoutCompanyName: normalizeLayoutCompanyName(source.layoutCompanyName, defaults.layoutCompanyName),
+  };
+};
 
 const normalizeVersionHeader = (value: string | null): string | null => {
   if (!value) return null;
