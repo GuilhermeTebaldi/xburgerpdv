@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bar,
   BarChart,
@@ -137,8 +137,30 @@ interface ConsolidatedArchiveFinance {
   profit: number;
 }
 
+interface StockCostDriver {
+  ingredientId: string;
+  ingredientName: string;
+  unit: string;
+  quantity: number;
+  cost: number;
+}
+
+interface CostDriversPanelProps {
+  drivers: StockCostDriver[];
+  totalCost: number;
+  referenceTotal: number;
+  className?: string;
+}
+
 const isAppOrigin = (origin: SaleOrigin | undefined): origin is 'IFOOD' | 'APP99' | 'KEETA' =>
   origin === 'IFOOD' || origin === 'APP99' || origin === 'KEETA';
+
+const isSaleStockEntry = (
+  entry: Pick<StockEntry, 'source' | 'saleId' | 'id'>
+): boolean =>
+  entry.source === 'SALE' ||
+  (typeof entry.saleId === 'string' && entry.saleId.trim().length > 0) ||
+  (typeof entry.id === 'string' && entry.id.startsWith('st-sale-'));
 
 const buildConsolidatedArchiveFinance = (entries: Sale[]): ConsolidatedArchiveFinance => {
   const grouped = new Map<
@@ -267,6 +289,58 @@ const isLikelyInventoryAdjustment = (ingredient: Ingredient | undefined, quantit
   return quantity >= 100;
 };
 
+const CostDriversPanel: React.FC<CostDriversPanelProps> = ({
+  drivers,
+  totalCost,
+  referenceTotal,
+  className = '',
+}) => (
+  <div className={`rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur-sm ${className}`}>
+    <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+      Estoque que mais gasta
+    </p>
+    <p className="mt-1 text-xs font-black text-slate-800">
+      Top insumos no custo das vendas
+    </p>
+    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+      {formatCurrency(totalCost)}
+    </p>
+    <div className="mt-2 space-y-2">
+      {drivers.length === 0 ? (
+        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+          Sem consumo de insumos por venda.
+        </p>
+      ) : (
+        drivers.map((driver) => {
+          const share = referenceTotal > 0 ? (driver.cost / referenceTotal) * 100 : 0;
+          const barWidth = Math.max(8, Math.min(100, share));
+          return (
+            <div key={driver.ingredientId} className="space-y-1">
+              <div className="flex items-center justify-between gap-2">
+                <p className="truncate text-[10px] font-black uppercase tracking-widest text-slate-700">
+                  {driver.ingredientName}
+                </p>
+                <p className="text-[10px] font-black text-red-600">
+                  {formatCurrency(driver.cost)}
+                </p>
+              </div>
+              <div className="h-1.5 rounded-full bg-slate-200">
+                <div
+                  className="h-1.5 rounded-full bg-red-500"
+                  style={{ width: `${barWidth}%` }}
+                />
+              </div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                Consumo: {formatStockQuantityByUnit(driver.unit, driver.quantity)}
+              </p>
+            </div>
+          );
+        })
+      )}
+    </div>
+  </div>
+);
+
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ 
   sales, 
   cancelledSales, 
@@ -299,6 +373,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [selectedEstornosYear, setSelectedEstornosYear] = useState<string | null>(null);
   const [selectedEstoqueYear, setSelectedEstoqueYear] = useState<string | null>(null);
   const [selectedMateriaisYear, setSelectedMateriaisYear] = useState<string | null>(null);
+  const [isCostDriversOpen, setIsCostDriversOpen] = useState(false);
+  const costDriversPanelRef = useRef<HTMLDivElement | null>(null);
+  const costDriversToggleRef = useRef<HTMLButtonElement | null>(null);
 
   const totalRevenue = sales.reduce((sum, s) => sum + s.total, 0);
   const salesCost = sales.reduce((sum, s) => sum + (s.totalCost || 0), 0);
@@ -316,10 +393,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       const quantity = Number(entry.quantity);
       if (!Number.isFinite(quantity) || quantity >= 0) return;
 
-      const isSaleEntry =
-        entry.source === 'SALE' ||
-        (typeof entry.saleId === 'string' && entry.saleId.trim()) ||
-        (typeof entry.id === 'string' && entry.id.startsWith('st-sale-'));
+      const isSaleEntry = isSaleStockEntry(entry);
       if (!isSaleEntry) return;
 
       const ingredientId = entry.ingredientId || '';
@@ -335,10 +409,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       if (!Number.isFinite(quantity) || quantity >= 0) return sum;
 
       // Legacy safety: some old records may miss `source` but still carry `saleId`.
-      const isSaleEntry =
-        entry.source === 'SALE' ||
-        (typeof entry.saleId === 'string' && entry.saleId.trim()) ||
-        (typeof entry.id === 'string' && entry.id.startsWith('st-sale-'));
+      const isSaleEntry = isSaleStockEntry(entry);
       if (isSaleEntry) {
         return sum;
       }
@@ -396,6 +467,52 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const totalCost = salesCost;
   const totalProfit = totalRevenue - totalCost;
   const totalOutflow = totalCost + operationalOutflow;
+  const stockCostDrivers = useMemo(() => {
+    const ingredientMap = new Map(allIngredients.map((ingredient) => [ingredient.id, ingredient]));
+    const byIngredient = new Map<string, StockCostDriver>();
+
+    stockEntries.forEach((entry) => {
+      const quantity = Number(entry.quantity);
+      if (!Number.isFinite(quantity) || quantity >= 0) return;
+      if (!isSaleStockEntry(entry)) return;
+
+      const ingredient = ingredientMap.get(entry.ingredientId);
+      const rawUnitCost = Number(entry.unitCost ?? ingredient?.cost ?? 0);
+      const normalizedUnitCost = normalizeIngredientCostForReport(ingredient, rawUnitCost);
+      if (!Number.isFinite(normalizedUnitCost) || normalizedUnitCost <= 0) return;
+
+      const impact = Math.abs(quantity) * normalizedUnitCost;
+      if (!Number.isFinite(impact) || impact <= 0) return;
+
+      const key = entry.ingredientId || `legacy-${entry.ingredientName || entry.id}`;
+      const current = byIngredient.get(key) || {
+        ingredientId: key,
+        ingredientName: entry.ingredientName || ingredient?.name || 'Insumo',
+        unit: ingredient?.unit || 'un',
+        quantity: 0,
+        cost: 0,
+      };
+
+      current.quantity += Math.abs(quantity);
+      current.cost += impact;
+      byIngredient.set(key, current);
+    });
+
+    const sorted = Array.from(byIngredient.values())
+      .map((driver) => ({
+        ...driver,
+        quantity: Number(driver.quantity.toFixed(6)),
+        cost: roundMoney(driver.cost),
+      }))
+      .sort((a, b) => b.cost - a.cost);
+
+    const total = roundMoney(sorted.reduce((sum, driver) => sum + driver.cost, 0));
+    return {
+      total,
+      referenceTotal: salesCost > 0 ? salesCost : total,
+      top: sorted.slice(0, 5),
+    };
+  }, [allIngredients, salesCost, stockEntries]);
   const generalFinanceSeries = useMemo(() => {
     const dayMap = new Map<
       string,
@@ -549,6 +666,32 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       ),
     [normalizedDailySalesHistory]
   );
+  useEffect(() => {
+    if (!isCostDriversOpen) return;
+
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (costDriversPanelRef.current?.contains(target)) return;
+      if (costDriversToggleRef.current?.contains(target)) return;
+      setIsCostDriversOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsCostDriversOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isCostDriversOpen]);
   const latestDailyClose = orderedDailySalesHistory[0];
   const currentSessionCashExpenses = useMemo(
     () =>
@@ -694,7 +837,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            <div className="bg-white p-6 rounded-[32px] border-2 border-slate-100 shadow-sm">
+            <div className="relative bg-white p-6 rounded-[32px] border-2 border-slate-100 shadow-sm">
               <div className="flex items-center justify-between gap-3 mb-4">
                 <div>
                   <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight">
@@ -746,7 +889,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             </div>
 
-            <div className="bg-white p-6 rounded-[32px] border-2 border-slate-100 shadow-sm">
+            <div className="relative overflow-hidden bg-white p-6 rounded-[32px] border-2 border-slate-100 shadow-sm">
               <div className="flex items-center justify-between gap-3 mb-4">
                 <div>
                   <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight">
@@ -807,7 +950,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            <div className="bg-white p-6 rounded-[32px] border-2 border-slate-100 shadow-sm">
+            <div className="relative overflow-hidden bg-white p-6 rounded-[32px] border-2 border-slate-100 shadow-sm">
               <div className="flex items-center justify-between gap-3 mb-4">
                 <div>
                   <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight">
@@ -817,8 +960,28 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     Entrou x saiu x lucro
                   </p>
                 </div>
+                <button
+                  ref={costDriversToggleRef}
+                  type="button"
+                  onClick={() => setIsCostDriversOpen((current) => !current)}
+                  className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-700 transition hover:bg-slate-100"
+                >
+                  {isCostDriversOpen ? 'Fechar Custos' : 'Ver Custos'}
+                </button>
               </div>
-              <div className="h-[280px]">
+              {isCostDriversOpen && (
+                <div
+                  ref={costDriversPanelRef}
+                  className="mb-4 xl:mb-0 xl:absolute xl:right-5 xl:top-[78px] xl:z-10 xl:w-[260px]"
+                >
+                  <CostDriversPanel
+                    drivers={stockCostDrivers.top}
+                    totalCost={stockCostDrivers.total}
+                    referenceTotal={stockCostDrivers.referenceTotal}
+                  />
+                </div>
+              )}
+              <div className={`h-[280px] ${isCostDriversOpen ? 'xl:pr-[260px]' : ''}`}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={[
