@@ -469,15 +469,24 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const totalOutflow = totalCost + operationalOutflow;
   const stockCostDrivers = useMemo(() => {
     const ingredientMap = new Map(allIngredients.map((ingredient) => [ingredient.id, ingredient]));
+    const realSaleIds = new Set(
+      sales
+        .map((sale) => (typeof sale.id === 'string' ? sale.id.trim() : ''))
+        .filter((saleId): saleId is string => Boolean(saleId))
+    );
     const byIngredient = new Map<string, StockCostDriver>();
 
     stockEntries.forEach((entry) => {
       const quantity = Number(entry.quantity);
       if (!Number.isFinite(quantity) || quantity >= 0) return;
+
+      // Real sales only: movement must belong to a persisted sale id.
+      const saleId = typeof entry.saleId === 'string' ? entry.saleId.trim() : '';
+      if (!saleId || !realSaleIds.has(saleId)) return;
       if (!isSaleStockEntry(entry)) return;
 
       const ingredient = ingredientMap.get(entry.ingredientId);
-      const rawUnitCost = Number(entry.unitCost ?? ingredient?.cost ?? 0);
+      const rawUnitCost = Number(entry.unitCost ?? 0);
       const normalizedUnitCost = normalizeIngredientCostForReport(ingredient, rawUnitCost);
       if (!Number.isFinite(normalizedUnitCost) || normalizedUnitCost <= 0) return;
 
@@ -512,7 +521,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       referenceTotal: salesCost > 0 ? salesCost : total,
       top: sorted.slice(0, 5),
     };
-  }, [allIngredients, salesCost, stockEntries]);
+  }, [allIngredients, sales, salesCost, stockEntries]);
   const generalFinanceSeries = useMemo(() => {
     const dayMap = new Map<
       string,
