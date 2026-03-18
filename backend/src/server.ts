@@ -1,6 +1,10 @@
 import { app } from './app.js';
 import { env, getAuthEnv } from './config/env.js';
 import { prisma } from './db/prisma.js';
+import {
+  startAsyncStateCommandScheduler,
+  stopAsyncStateCommandScheduler,
+} from './jobs/async-state-command.scheduler.js';
 import { startStateBackupScheduler, stopStateBackupScheduler } from './jobs/state-backup.scheduler.js';
 
 getAuthEnv();
@@ -11,6 +15,7 @@ const server = app.listen(env.PORT, () => {
 });
 
 startStateBackupScheduler();
+startAsyncStateCommandScheduler();
 
 void prisma
   .$connect()
@@ -23,6 +28,7 @@ void prisma
 
 const shutdown = () => {
   stopStateBackupScheduler();
+  stopAsyncStateCommandScheduler();
   server.close(() => {
     void prisma.$disconnect().finally(() => process.exit(0));
   });

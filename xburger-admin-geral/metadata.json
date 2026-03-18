@@ -1,0 +1,5 @@
+{
+  "name": "xBurger Admin Geral",
+  "description": "Painel administrativo para gerenciamento de empresas vinculadas, administradores e operadores do sistema xBurger.",
+  "requestFramePermissions": []
+}

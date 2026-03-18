@@ -118,6 +118,37 @@ const normalizeStatePayloadSafe = (value: unknown): FrontAppState => {
 
 const toVersionTag = (value: Date): string => value.toISOString();
 const ADMIN_GERAL_EMAIL = 'xburger.admin@geral.com';
+const APPLY_COMMAND_LATEST_MAX_RETRIES = 6;
+const APPLY_COMMAND_RETRY_BASE_MS = 250;
+const APPLY_COMMAND_RETRY_MAX_MS = 2200;
+const RETRYABLE_DB_PRISMA_CODES = new Set(['P1001', 'P1002', 'P1017', 'P2034']);
+const RETRYABLE_DB_MESSAGE_HINTS = [
+  'database system is starting up',
+  'database system is shutting down',
+  'database system is in recovery mode',
+  "can't reach database server",
+  'failed to connect',
+  'connection refused',
+  'connect timeout',
+  'server closed the connection unexpectedly',
+  'terminating connection',
+  'too many clients',
+  'remaining connection slots',
+  'connection reset',
+  'timeout',
+  'timed out',
+];
+
+const waitFor = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, Math.max(0, ms));
+  });
+
+const normalizeErrorText = (value: unknown): string => {
+  if (typeof value === 'string') return value.trim().toLowerCase();
+  if (value instanceof Error) return value.message.trim().toLowerCase();
+  return '';
+};
 
 interface HotStatePatch {
   ingredients: FrontAppState['ingredients'];
@@ -199,6 +230,10 @@ export class StateService {
     return ownerUserId;
   }
 
+  async resolveOwnerUserIdForActor(actorUserId: string): Promise<string> {
+    return this.resolveOwnerUserId(actorUserId);
+  }
+
   async getAppState(actorUserId: string): Promise<AppStateSnapshot> {
     const ownerUserId = await this.resolveOwnerUserId(actorUserId);
     try {
@@ -263,6 +298,61 @@ export class StateService {
     }
   }
 
+  async applyCommandWithLatestVersion(
+    actorUserId: string,
+    command: StateCommandInput,
+    context?: RequestContext,
+    maxVersionRetries = APPLY_COMMAND_LATEST_MAX_RETRIES
+  ): Promise<AppStateSnapshot> {
+    const totalAttempts = Math.max(1, Math.floor(maxVersionRetries));
+    let sawVersionConflict = false;
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt < totalAttempts; attempt += 1) {
+      let latestVersion: string;
+      try {
+        latestVersion = await this.getAppStateVersion(actorUserId);
+      } catch (error) {
+        lastError = error;
+        const shouldRetry =
+          attempt < totalAttempts - 1 && this.isRetryableApplyCommandError(error);
+        if (!shouldRetry) {
+          throw error;
+        }
+        await waitFor(this.computeApplyCommandRetryDelayMs(attempt + 1));
+        continue;
+      }
+
+      try {
+        return await this.applyCommand(actorUserId, command, latestVersion, context);
+      } catch (error) {
+        lastError = error;
+        const isVersionConflict = error instanceof HttpError && error.statusCode === 412;
+        if (isVersionConflict) {
+          sawVersionConflict = true;
+        }
+
+        const shouldRetry =
+          attempt < totalAttempts - 1 &&
+          (isVersionConflict || this.isRetryableApplyCommandError(error));
+        if (!shouldRetry) {
+          throw error;
+        }
+        await waitFor(this.computeApplyCommandRetryDelayMs(attempt + 1));
+      }
+    }
+
+    if (sawVersionConflict) {
+      throw new HttpError(409, 'Conflito de versão persistente ao aplicar comando de estado.');
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+
+    throw new HttpError(503, 'Falha temporária ao aplicar comando de estado.');
+  }
+
   async runDailyBackup(context?: RequestContext): Promise<DailyBackupResult> {
     const now = new Date();
     try {
@@ -282,6 +372,56 @@ export class StateService {
       error instanceof Prisma.PrismaClientKnownRequestError &&
       (error.code === 'P2021' || error.code === 'P2022')
     );
+  }
+
+  private computeApplyCommandRetryDelayMs(attempt: number): number {
+    const safeAttempt = Math.max(1, Math.floor(attempt));
+    const baseDelay = APPLY_COMMAND_RETRY_BASE_MS * 2 ** (safeAttempt - 1);
+    const cappedDelay = Math.min(APPLY_COMMAND_RETRY_MAX_MS, baseDelay);
+    const jitterWindow = Math.min(300, Math.floor(cappedDelay * 0.25));
+    const jitter = jitterWindow > 0 ? Math.floor(Math.random() * (jitterWindow + 1)) : 0;
+    return Math.min(APPLY_COMMAND_RETRY_MAX_MS, cappedDelay + jitter);
+  }
+
+  private isRetryableApplyCommandError(error: unknown): boolean {
+    if (error instanceof HttpError) {
+      if (error.statusCode === 408 || error.statusCode === 412 || error.statusCode === 425) return true;
+      if (error.statusCode === 429 || error.statusCode >= 500) return true;
+      const detailsCode = this.extractPrismaCode(error.details);
+      if (detailsCode && RETRYABLE_DB_PRISMA_CODES.has(detailsCode)) return true;
+      const detailsText = normalizeErrorText(error.details);
+      return this.hasRetryableDbHint(detailsText);
+    }
+
+    const prismaCode = this.extractPrismaCode(error);
+    if (prismaCode && RETRYABLE_DB_PRISMA_CODES.has(prismaCode)) {
+      return true;
+    }
+
+    if (error instanceof Prisma.PrismaClientInitializationError) {
+      return true;
+    }
+
+    const message = normalizeErrorText(error);
+    return this.hasRetryableDbHint(message);
+  }
+
+  private extractPrismaCode(value: unknown): string | null {
+    if (!value || typeof value !== 'object') return null;
+    const source = value as { code?: unknown; prismaCode?: unknown };
+    const candidate =
+      typeof source.prismaCode === 'string'
+        ? source.prismaCode
+        : typeof source.code === 'string'
+          ? source.code
+          : '';
+    const normalized = candidate.trim().toUpperCase();
+    return normalized || null;
+  }
+
+  private hasRetryableDbHint(message: string): boolean {
+    if (!message) return false;
+    return RETRYABLE_DB_MESSAGE_HINTS.some((hint) => message.includes(hint));
   }
 
   private async bootstrapAppStateTables(): Promise<void> {

@@ -43,6 +43,34 @@ export class StateCommandSyncError extends Error {
   }
 }
 
+export type AsyncConfirmPaidJobStatus =
+  | 'PENDING'
+  | 'PROCESSING'
+  | 'RETRY_PENDING'
+  | 'SUCCEEDED'
+  | 'FAILED_PERMANENT';
+
+export interface AsyncConfirmPaidJobSnapshot {
+  jobId: string;
+  draftId: string;
+  status: AsyncConfirmPaidJobStatus;
+  attemptCount: number;
+  maxAttempts: number;
+  availableAt: string;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+  lastError: string | null;
+  lastErrorCode: number | null;
+  resultVersion: string | null;
+}
+
+export interface AsyncConfirmPaidEnqueueResponse {
+  mode: 'async_server';
+  created: boolean;
+  job: AsyncConfirmPaidJobSnapshot;
+}
+
 export type StateCommand =
   | (BaseCommand & {
       type: 'SALE_REGISTER';
@@ -497,6 +525,70 @@ const toApiError = async (response: Response): Promise<StateCommandSyncError> =>
   });
 };
 
+const isAsyncConfirmPaidJobStatus = (value: unknown): value is AsyncConfirmPaidJobStatus =>
+  value === 'PENDING' ||
+  value === 'PROCESSING' ||
+  value === 'RETRY_PENDING' ||
+  value === 'SUCCEEDED' ||
+  value === 'FAILED_PERMANENT';
+
+const normalizeIsoDateString = (value: unknown): string => {
+  if (typeof value !== 'string') {
+    throw new StateCommandSyncError('Resposta inválida da fila assíncrona.');
+  }
+  const normalized = value.trim();
+  if (!normalized || Number.isNaN(Date.parse(normalized))) {
+    throw new StateCommandSyncError('Resposta inválida da fila assíncrona.');
+  }
+  return normalized;
+};
+
+const parseAsyncConfirmPaidJobSnapshot = (value: unknown): AsyncConfirmPaidJobSnapshot => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new StateCommandSyncError('Resposta inválida da fila assíncrona.');
+  }
+
+  const source = value as Record<string, unknown>;
+  const jobId = typeof source.jobId === 'string' ? source.jobId.trim() : '';
+  const draftId = typeof source.draftId === 'string' ? source.draftId.trim() : '';
+  if (!jobId || !draftId) {
+    throw new StateCommandSyncError('Resposta inválida da fila assíncrona.');
+  }
+
+  if (!isAsyncConfirmPaidJobStatus(source.status)) {
+    throw new StateCommandSyncError('Resposta inválida da fila assíncrona.');
+  }
+
+  const attemptCount = Number(source.attemptCount);
+  const maxAttempts = Number(source.maxAttempts);
+  const lastErrorCodeRaw = source.lastErrorCode;
+  const lastErrorCode =
+    lastErrorCodeRaw === null || lastErrorCodeRaw === undefined
+      ? null
+      : Number.isFinite(Number(lastErrorCodeRaw))
+        ? Number(lastErrorCodeRaw)
+        : null;
+  const resultVersionRaw = source.resultVersion;
+
+  return {
+    jobId,
+    draftId,
+    status: source.status,
+    attemptCount: Number.isInteger(attemptCount) && attemptCount >= 0 ? attemptCount : 0,
+    maxAttempts: Number.isInteger(maxAttempts) && maxAttempts > 0 ? maxAttempts : 1,
+    availableAt: normalizeIsoDateString(source.availableAt),
+    createdAt: normalizeIsoDateString(source.createdAt),
+    updatedAt: normalizeIsoDateString(source.updatedAt),
+    finishedAt:
+      source.finishedAt === null || source.finishedAt === undefined
+        ? null
+        : normalizeIsoDateString(source.finishedAt),
+    lastError: typeof source.lastError === 'string' ? source.lastError : null,
+    lastErrorCode,
+    resultVersion: typeof resultVersionRaw === 'string' ? resultVersionRaw : null,
+  };
+};
+
 const withCommandId = (command: StateCommand): StateCommand => {
   if (command.commandId && command.commandId.trim()) {
     return command;
@@ -613,4 +705,80 @@ export const runStateCommand = async (command: StateCommand): Promise<AppState> 
   }
 
   throw new StateCommandSyncError('Não foi possível sincronizar o comando de estado.');
+};
+
+export const enqueueSaleDraftConfirmPaidAsync = async (
+  input: { draftId: string; commandId?: string }
+): Promise<AsyncConfirmPaidEnqueueResponse> => {
+  const normalizedDraftId = typeof input.draftId === 'string' ? input.draftId.trim() : '';
+  if (!normalizedDraftId) {
+    throw new StateCommandSyncError('draftId inválido para confirmação assíncrona.');
+  }
+
+  await ensureWriteContext();
+  const context = writeContext;
+
+  const response = await fetchWithTimeout(`${getStateCommandsApiUrl()}/confirm-paid-async`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      Authorization: getAuthorizationHeader(),
+      ...(context ? { 'X-State-Token': context.token, 'If-Match': `"${context.version}"` } : {}),
+    },
+    body: JSON.stringify({
+      draftId: normalizedDraftId,
+      commandId: typeof input.commandId === 'string' && input.commandId.trim() ? input.commandId.trim() : undefined,
+    }),
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      invalidateSessionContext();
+    }
+    throw await toApiError(response);
+  }
+
+  const payload = (await response.json()) as unknown;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new StateCommandSyncError('Resposta inválida ao enfileirar confirmação assíncrona.');
+  }
+
+  const source = payload as Record<string, unknown>;
+  if (source.mode !== 'async_server') {
+    throw new StateCommandSyncError('Modo de fila assíncrona inválido na resposta.');
+  }
+
+  return {
+    mode: 'async_server',
+    created: Boolean(source.created),
+    job: parseAsyncConfirmPaidJobSnapshot(source.job),
+  };
+};
+
+export const getSaleDraftConfirmPaidAsyncJob = async (
+  jobId: string
+): Promise<AsyncConfirmPaidJobSnapshot> => {
+  const normalizedJobId = typeof jobId === 'string' ? jobId.trim() : '';
+  if (!normalizedJobId) {
+    throw new StateCommandSyncError('jobId inválido para consulta de confirmação assíncrona.');
+  }
+
+  const response = await fetchWithTimeout(`${getStateCommandsApiUrl()}/jobs/${encodeURIComponent(normalizedJobId)}`, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: getAuthorizationHeader(),
+    },
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      invalidateSessionContext();
+    }
+    throw await toApiError(response);
+  }
+
+  const payload = (await response.json()) as unknown;
+  return parseAsyncConfirmPaidJobSnapshot(payload);
 };

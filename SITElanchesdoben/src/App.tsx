@@ -40,8 +40,19 @@ const ADMIN_GATE_KEY = 'xburger_admin_gate';
 const ADMIN_SESSION_KEY = 'xburger_admin_session';
 const ADMIN_SESSION_BACKUP_KEY = 'xburger_admin_session_backup';
 const DEMO_VIDEO_SRC = '/demo-video-2026-03-11.mp4';
-const SALES_WHATSAPP_URL =
-  'https://wa.me/5549999102026?text=Ol%C3%A1!%20Quero%20comprar%20ou%20conhecer%20melhor%20o%20XBURGERPDV.';
+const SALES_CONTACTS = [
+  {
+    name: 'Cristiane',
+    whatsappUrl:
+      'https://wa.me/5549999102026?text=Ol%C3%A1!%20Quero%20comprar%20ou%20conhecer%20melhor%20o%20XBURGERPDV.',
+  },
+  {
+    name: 'Eduardo',
+    whatsappUrl:
+      'https://wa.me/5549999836511?text=Ol%C3%A1!%20Quero%20comprar%20ou%20conhecer%20melhor%20o%20XBURGERPDV.',
+  },
+] as const;
+const PRIMARY_SALES_CONTACT = SALES_CONTACTS[0];
 
 type AuthLoginRole = 'ADMIN' | 'OPERATOR' | 'AUDITOR';
 
@@ -172,9 +183,9 @@ export default function App() {
     }
   };
 
-  const openSalesWhatsApp = () => {
+  const openSalesWhatsApp = (whatsappUrl: string = PRIMARY_SALES_CONTACT.whatsappUrl) => {
     if (typeof window === 'undefined') return;
-    window.open(SALES_WHATSAPP_URL, '_blank', 'noopener,noreferrer');
+    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
   };
 
   const scrollToLoginSection = () => {
@@ -906,7 +917,7 @@ export default function App() {
                     <MessageCircle className="h-4 w-4" />
                   </div>
                   <div>
-                    <p className="text-[11px] font-black uppercase tracking-[0.12em] text-red-300">Cristiane</p>
+                    <p className="text-[11px] font-black uppercase tracking-[0.12em] text-red-300">Cristiane + Eduardo</p>
                     <p className="text-xs font-semibold text-slate-100">WhatsApp</p>
                   </div>
                   <ArrowRight className="ml-auto h-4 w-4 text-green-300" />
@@ -918,13 +929,25 @@ export default function App() {
                     Fale com nossos atendentes e acelere seu negócio.
                   </h4>
                   <p className="mt-2 text-sm text-slate-300">
-                    Vendedora: Cristiane. Clique para abrir o WhatsApp e falar direto.
+                    Vendedores: Cristiane e Eduardo. Clique para abrir o WhatsApp e falar direto.
                   </p>
 
-                  <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-green-500 to-green-600 px-4 py-2 text-xs font-black uppercase tracking-wider text-white shadow-lg shadow-green-900/30 transition-transform group-hover:scale-[1.02]">
-                    <MessageCircle className="h-4 w-4" />
-                    Falar no WhatsApp
-                    <ArrowRight className="h-4 w-4" />
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {SALES_CONTACTS.map((contact) => (
+                      <button
+                        key={contact.name}
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openSalesWhatsApp(contact.whatsappUrl);
+                        }}
+                        className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-green-500 to-green-600 px-4 py-2 text-xs font-black uppercase tracking-wider text-white shadow-lg shadow-green-900/30 transition-transform group-hover:scale-[1.02]"
+                      >
+                        <MessageCircle className="h-4 w-4" />
+                        {contact.name}
+                        <ArrowRight className="h-4 w-4" />
+                      </button>
+                    ))}
                   </div>
                 </div>
               </div>

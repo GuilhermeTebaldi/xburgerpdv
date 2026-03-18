@@ -277,3 +277,14 @@ export const stateCommandSchema = z.discriminatedUnion('type', [
 ]);
 
 export type StateCommandInput = z.infer<typeof stateCommandSchema>;
+
+export const stateAsyncConfirmPaidEnqueueSchema = z.object({
+  draftId: idSchema,
+  commandId: idSchema.optional(),
+});
+
+export const stateAsyncJobIdParamSchema = z.object({
+  jobId: idSchema,
+});
+
+export type StateAsyncConfirmPaidEnqueueInput = z.infer<typeof stateAsyncConfirmPaidEnqueueSchema>;

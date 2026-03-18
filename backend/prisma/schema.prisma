@@ -84,6 +84,16 @@ enum AppStateBackupKind {
   @@map("app_state_backup_kind")
 }
 
+enum AsyncStateCommandJobStatus {
+  PENDING
+  PROCESSING
+  RETRY_PENDING
+  SUCCEEDED
+  FAILED_PERMANENT
+
+  @@map("async_state_command_job_status")
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique @db.VarChar(255)
@@ -109,6 +119,8 @@ model User {
   auditLogsAuthored   AuditLog[]         @relation("AuditAuthor")
   appStateSnapshots   AppState[]         @relation("AppStateOwner")
   appStateBackups     AppStateBackup[]   @relation("AppStateBackupOwner")
+  asyncStateCommandJobsOwned AsyncStateCommandJob[] @relation("AsyncStateCommandJobOwner")
+  asyncStateCommandJobsAuthored AsyncStateCommandJob[] @relation("AsyncStateCommandJobActor")
   printPreferences    UserPrintPreference?
 
   @@index([stateOwnerUserId])
@@ -443,4 +455,35 @@ model AppStateBackup {
   @@index([ownerUserId, kind, createdAt])
   @@index([sourceVersion])
   @@map("app_state_backups")
+}
+
+model AsyncStateCommandJob {
+  id               String                     @id @default(uuid()) @db.Uuid
+  ownerUserId      String                     @map("owner_user_id") @db.Uuid
+  actorUserId      String?                    @map("actor_user_id") @db.Uuid
+  commandType      String                     @map("command_type") @db.VarChar(80)
+  draftId          String                     @map("draft_id") @db.VarChar(200)
+  commandId        String?                    @map("command_id") @db.VarChar(200)
+  status           AsyncStateCommandJobStatus @default(PENDING)
+  attemptCount     Int                        @default(0) @map("attempt_count")
+  maxAttempts      Int                        @default(8) @map("max_attempts")
+  availableAt      DateTime                   @default(now()) @map("available_at")
+  leaseUntil       DateTime?                  @map("lease_until")
+  lastError        String?                    @map("last_error") @db.VarChar(600)
+  lastErrorCode    Int?                       @map("last_error_code")
+  lastErrorDetails Json?                      @map("last_error_details")
+  resultVersion    String?                    @map("result_version") @db.VarChar(80)
+  startedAt        DateTime?                  @map("started_at")
+  finishedAt       DateTime?                  @map("finished_at")
+  createdAt        DateTime                   @default(now()) @map("created_at")
+  updatedAt        DateTime                   @updatedAt @map("updated_at")
+
+  owner User @relation("AsyncStateCommandJobOwner", fields: [ownerUserId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  actor User? @relation("AsyncStateCommandJobActor", fields: [actorUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([ownerUserId, status, availableAt, createdAt])
+  @@index([status, availableAt, createdAt])
+  @@index([ownerUserId, draftId, commandType, createdAt])
+  @@index([leaseUntil])
+  @@map("async_state_command_jobs")
 }
